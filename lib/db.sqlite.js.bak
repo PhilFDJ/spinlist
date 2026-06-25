@@ -1,0 +1,203 @@
+/* ============================================================
+   Spinlist — data layer (SQLite via better-sqlite3)
+   ------------------------------------------------------------
+   One file, zero external services. Stores hosts (subscribers),
+   their plan + Stripe IDs, login sessions, and a processed-
+   webhook log for idempotency.
+
+   For production at scale you'd swap this for Postgres, but the
+   table shapes below carry over unchanged.
+   ============================================================ */
+
+const Database = require('better-sqlite3');
+const path = require('path');
+
+const db = new Database(path.join(__dirname, '..', 'spinlist.db'));
+db.pragma('journal_mode = WAL');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id              TEXT PRIMARY KEY,
+    email           TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    name            TEXT,
+    plan            TEXT NOT NULL DEFAULT 'none',   -- none | pro | studio
+    sub_status      TEXT,                           -- active | past_due | canceled | comp | null
+    stripe_customer TEXT,
+    stripe_sub      TEXT,
+    comp_until      INTEGER,                        -- ms timestamp a comp plan expires, or null = forever/none
+    comp_code       TEXT,                           -- the comp code that granted current access, if any
+    brand_logo      TEXT,                           -- path to uploaded logo, or null
+    brand_color     TEXT,                           -- hex accent, or null
+    brand_tagline   TEXT,                           -- short line, or null
+    created_at      INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token       TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL
+  );
+
+  -- one row per Stripe event id we've already handled (idempotency)
+  CREATE TABLE IF NOT EXISTS processed_events (
+    event_id    TEXT PRIMARY KEY,
+    handled_at  INTEGER NOT NULL
+  );
+
+  -- count of events each host has created this billing period (for gating)
+  CREATE TABLE IF NOT EXISTS events_created (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+  );
+
+  -- complimentary / discount codes you generate and hand out
+  CREATE TABLE IF NOT EXISTS codes (
+    code         TEXT PRIMARY KEY,              -- the redeemable string, stored uppercased
+    kind         TEXT NOT NULL,                -- 'comp' | 'discount'
+    plan         TEXT,                          -- for comp: 'pro' | 'studio'
+    months       INTEGER,                       -- for comp: duration in months, NULL = forever
+    discount_kind TEXT,                         -- for discount: 'percent' | 'amount'
+    discount_val  INTEGER,                      -- percent (1-100) or amount in minor units (pence)
+    stripe_promo  TEXT,                         -- for discount: the Stripe promotion_code id
+    max_uses     INTEGER,                       -- NULL = unlimited
+    uses         INTEGER NOT NULL DEFAULT 0,
+    expires_at   INTEGER,                       -- code itself expires (ms), NULL = never
+    active       INTEGER NOT NULL DEFAULT 1,
+    note         TEXT,                          -- your own label, e.g. "Sarah's wedding gift"
+    created_at   INTEGER NOT NULL
+  );
+
+  -- who redeemed what (audit + one-per-user enforcement)
+  CREATE TABLE IF NOT EXISTS redemptions (
+    id          TEXT PRIMARY KEY,
+    code        TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    redeemed_at INTEGER NOT NULL
+  );
+`);
+
+// Idempotent migration: add columns to pre-existing databases.
+// (CREATE TABLE IF NOT EXISTS won't alter a table that already exists.)
+for (const col of ['comp_until INTEGER', 'comp_code TEXT', 'brand_logo TEXT', 'brand_color TEXT', 'brand_tagline TEXT']) {
+  const name = col.split(' ')[0];
+  const exists = db.prepare("SELECT 1 FROM pragma_table_info('users') WHERE name = ?").get(name);
+  if (!exists) db.exec(`ALTER TABLE users ADD COLUMN ${col};`);
+}
+
+module.exports = {
+  // ----- users -----
+  createUser(u) {
+    db.prepare(`INSERT INTO users (id,email,password_hash,name,plan,created_at)
+                VALUES (@id,@email,@password_hash,@name,'none',@created_at)`).run(u);
+    return this.getUserById(u.id);
+  },
+  getUserByEmail(email) {
+    return db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
+  },
+  getUserById(id) {
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  },
+  getUserByCustomer(customerId) {
+    return db.prepare('SELECT * FROM users WHERE stripe_customer = ?').get(customerId);
+  },
+  setStripeCustomer(userId, customerId) {
+    db.prepare('UPDATE users SET stripe_customer = ? WHERE id = ?').run(customerId, userId);
+  },
+  setPlan(userId, { plan, sub_status, stripe_sub }) {
+    db.prepare('UPDATE users SET plan=?, sub_status=?, stripe_sub=? WHERE id=?')
+      .run(plan, sub_status, stripe_sub, userId);
+  },
+
+  // Grant a complimentary plan (from a comp code). comp_until null = forever.
+  grantComp(userId, { plan, comp_until, comp_code }) {
+    db.prepare("UPDATE users SET plan=?, sub_status='comp', comp_until=?, comp_code=? WHERE id=?")
+      .run(plan, comp_until ?? null, comp_code ?? null, userId);
+  },
+  // Drop an expired comp back to no access. Returns true if it changed anything.
+  expireCompIfNeeded(user) {
+    if (user.sub_status === 'comp' && user.comp_until && Date.now() > user.comp_until) {
+      db.prepare("UPDATE users SET plan='none', sub_status=NULL, comp_until=NULL, comp_code=NULL WHERE id=?")
+        .run(user.id);
+      return true;
+    }
+    return false;
+  },
+
+  // ----- branding -----
+  setBranding(userId, { logo, color, tagline }) {
+    db.prepare('UPDATE users SET brand_logo=?, brand_color=?, brand_tagline=? WHERE id=?')
+      .run(logo ?? null, color ?? null, tagline ?? null, userId);
+  },
+  getBranding(userId) {
+    const u = db.prepare('SELECT brand_logo, brand_color, brand_tagline FROM users WHERE id=?').get(userId);
+    if (!u) return null;
+    return { logo: u.brand_logo, color: u.brand_color, tagline: u.brand_tagline };
+  },
+
+  // ----- sessions -----
+  createSession(s) {
+    db.prepare(`INSERT INTO sessions (token,user_id,created_at,expires_at)
+                VALUES (@token,@user_id,@created_at,@expires_at)`).run(s);
+  },
+  getSession(token) {
+    const s = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+    if (!s) return null;
+    if (Date.now() > s.expires_at) { this.deleteSession(token); return null; }
+    return s;
+  },
+  deleteSession(token) {
+    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  },
+
+  // ----- idempotency -----
+  alreadyProcessed(eventId) {
+    return !!db.prepare('SELECT 1 FROM processed_events WHERE event_id = ?').get(eventId);
+  },
+  markProcessed(eventId) {
+    db.prepare('INSERT OR IGNORE INTO processed_events (event_id,handled_at) VALUES (?,?)')
+      .run(eventId, Date.now());
+  },
+
+  // ----- usage / gating -----
+  recordEvent(id, userId) {
+    db.prepare('INSERT INTO events_created (id,user_id,created_at) VALUES (?,?,?)')
+      .run(id, userId, Date.now());
+  },
+  countEventsThisMonth(userId) {
+    const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return db.prepare('SELECT COUNT(*) c FROM events_created WHERE user_id=? AND created_at>=?')
+      .get(userId, since).c;
+  },
+
+  // ----- codes -----
+  createCode(c) {
+    db.prepare(`INSERT INTO codes
+      (code,kind,plan,months,discount_kind,discount_val,stripe_promo,max_uses,uses,expires_at,active,note,created_at)
+      VALUES (@code,@kind,@plan,@months,@discount_kind,@discount_val,@stripe_promo,@max_uses,0,@expires_at,1,@note,@created_at)`).run(c);
+    return this.getCode(c.code);
+  },
+  getCode(code) {
+    return db.prepare('SELECT * FROM codes WHERE code = ?').get((code || '').toUpperCase());
+  },
+  listCodes() {
+    return db.prepare('SELECT * FROM codes ORDER BY created_at DESC').all();
+  },
+  setCodeActive(code, active) {
+    db.prepare('UPDATE codes SET active=? WHERE code=?').run(active ? 1 : 0, (code || '').toUpperCase());
+  },
+  incrementCodeUses(code) {
+    db.prepare('UPDATE codes SET uses = uses + 1 WHERE code=?').run((code || '').toUpperCase());
+  },
+
+  // ----- redemptions -----
+  hasRedeemed(code, userId) {
+    return !!db.prepare('SELECT 1 FROM redemptions WHERE code=? AND user_id=?')
+      .get((code || '').toUpperCase(), userId);
+  },
+  recordRedemption(r) {
+    db.prepare('INSERT INTO redemptions (id,code,user_id,redeemed_at) VALUES (@id,@code,@user_id,@redeemed_at)').run(r);
+  },
+};

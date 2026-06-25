@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spinlist — Admin · Codes</title>
+<style>
+  :root{--ink:#eaf0ff;--ink-2:#b6c2e0;--paper:#0a1228;--paper-2:#121d3d;--surface:#16234a;--neon:#c6f24e;--neon-dim:#a8d63f;--plum:#5b8cff;--coral:#ff6b5e;--muted:#7e8db5;--line:rgba(180,200,255,.16);--shadow:0 18px 50px -22px rgba(0,0,0,.7)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink)}
+  .wrap{max-width:960px;margin:0 auto;padding:0 22px}
+  .display{font-family:"Archivo Black","Helvetica Neue",sans-serif;font-weight:900;letter-spacing:-.03em}
+  .eyebrow{font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  header.bar{background:rgba(10,18,40,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .bar .wrap{display:flex;align-items:center;justify-content:space-between;height:62px;max-width:960px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:900;font-size:1.15rem;text-decoration:none;color:var(--ink)}
+  .logo .dot{width:13px;height:13px;border-radius:50%;background:var(--neon);box-shadow:0 0 0 4px rgba(198,242,78,.25)}
+  .bar nav a{color:var(--ink);text-decoration:none;font-weight:600;font-size:.9rem;margin-left:14px}
+  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:11px 20px;cursor:pointer;font-size:.9rem;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:transform .15s}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-primary{background:var(--ink);color:var(--paper);box-shadow:var(--shadow)}
+  .btn-neon{background:var(--neon);color:#0a1228}
+  .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink);padding:7px 14px;font-size:.82rem}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin-top:22px}
+  h1{font-size:2.1rem;margin-top:30px}
+  h2{font-size:1.25rem;margin-bottom:4px}
+  label{display:block;font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);margin:0 0 6px}
+  input,select{width:100%;font:inherit;font-size:.95rem;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)}
+  input:focus,select:focus{outline:0;border-color:var(--plum)}
+  .field{margin-bottom:14px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+  @media(max-width:620px){.cols{grid-template-columns:1fr}}
+  .seg{display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;margin-bottom:18px;max-width:280px}
+  .seg button{flex:1;border:0;background:transparent;color:var(--muted);font:inherit;font-weight:700;font-size:.85rem;padding:8px;border-radius:100px;cursor:pointer}
+  .seg button.on{background:var(--neon);color:#0a1228}
+  table{width:100%;border-collapse:collapse;margin-top:10px;font-size:.88rem}
+  th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.05em}
+  td code{font-family:ui-monospace,monospace;font-weight:700;color:var(--neon)}
+  .badge{font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:100px;text-transform:uppercase}
+  .badge.comp{background:rgba(198,242,78,.16);color:var(--neon)}
+  .badge.discount{background:rgba(91,140,255,.18);color:var(--plum)}
+  .badge.off{background:rgba(255,107,94,.16);color:var(--coral)}
+  .msg{font-size:.9rem;margin-top:12px;min-height:18px}
+  .signed-out{text-align:center;padding:80px 20px;color:var(--muted)}
+  .hint{color:var(--muted);font-size:.82rem;margin-top:4px}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <a class="logo" href="/"><span class="dot"></span>Spinlist</a>
+  <nav><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+</div></header>
+
+<div class="wrap" id="root"><p style="margin-top:40px;color:var(--muted)">Loading…</p></div>
+
+<script>
+let IS_ADMIN=false;
+
+async function boot(){
+  const r=await fetch('/api/me');const d=await r.json();
+  const root=document.getElementById('root');
+  if(!d.user){root.innerHTML=`<div class="signed-out"><h1 class="display">Admin</h1><p style="margin:14px 0 22px">Sign in with an admin account.</p><a class="btn btn-primary" href="/pricing.html">Sign in</a></div>`;return;}
+  if(!d.isAdmin){root.innerHTML=`<div class="signed-out"><h1 class="display">Admin</h1><p style="margin-top:14px">This area is restricted. Your account isn't an admin.</p><p class="hint" style="margin-top:8px">Add your email to ADMIN_EMAILS in the server's environment.</p></div>`;return;}
+  IS_ADMIN=true;
+  root.innerHTML=`
+    <h1 class="display">Codes</h1>
+    <p style="color:var(--muted);margin-top:6px">Create complimentary access codes or discount codes to share.</p>
+
+    <div class="panel">
+      <h2>Create a code</h2>
+      <div class="seg">
+        <button id="seg-comp" class="on" onclick="setKind('comp')">Complimentary</button>
+        <button id="seg-discount" onclick="setKind('discount')">Discount</button>
+      </div>
+
+      <div id="comp-fields">
+        <div class="cols">
+          <div class="field"><label>Plan granted</label><select id="c-plan"><option value="pro">Pro</option><option value="studio">Studio</option></select></div>
+          <div class="field"><label>Duration (months)</label><input id="c-months" type="number" min="1" placeholder="blank = forever"></div>
+        </div>
+      </div>
+
+      <div id="discount-fields" style="display:none">
+        <div class="cols">
+          <div class="field"><label>Discount type</label><select id="d-kind"><option value="percent">Percent off</option><option value="amount">Amount off (pence)</option></select></div>
+          <div class="field"><label>Value</label><input id="d-val" type="number" min="1" placeholder="e.g. 25 = 25% or 500 = £5"></div>
+        </div>
+        <p class="hint">Discount codes create a matching Stripe coupon and are applied automatically at checkout.</p>
+      </div>
+
+      <div class="cols">
+        <div class="field"><label>Custom code (optional)</label><input id="c-code" placeholder="auto-generated if blank" style="text-transform:uppercase"></div>
+        <div class="field"><label>Max uses (optional)</label><input id="c-max" type="number" min="1" placeholder="blank = unlimited"></div>
+      </div>
+      <div class="cols">
+        <div class="field"><label>Expires in (days, optional)</label><input id="c-exp" type="number" min="1" placeholder="blank = never"></div>
+        <div class="field"><label>Note (for your reference)</label><input id="c-note" placeholder="e.g. Sarah's wedding gift"></div>
+      </div>
+
+      <button class="btn btn-neon" onclick="createCode()">Create code</button>
+      <p class="msg" id="create-msg"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Your codes</h2>
+      <div id="code-list"><p style="color:var(--muted);font-size:.9rem;margin-top:8px">Loading…</p></div>
+    </div>`;
+  setKind('comp');
+  loadCodes();
+}
+
+let KIND='comp';
+function setKind(k){
+  KIND=k;
+  document.getElementById('seg-comp').classList.toggle('on',k==='comp');
+  document.getElementById('seg-discount').classList.toggle('on',k==='discount');
+  document.getElementById('comp-fields').style.display=k==='comp'?'block':'none';
+  document.getElementById('discount-fields').style.display=k==='discount'?'block':'none';
+}
+
+async function createCode(){
+  const msg=document.getElementById('create-msg');
+  const body={kind:KIND,
+    code:document.getElementById('c-code').value.trim(),
+    maxUses:document.getElementById('c-max').value||null,
+    expiresInDays:document.getElementById('c-exp').value||null,
+    note:document.getElementById('c-note').value.trim()};
+  if(KIND==='comp'){
+    body.plan=document.getElementById('c-plan').value;
+    body.months=document.getElementById('c-months').value||null;
+  }else{
+    body.discountKind=document.getElementById('d-kind').value;
+    body.discountVal=document.getElementById('d-val').value;
+  }
+  msg.style.color='var(--muted)';msg.textContent='Creating…';
+  const r=await fetch('/api/admin/codes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok){msg.style.color='var(--coral)';msg.textContent=d.error||'Could not create.';return;}
+  msg.style.color='var(--neon-dim)';msg.textContent='Created code '+d.code.code+' ✓';
+  document.getElementById('c-code').value='';document.getElementById('c-note').value='';
+  loadCodes();
+}
+
+async function loadCodes(){
+  const r=await fetch('/api/admin/codes');const d=await r.json();
+  const el=document.getElementById('code-list');
+  if(!d.codes||!d.codes.length){el.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:8px">No codes yet.</p>';return;}
+  el.innerHTML=`<table><thead><tr><th>Code</th><th>Type</th><th>Grants</th><th>Uses</th><th>Expires</th><th>Note</th><th></th></tr></thead><tbody>${
+    d.codes.map(c=>{
+      const grants=c.kind==='comp'
+        ? (c.plan.toUpperCase()+(c.months?(' · '+c.months+'mo'):' · forever'))
+        : (c.discount_kind==='percent'?(c.discount_val+'% off'):('£'+(c.discount_val/100).toFixed(2)+' off'));
+      const uses=c.uses+(c.max_uses?('/'+c.max_uses):'');
+      const exp=c.expires_at?new Date(c.expires_at).toLocaleDateString():'never';
+      return `<tr style="${c.active?'':'opacity:.45'}">
+        <td><code>${esc(c.code)}</code></td>
+        <td><span class="badge ${c.kind}">${c.kind}</span></td>
+        <td>${esc(grants)}</td>
+        <td>${uses}</td>
+        <td>${exp}</td>
+        <td>${esc(c.note||'')}</td>
+        <td><button class="btn btn-ghost" onclick="toggleCode('${esc(c.code)}')">${c.active?'Disable':'Enable'}</button></td>
+      </tr>`;
+    }).join('')
+  }</tbody></table>`;
+}
+
+async function toggleCode(code){
+  await fetch('/api/admin/codes/'+encodeURIComponent(code)+'/toggle',{method:'POST'});
+  loadCodes();
+}
+async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}
+function esc(s){return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+boot();
+</script>
+</body>
+</html>
