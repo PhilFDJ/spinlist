@@ -63,7 +63,7 @@ const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 let stripe = null;
 if (STRIPE_SECRET) {
-  stripe = require('stripe')(STRIPE_SECRET);
+  stripe = require('stripe')(STRIPE_SECRET, { apiVersion: '2026-01-28' });
 } else {
   console.warn('  [warn] STRIPE_SECRET_KEY not set — billing routes will return a setup notice.\n');
 }
