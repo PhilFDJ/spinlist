@@ -610,7 +610,7 @@ function renderLeaderboardGuest(){
       <div class="bar-wrap"><b>${esc(t.title)}</b> <span style="color:var(--muted)">— ${esc(t.artist)}</span>
         <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8,t.votes/max*100)}%"></div></div></div>
       <div class="votes-pill">${t.votes}</div>
-      <button class="vote-btn ${voted?'voted':''}" ${closed?'disabled style="opacity:.4"':''} onclick="toggleVote(window.__sr['${esc(t.id)}'])">${voted?'✓':'▲'}</button>
+      <button class="vote-btn ${voted?'voted':''}" ${closed?'disabled style="opacity:.4"':''} onclick="toggleVote(window.__sr['${esc(t.id)}'])">${voted?'✓ Voted':'▲ Vote'}</button>
     </div>`;
   }).join(''):'<div class="empty">Be the first to vote!</div>';
 }
