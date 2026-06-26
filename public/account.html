@@ -25,7 +25,7 @@
   .row:last-child{border-bottom:0}
   .row .k{color:var(--muted);font-size:.9rem}
   .row .v{font-weight:700}
-  .pill{display:inline-block;background:var(--neon);color:var(--ink);font-weight:800;font-size:.74rem;padding:4px 12px;border-radius:100px;text-transform:uppercase;letter-spacing:.06em}
+  .pill{display:inline-block;background:var(--neon);color:#0a1228;font-weight:800;font-size:.74rem;padding:4px 12px;border-radius:100px;text-transform:uppercase;letter-spacing:.06em}
   .pill.warn{background:var(--coral);color:#fff}
   .meter{height:10px;background:var(--paper-2);border-radius:100px;overflow:hidden;margin-top:8px}
   .meter .fill{height:100%;background:linear-gradient(90deg,var(--plum),var(--neon))}
@@ -46,7 +46,7 @@
 async function boot(){
   const r=await fetch('/api/me');const d=await r.json();
   const root=document.getElementById('root');
-  if(!d.user){root.innerHTML=`<div class="signed-out"><h1 class="display">'re signed out</h1><p style="margin:14px 0 22px">Log in to manage r plan.</p><a class="btn btn-primary" href="/pricing.html">Go to plans</a></div>`;return;}
+  if(!d.user){root.innerHTML=`<div class="signed-out"><h1 class="display">You're signed out</h1><p style="margin:14px 0 22px">Log in to manage your plan.</p><a class="btn btn-primary" href="/pricing.html">Go to plans</a></div>`;return;}
   const plan=d.plan, used=d.eventsThisMonth||0;
   const cap=plan.maxEventsPerMonth;
   const capLabel=cap===null?'Unlimited':cap;
@@ -66,7 +66,7 @@ async function boot(){
     <h1 class="display">Your account</h1>
     <div class="panel">
       <div class="row"><span class="k">Signed in as</span><span class="v">${esc(d.user.email)}</span></div>
-      <div class="row"><span class="k">Current plan</span><span class="v"><span class="pill ${statusWarn?'warn':''}" ${isComp?'style="background:var(--neon);color:var(--ink)"':''}>${esc(plan.name)}${isComp?' (comp)':''}</span></span></div>
+      <div class="row"><span class="k">Current plan</span><span class="v"><span class="pill ${statusWarn?'warn':''}" ${isComp?'style="background:var(--neon);color:#0a1228"':''}>${esc(plan.name)}${isComp?' (comp)':''}</span></span></div>
       <div class="row"><span class="k">Status</span><span class="v">${esc(status)}</span></div>
       ${compLine}
       ${noPlan ? `
