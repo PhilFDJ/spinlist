@@ -265,7 +265,7 @@ function go(v){
   document.querySelectorAll('.nav-pills button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));
   if(v==='dashboard')renderDashboard();
   if(v==='guest')renderGuest();
-  window.scrollTo({top:0,behavior:'smooth'});
+  try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){ window.scrollTo(0,0); }
 }
 let toastT;
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600);}
