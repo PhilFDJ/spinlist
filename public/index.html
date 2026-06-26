@@ -274,6 +274,7 @@ let toastT;
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600);}
 
 async function createEvent(){
+ try{
   // Hosts must be signed in. Guests never see this screen.
   if(!ME){toast('Please sign in to create an event');setTimeout(()=>location.href='/pricing.html',900);return;}
   const name=document.getElementById('f-name').value.trim()||'Untitled Event';
@@ -296,6 +297,11 @@ async function createEvent(){
   EVENT={id:data.eventId,hostId:data.hostId,name,type,host,votesPer:votes,deadline:new Date(deadline).getTime(),tracks:{},closed:false,maxGuests:data.maxGuests,
     branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
   myVotes={};toast('Event created 🎉');go('dashboard');
+ }catch(err){
+  // Surface the real error so we can see what Safari is choking on.
+  toast('Error: '+(err&&err.message?err.message:err));
+  console.error('createEvent failed:',err);
+ }
 }
 
 function loadDemo(){
