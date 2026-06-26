@@ -46,7 +46,7 @@
 async function boot(){
   const r=await fetch('/api/me');const d=await r.json();
   const root=document.getElementById('root');
-  if(!d.user){root.innerHTML=`<div class="signed-out"><h1 class="display">You're signed out</h1><p style="margin:14px 0 22px">Log in to manage your plan.</p><a class="btn btn-primary" href="/pricing.html">Go to plans</a></div>`;return;}
+  if(!d.user){root.innerHTML=`<div class="signed-out"><h1 class="display">'re signed out</h1><p style="margin:14px 0 22px">Log in to manage r plan.</p><a class="btn btn-primary" href="/pricing.html">Go to plans</a></div>`;return;}
   const plan=d.plan, used=d.eventsThisMonth||0;
   const cap=plan.maxEventsPerMonth;
   const capLabel=cap===null?'Unlimited':cap;
@@ -77,7 +77,7 @@ async function boot(){
       <div class="row" style="display:block">
         <div style="display:flex;justify-content:space-between"><span class="k">Events this month</span><span class="v">${used} / ${capLabel}</span></div>
         <div class="meter"><div class="fill" style="width:${pct}%"></div></div>
-        ${near?'<p style="color:var(--coral);font-size:.85rem;margin-top:8px">You\\'ve hit your monthly limit — upgrade to create more.</p>':''}
+        ${near?'<p style="color:var(--coral);font-size:.85rem;margin-top:8px">You\'ve hit your monthly limit — upgrade to create more.</p>':''}
       </div>`}
     </div>
 
