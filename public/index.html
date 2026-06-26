@@ -127,8 +127,8 @@
     <nav class="nav-pills">
       <button data-v="home" class="active" onclick="go('home')">Home</button>
       <button data-v="create" onclick="go('create')">Create</button>
+      <button data-v="events" onclick="go('events')">My Events</button>
       <button data-v="dashboard" onclick="go('dashboard')">Host</button>
-      <button data-v="guest" onclick="go('guest')">Guest view</button>
     </nav>
     <span id="acct-nav" style="display:flex;gap:10px;align-items:center;font-size:.85rem;font-weight:600"></span>
   </div>
@@ -178,6 +178,17 @@
       <label class="field"><span>Hosted by</span><input id="f-host" placeholder="DJ Marco / The happy couple"></label>
       <button class="btn btn-neon" onclick="createSpinlistEvent()">Generate share link & QR →</button>
     </div>
+  </div>
+</section>
+
+<!-- MY EVENTS -->
+<section class="view" id="events">
+  <div class="wrap">
+    <div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px">
+      <div><h2>My Events</h2><p style="color:var(--muted)">All your events — grab a link, open the leaderboard, or lock voting.</p></div>
+      <button class="btn btn-neon" onclick="go('create')" style="padding:10px 20px">+ New event</button>
+    </div>
+    <div id="events-list"></div>
   </div>
 </section>
 
@@ -265,6 +276,7 @@ function go(v){
   document.querySelectorAll('.nav-pills button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));
   if(v==='dashboard')renderDashboard();
   if(v==='guest')renderGuest();
+  if(v==='events')renderEvents();
   // Safari can throw "Not enough arguments" on the object form of scrollTo,
   // so fall back to the classic two-number signature.
   try{ window.scrollTo({top:0,behavior:'smooth'}); }
@@ -286,7 +298,7 @@ async function createSpinlistEvent(){
 
   // Server checks the plan limit and issues the event id.
   let res;
-  try{ res=await fetch('/api/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type})}); }
+  try{ res=await fetch('/api/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type,host,votesPer:votes,deadline:new Date(deadline).getTime()})}); }
   catch(e){ toast('Network error — try again'); return; }
   const data=await res.json();
   if(!res.ok){
@@ -294,11 +306,14 @@ async function createSpinlistEvent(){
     if(data.upgrade)setTimeout(()=>location.href='/pricing.html',1400);
     return;
   }
-  EVENT={id:data.eventId,hostId:data.hostId,name,type,host,votesPer:votes,deadline:new Date(deadline).getTime(),tracks:{},closed:false,maxGuests:data.maxGuests,
+  // Build local EVENT from the server's authoritative event object.
+  const ev=data.event;
+  EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
+    votesPer:ev.votesPer,deadline:ev.deadline,closed:ev.locked,locked:ev.locked,
+    tracks:{},maxGuests:data.maxGuests,
     branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
   myVotes={};toast('Event created 🎉');go('dashboard');
  }catch(err){
-  // Surface the real error so we can see what Safari is choking on.
   toast('Error: '+(err&&err.message?err.message:err));
   console.error('createSpinlistEvent failed:',err);
  }
@@ -312,21 +327,76 @@ function loadDemo(){
   myVotes={};toast('Demo loaded');go('dashboard');
 }
 
+// ---- My Events list ----
+async function renderEvents(){
+  const el=document.getElementById('events-list');
+  if(!ME){el.innerHTML='<div class="empty"><p>Please <a href="/pricing.html" style="color:var(--plum);font-weight:700">sign in</a> to see your events.</p></div>';return;}
+  el.innerHTML='<div class="empty">Loading your events…</div>';
+  try{
+    const r=await fetch('/api/my-events');const d=await r.json();
+    const list=d.events||[];
+    if(!list.length){el.innerHTML='<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';return;}
+    el.innerHTML=list.map(e=>{
+      const status=e.closed?'<span class="pill-tag" style="background:var(--coral);color:#fff">Locked</span>':'<span class="pill-tag">Open</span>';
+      return `<div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:800;font-size:1.1rem">${esc(e.name)} ${status}</div>
+          <div style="color:var(--muted);font-size:.88rem;margin-top:4px">${esc(e.type)} · ${e.voteCount} votes · ${e.songCount} songs</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(err){ el.innerHTML='<div class="empty">Could not load events.</div>'; }
+}
+
+// Load one of my events into the host dashboard.
+async function openEvent(id){
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(id));
+    if(!r.ok){toast('Could not open event');return;}
+    const d=await r.json();const ev=d.event;
+    EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
+      votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
+      closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),tracks:{},
+      branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
+    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes};});
+    myVotes={};go('dashboard');
+  }catch(e){ toast('Network error'); }
+}
+
 function myVoteCount(){return Object.keys(myVotes).length}
 function votesLeft(){return EVENT.votesPer-myVoteCount()}
 
-function toggleVote(track){
-  if(EVENT.closed||Date.now()>EVENT.deadline){toast('Voting is closed');return;}
+async function toggleVote(track){
+  if(EVENT.closed||EVENT.locked||(EVENT.deadline&&Date.now()>EVENT.deadline)){toast('Voting is closed');return;}
   const id=track.id;
+  let body;
   if(myVotes[id]){
-    delete myVotes[id];EVENT.tracks[id].votes--;
-    if(EVENT.tracks[id].votes<=0)delete EVENT.tracks[id];
+    body={remove:[id]};
   }else{
     if(votesLeft()<=0){toast('No votes left — remove one first');return;}
-    if(!EVENT.tracks[id])EVENT.tracks[id]={...track,votes:0};
-    EVENT.tracks[id].votes++;myVotes[id]=track;
+    body={add:[{id:track.id,uri:track.uri||null,title:track.title,artist:track.artist,art:track.art||''}]};
   }
-  renderGuest();
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/vote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Vote failed');return;}
+    // update local mirror of my votes + the shared tally from the server
+    if(myVotes[id])delete myVotes[id]; else myVotes[id]=track;
+    applyServerEvent(d.event);
+    renderGuest();
+  }catch(e){ toast('Network error — try again'); }
+}
+
+// Merge the server's authoritative track list into local EVENT.
+function applyServerEvent(ev){
+  if(!ev)return;
+  EVENT.locked=ev.locked;EVENT.closed=ev.locked||(ev.deadline&&Date.now()>ev.deadline);
+  EVENT.deadline=ev.deadline;EVENT.votesPer=ev.votesPer;
+  EVENT.tracks={};
+  (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes};});
 }
 
 function ranked(){return Object.values(EVENT.tracks).sort((a,b)=>b.votes-a.votes)}
@@ -346,7 +416,7 @@ function renderDashboard(){
   const st=document.getElementById('dash-status');
   st.textContent=closed?'Voting closed':'Voting open';
   st.style.background=closed?'var(--coral)':'var(--neon)';st.style.color=closed?'#fff':'var(--ink)';
-  document.getElementById('close-btn').textContent=closed?'Re-open voting':'Close voting now';
+  document.getElementById('close-btn').textContent=closed?'Unlock voting':'Lock voting';
   const link=location.origin+location.pathname+'#vote/'+EVENT.id+(EVENT.hostId?('/'+EVENT.hostId):'');
   document.getElementById('share-link').value=link;
   const qrEl=document.getElementById('qr');
@@ -360,6 +430,7 @@ function renderDashboard(){
   renderLeaderboard('leaderboard');
   document.getElementById('total-votes').textContent=totalVotes()+' votes · '+ranked().length+' songs';
   startCountdown();
+  startHostPolling();
 }
 function startCountdown(){
   clearInterval(cdTimer);const el=document.getElementById('countdown');
@@ -379,10 +450,16 @@ function renderLeaderboard(target){
         <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8,t.votes/max*100)}%"></div></div></div>
       <div class="votes-pill">${t.votes}</div></div>`).join(''):'<div class="empty">No votes yet — share the link to get the room started.</div>';
 }
-function toggleDeadline(){
-  if(EVENT.closed||Date.now()>EVENT.deadline){EVENT.closed=false;EVENT.deadline=Date.now()+1000*60*60;toast('Voting re-opened');}
-  else{EVENT.closed=true;toast('Voting closed');}
-  renderDashboard();
+async function toggleDeadline(){
+  const wantLock=!(EVENT.locked||EVENT.closed);
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/lock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({locked:wantLock})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not change lock');return;}
+    EVENT.locked=d.event.locked;EVENT.closed=d.event.locked;
+    toast(wantLock?'Voting locked':'Voting unlocked');
+    renderDashboard();
+  }catch(e){ toast('Network error — try again'); }
 }
 function copyLink(){const inp=document.getElementById('share-link');inp.select();navigator.clipboard?.writeText(inp.value).then(()=>toast('Link copied'),()=>toast('Copied'));}
 function downloadQR(){const img=document.querySelector('#qr img')||document.querySelector('#qr canvas');const url=img.tagName==='IMG'?img.src:img.toDataURL('image/png');const a=document.createElement('a');a.href=url;a.download=(EVENT.name||'event').replace(/\W+/g,'-')+'-QR.png';a.click();toast('QR saved');}
@@ -552,16 +629,69 @@ function renderAcctNav(){
 window.addEventListener('load',async ()=>{
   await loadMe();
   if(location.hash.startsWith('#vote/')){
-    if(!EVENT)loadDemo();
-    // share link form: #vote/<eventId>/<hostId>
+    // share link form: #vote/<eventId>[/<hostId>]
     const parts=location.hash.replace('#vote/','').split('/');
-    const hostId=parts[1];
-    if(hostId){
-      try{const r=await fetch('/api/branding/'+encodeURIComponent(hostId));const d=await r.json();if(d.branding)EVENT.branding=d.branding;}catch(e){}
-    }
+    const eventId=parts[0];
+    await loadGuestEvent(eventId);
     go('guest');
+    startGuestPolling();   // live auto-refresh
   }
 });
+
+// Fetch a real event from the server by id (guest entry point).
+async function loadGuestEvent(eventId){
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(eventId));
+    if(!r.ok){
+      EVENT=null;
+      document.getElementById('guest-empty').style.display='block';
+      document.getElementById('guest-content').style.display='none';
+      return;
+    }
+    const d=await r.json();const ev=d.event;
+    EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
+      votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
+      closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),
+      tracks:{},branding:d.branding||null};
+    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes};});
+  }catch(e){ EVENT=null; }
+}
+
+// Poll the server every few seconds so the leaderboard updates live.
+let guestPollTimer=null;
+function startGuestPolling(){
+  clearInterval(guestPollTimer);
+  guestPollTimer=setInterval(async ()=>{
+    if(!EVENT||!document.getElementById('guest').classList.contains('show'))return;
+    try{
+      const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id));
+      if(!r.ok)return;
+      const d=await r.json();
+      applyServerEvent(d.event);
+      if(d.branding)EVENT.branding=d.branding;
+      renderGuest();
+    }catch(e){}
+  },4000);
+}
+
+// Host dashboard live refresh.
+let hostPollTimer=null;
+function startHostPolling(){
+  clearInterval(hostPollTimer);
+  hostPollTimer=setInterval(async ()=>{
+    if(!EVENT||!document.getElementById('dashboard').classList.contains('show'))return;
+    try{
+      const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id));
+      if(!r.ok)return;
+      const d=await r.json();
+      applyServerEvent(d.event);
+      renderLeaderboard('leaderboard');
+      document.getElementById('total-votes').textContent=totalVotes()+' votes · '+ranked().length+' songs';
+    }catch(e){}
+  },5000);
+}
+
+
 </script>
 </body>
 </html>
