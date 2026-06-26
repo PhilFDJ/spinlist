@@ -300,15 +300,100 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
       upgrade: true,
     });
   }
+
+  const b = req.body || {};
   const id = auth.newId().slice(0, 6).toUpperCase();
-  db.recordEvent(id, req.user.id);
+  db.recordEvent(id, req.user.id);                 // usage counter
+  const event = db.createEvent({                   // the real stored event
+    id,
+    host_id: req.user.id,
+    name: (b.name || 'Untitled Event').toString().slice(0, 120),
+    type: (b.type || 'Event').toString().slice(0, 40),
+    host: (b.host || req.user.name || 'Your host').toString().slice(0, 80),
+    votes_per: Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999)),
+    deadline: b.deadline ? Number(b.deadline) : null,
+    locked: false,
+    created_at: Date.now(),
+  });
   res.json({
     eventId: id,
-    hostId: req.user.id,                 // guest page uses this to fetch branding
-    maxGuests: plan.maxGuestsPerEvent,   // front-end can warn near the cap
+    hostId: req.user.id,
+    maxGuests: plan.maxGuestsPerEvent,
     plan: plan.id,
+    event: publicEvent(event),
   });
 });
+
+// --- list my events (host dashboard) ---
+app.get('/api/my-events', auth.requireAuth, (req, res) => {
+  const events = db.listEventsByHost(req.user.id).map(summaryEvent);
+  res.json({ events });
+});
+
+// --- get one event (PUBLIC — guests load this by id) ---
+app.get('/api/events/:id', (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  // include host branding if their plan allows it
+  let branding = null;
+  const host = db.getUserById(e.host_id);
+  if (host && planHasBranding(host)) branding = db.getBranding(host.id);
+  res.json({ event: publicEvent(e), branding });
+});
+
+// --- lock / unlock voting (host only, own event) ---
+app.post('/api/events/:id/lock', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  const updated = db.setEventLocked(e.id, !!(req.body || {}).locked);
+  res.json({ event: publicEvent(updated) });
+});
+
+// --- delete an event (host only) ---
+app.delete('/api/events/:id', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  db.deleteEvent(e.id);
+  res.json({ ok: true });
+});
+
+// --- cast votes (PUBLIC — guests). body: { add:[track], remove:[trackId] } ---
+app.post('/api/events/:id/vote', (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  const closed = e.locked || (e.deadline && Date.now() > e.deadline);
+  if (closed) return res.status(403).json({ error: 'Voting is closed for this event.' });
+  const b = req.body || {};
+  const add = Array.isArray(b.add) ? b.add.filter(t => t && t.id && t.title).slice(0, 50) : [];
+  const remove = Array.isArray(b.remove) ? b.remove.filter(x => typeof x === 'string').slice(0, 50) : [];
+  const updated = db.applyVotes(e.id, { add, remove });
+  res.json({ event: publicEvent(updated) });
+});
+
+// Shape an event for public/guest consumption (full track list).
+function publicEvent(e) {
+  if (!e) return null;
+  return {
+    id: e.id, name: e.name, type: e.type, host: e.host,
+    votesPer: e.votes_per, deadline: e.deadline,
+    locked: !!e.locked, hostId: e.host_id,
+    tracks: Object.values(e.tracks || {}).sort((a, b) => b.votes - a.votes),
+  };
+}
+// Compact shape for the host's event list.
+function summaryEvent(e) {
+  const closed = e.locked || (e.deadline && Date.now() > e.deadline);
+  const tracks = Object.values(e.tracks || {});
+  return {
+    id: e.id, name: e.name, type: e.type, host: e.host,
+    locked: !!e.locked, closed: !!closed,
+    songCount: tracks.length,
+    voteCount: tracks.reduce((s, t) => s + t.votes, 0),
+    createdAt: e.created_at,
+  };
+}
 
 /* =========================================================
    COMPLIMENTARY & DISCOUNT CODES
