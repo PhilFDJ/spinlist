@@ -54,7 +54,7 @@
   .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:14px 26px;cursor:pointer;font-size:.95rem;transition:transform .15s,box-shadow .15s;display:inline-flex;align-items:center;gap:9px}
   .btn:hover{transform:translateY(-2px)}
   .btn-primary{background:var(--ink);color:var(--paper);box-shadow:var(--shadow)}
-  .btn-neon{background:var(--neon);color:var(--ink)}
+  .btn-neon{background:var(--neon);color:#0a1228}
   .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
   .btn:active{transform:translateY(0)}
   .btn[disabled]{opacity:.4;cursor:not-allowed;transform:none}
@@ -94,7 +94,7 @@
   .track .meta b{display:block;font-size:.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .track .meta small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
   .vote-btn{flex:none;border:0;background:var(--ink);color:var(--paper);font:inherit;font-weight:700;font-size:.82rem;padding:9px 16px;border-radius:100px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:.15s}
-  .vote-btn.voted{background:var(--neon);color:var(--ink)}
+  .vote-btn.voted{background:var(--neon);color:#0a1228}
   .vote-btn:hover{transform:scale(1.04)}
   .votes-pill{flex:none;font-weight:900;font-size:.95rem;min-width:34px;text-align:center}
   .rank{display:flex;align-items:center;gap:16px;padding:14px;border-bottom:1px solid var(--line)}
@@ -112,7 +112,7 @@
   .toast.show{transform:translateX(-50%) translateY(0)}
   .empty{text-align:center;padding:48px 20px;color:var(--muted)}
   .empty .big{font-size:2.4rem;margin-bottom:10px}
-  .pill-tag{display:inline-block;background:var(--neon);color:var(--ink);font-weight:700;font-size:.72rem;padding:4px 11px;border-radius:100px;letter-spacing:.04em}
+  .pill-tag{display:inline-block;background:var(--neon);color:#0a1228;font-weight:700;font-size:.72rem;padding:4px 11px;border-radius:100px;letter-spacing:.04em}
   .role-note{font-size:.8rem;color:var(--muted);background:var(--paper-2);padding:10px 14px;border-radius:10px;margin-bottom:18px}
   .api-warn{background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.4);color:#ffd24a;padding:10px 14px;border-radius:10px;font-size:.82rem;margin-bottom:18px;display:none}
   footer{margin:70px 0 40px;text-align:center;color:var(--muted);font-size:.82rem}
@@ -265,7 +265,10 @@ function go(v){
   document.querySelectorAll('.nav-pills button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));
   if(v==='dashboard')renderDashboard();
   if(v==='guest')renderGuest();
-  try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){ window.scrollTo(0,0); }
+  // Safari can throw "Not enough arguments" on the object form of scrollTo,
+  // so fall back to the classic two-number signature.
+  try{ window.scrollTo({top:0,behavior:'smooth'}); }
+  catch(e){ window.scrollTo(0,0); }
 }
 let toastT;
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600);}
@@ -340,8 +343,14 @@ function renderDashboard(){
   document.getElementById('close-btn').textContent=closed?'Re-open voting':'Close voting now';
   const link=location.origin+location.pathname+'#vote/'+EVENT.id+(EVENT.hostId?('/'+EVENT.hostId):'');
   document.getElementById('share-link').value=link;
-  document.getElementById('qr').innerHTML='';
-  new QRCode(document.getElementById('qr'),{text:link,width:170,height:170,colorDark:'#0d0b14',colorLight:'#ffffff'});
+  const qrEl=document.getElementById('qr');
+  qrEl.innerHTML='';
+  if(typeof QRCode!=='undefined'){
+    try{ new QRCode(qrEl,{text:link,width:170,height:170,colorDark:'#0d0b14',colorLight:'#ffffff'}); }
+    catch(e){ qrEl.innerHTML='<div style="padding:20px;font-size:.8rem;color:var(--muted)">QR unavailable</div>'; }
+  }else{
+    qrEl.innerHTML='<div style="padding:20px;font-size:.8rem;color:var(--muted)">QR code couldn\'t load. The share link above still works.</div>';
+  }
   renderLeaderboard('leaderboard');
   document.getElementById('total-votes').textContent=totalVotes()+' votes · '+ranked().length+' songs';
   startCountdown();
@@ -383,6 +392,7 @@ async function loadImageData(url){
 }
 
 async function exportPDF(){
+  if(!window.jspdf||!window.jspdf.jsPDF){toast('PDF tool could not load — try refreshing');return;}
   const {jsPDF}=window.jspdf;const doc=new jsPDF();const list=ranked();
   const b=EVENT&&EVENT.branding;
   const accent=(b&&b.color&&hexToRgb(b.color))||[91,140,255];   // default electric blue
