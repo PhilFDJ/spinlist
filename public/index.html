@@ -516,15 +516,11 @@ async function exportPDF(){
 function clip(s,n){return (s||'').length>n?s.slice(0,n-1)+'…':s}
 
 function exportSpotify(){
-  /* NEXT STEP: this needs the Authorization Code flow so the DJ
-     logs into THEIR Spotify account, then POST /me/playlists and
-     POST /playlists/{id}/items with the track URIs we already
-     store on each voted track. (Client-Credentials can't write to
-     a user's library.) For now we confirm the URIs are ready. */
+  // Real export (DJ Spotify login + playlist creation) is the next build.
+  // For now, be honest rather than implying it worked.
   const list=ranked();
-  if(!list.length){toast('No songs to export yet');return;}
-  const withUri=list.filter(t=>t.uri);
-  toast('Ready to export '+withUri.length+' tracks. Add the DJ login step to push to Spotify.');
+  if(!list.length){toast('No songs yet — nothing to export');return;}
+  toast('Spotify playlist export is coming soon. Use the PDF export for now.');
 }
 
 /* ---------- GUEST + LIVE SEARCH ---------- */
@@ -605,11 +601,18 @@ function renderResults(tracks){
 
 function renderLeaderboardGuest(){
   const list=ranked().slice(0,10);const max=list.length?list[0].votes:1;
-  document.getElementById('g-leaderboard').innerHTML=list.length?list.map((t,i)=>`
-    <div class="rank"><div class="pos">${i+1}</div>
+  const closed=EVENT.closed||EVENT.locked||(EVENT.deadline&&Date.now()>EVENT.deadline);
+  window.__sr=window.__sr||{};
+  document.getElementById('g-leaderboard').innerHTML=list.length?list.map((t,i)=>{
+    window.__sr[t.id]=t;                       // stash so toggleVote gets the full track
+    const voted=!!myVotes[t.id];
+    return `<div class="rank"><div class="pos">${i+1}</div>
       <div class="bar-wrap"><b>${esc(t.title)}</b> <span style="color:var(--muted)">— ${esc(t.artist)}</span>
         <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8,t.votes/max*100)}%"></div></div></div>
-      <div class="votes-pill">${t.votes}</div></div>`).join(''):'<div class="empty">Be the first to vote!</div>';
+      <div class="votes-pill">${t.votes}</div>
+      <button class="vote-btn ${voted?'voted':''}" ${closed?'disabled style="opacity:.4"':''} onclick="toggleVote(window.__sr['${esc(t.id)}'])">${voted?'✓':'▲'}</button>
+    </div>`;
+  }).join(''):'<div class="empty">Be the first to vote!</div>';
 }
 
 function esc(s){return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
