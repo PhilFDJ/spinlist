@@ -728,15 +728,30 @@ async function exportPDF(){
 }
 function clip(s,n){return (s||'').length>n?s.slice(0,n-1)+'…':s}
 
-function exportSpotify(){
-  // Spotify export is a Studio-tier capability.
-  if(!ME||!(ME.plan==='studio')){
-    toast('Spotify export is a Studio feature. Upgrade to enable it.');
-    return;
-  }
+async function exportSpotify(){
+  if(!ME||ME.plan!=='studio'){toast('Spotify export is a Studio feature. Upgrade to enable it.');return;}
+  if(!EVENT){return;}
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
-  toast('Spotify playlist export is coming soon. Use the PDF export for now.');
+  toast('Exporting to Spotify…');
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/export-spotify',{method:'POST'});
+    const d=await r.json();
+    if(r.ok){
+      toast('Playlist created! Opening Spotify…');
+      if(d.url)window.open(d.url,'_blank');
+      return;
+    }
+    if(d.needsAuth){
+      // Not connected (or expired) — send them through Spotify login.
+      toast('Connecting your Spotify…');
+      const cr=await fetch('/api/spotify/connect');const cd=await cr.json();
+      if(cr.ok&&cd.url){location.href=cd.url;}
+      else toast(cd.error||'Could not start Spotify connect');
+      return;
+    }
+    toast(d.error||'Export failed');
+  }catch(e){ toast('Network error — try again'); }
 }
 
 /* ---------- GUEST + LIVE SEARCH ---------- */

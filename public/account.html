@@ -44,6 +44,13 @@
 
 <script>
 async function boot(){
+  // Handle return from Spotify OAuth
+  const sp=new URLSearchParams(location.search).get('spotify');
+  if(sp){
+    const msgs={connected:'✓ Spotify connected! You can now export playlists from your events.',denied:'Spotify connection was cancelled.',failed:'Spotify connection failed — please try again.',invalid:'Spotify session expired — please try again.'};
+    setTimeout(()=>{const n=document.getElementById('spotify-return');if(n){n.textContent=msgs[sp]||'';n.style.display=msgs[sp]?'block':'none';}},100);
+    history.replaceState({},'','/account.html');
+  }
   const r=await fetch('/api/me');const d=await r.json();
   const root=document.getElementById('root');
   if(!d.user){root.innerHTML=`<div class="signed-out"><h1 class="display">You're signed out</h1><p style="margin:14px 0 22px">Log in to manage your plan.</p><a class="btn btn-primary" href="/pricing.html">Go to plans</a></div>`;return;}
@@ -130,6 +137,16 @@ async function boot(){
       </div>
     `}
 
+    <div id="spotify-return" style="display:none;background:rgba(30,215,96,.14);border:1px solid rgba(30,215,96,.5);color:#1ed760;padding:12px 16px;border-radius:10px;font-size:.9rem;margin:18px 0"></div>
+
+    ${plan.spotifyExport ? `
+      <div class="panel">
+        <h2>Spotify export</h2>
+        <p style="color:var(--muted);font-size:.9rem;margin:4px 0 16px">Connect your Spotify account so you can push an event's voted songs straight into a new playlist.</p>
+        <div id="spotify-box"><p style="color:var(--muted);font-size:.9rem">Checking…</p></div>
+      </div>
+    ` : ''}
+
     <div class="actions">
       <a class="btn btn-primary" href="/">Create an event</a>
       ${(noPlan||isComp)
@@ -149,6 +166,33 @@ async function boot(){
     const url=URL.createObjectURL(f);
     document.getElementById('logo-preview').innerHTML=`<img src="${url}" style="max-width:100%;max-height:100%">`;
   });
+  if(plan.spotifyExport)loadSpotify();
+}
+
+async function loadSpotify(){
+  const box=document.getElementById('spotify-box');if(!box)return;
+  try{
+    const r=await fetch('/api/spotify/status');const d=await r.json();
+    if(d.connected){
+      box.innerHTML=`<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="color:#1ed760;font-weight:700">✓ Connected${d.spotifyUserId?(' as '+esc(d.spotifyUserId)):''}</span>
+        <button class="btn btn-ghost" onclick="disconnectSpotify()" style="padding:8px 14px;font-size:.85rem">Disconnect</button>
+      </div>
+      <p style="color:var(--muted);font-size:.85rem;margin-top:10px">On any event's host page, tap <b>Export to Spotify</b> to create a playlist.</p>`;
+    }else{
+      box.innerHTML=`<button class="btn btn-neon" onclick="connectSpotify()">Connect Spotify</button>`;
+    }
+  }catch(e){ box.innerHTML='<p style="color:var(--muted);font-size:.9rem">Could not check Spotify status.</p>'; }
+}
+async function connectSpotify(){
+  try{
+    const r=await fetch('/api/spotify/connect');const d=await r.json();
+    if(r.ok&&d.url){location.href=d.url;}else alert(d.error||'Could not start Spotify connect.');
+  }catch(e){ alert('Network error.'); }
+}
+async function disconnectSpotify(){
+  await fetch('/api/spotify/disconnect',{method:'POST'});
+  loadSpotify();
 }
 
 async function saveBranding(){
