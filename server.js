@@ -315,6 +315,8 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
     votes_per: Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999)),
     deadline: b.deadline ? Number(b.deadline) : null,
     locked: false,
+    ask_name: !!b.askName,
+    ask_nationality: !!b.askNationality,
     created_at: Date.now(),
   });
   res.json({
@@ -340,7 +342,9 @@ app.get('/api/events/:id', (req, res) => {
   let branding = null;
   const host = db.getUserById(e.host_id);
   if (host && planHasBranding(host)) branding = db.getBranding(host.id);
-  res.json({ event: publicEvent(e), branding });
+  // The host sees requester names; guests do not.
+  const isHost = req.user && req.user.id === e.host_id;
+  res.json({ event: publicEvent(e, isHost), branding });
 });
 
 // --- lock / unlock voting (host only, own event) ---
@@ -391,19 +395,26 @@ app.post('/api/events/:id/vote', (req, res) => {
   // Don't allow new votes on a song that's already been played.
   const add = Array.isArray(b.add) ? b.add.filter(t => t && t.id && t.title && !(e.tracks[t.id] && e.tracks[t.id].played)).slice(0, 50) : [];
   const remove = Array.isArray(b.remove) ? b.remove.filter(x => typeof x === 'string').slice(0, 50) : [];
-  const updated = db.applyVotes(e.id, { add, remove });
+  const guest = (b.guest && typeof b.guest === 'object') ? { name: b.guest.name, nationality: b.guest.nationality } : null;
+  const updated = db.applyVotes(e.id, { add, remove, guest });
   res.json({ event: publicEvent(updated) });
 });
 
 // Shape an event for public/guest consumption (full track list).
-function publicEvent(e) {
+function publicEvent(e, hostView) {
   if (!e) return null;
   return {
     id: e.id, name: e.name, type: e.type, host: e.host,
     votesPer: e.votes_per, deadline: e.deadline,
     locked: !!e.locked, hostId: e.host_id,
+    askName: !!e.ask_name, askNationality: !!e.ask_nationality,
     tracks: Object.values(e.tracks || {})
-      .map(t => ({ id: t.id, uri: t.uri, title: t.title, artist: t.artist, art: t.art, votes: t.votes, played: !!t.played, addedAt: t.addedAt || 0 }))
+      .map(t => {
+        const base = { id: t.id, uri: t.uri, title: t.title, artist: t.artist, art: t.art, votes: t.votes, played: !!t.played, addedAt: t.addedAt || 0 };
+        // Requester names are private to the host — only attach in host view.
+        if (hostView) base.requesters = (t.requesters || []).map(r => ({ name: r.name, nationality: r.nationality }));
+        return base;
+      })
       .sort((a, b) => b.votes - a.votes),
   };
 }
