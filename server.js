@@ -437,6 +437,21 @@ app.post('/api/events/:id/vote', (req, res) => {
   const closed = e.locked || (e.deadline && Date.now() > e.deadline);
   if (closed) return res.status(403).json({ error: 'Voting is closed for this event.' });
   const b = req.body || {};
+
+  // Enforce the host's per-event guest cap (Pro = 75, Studio = unlimited).
+  const host = db.getUserById(e.host_id);
+  const plan = (host && PLANS[host.plan]) || PLANS.none;
+  const cap = plan.maxGuestsPerEvent;            // null = unlimited
+  const guestId = (b.guestId || '').toString().slice(0, 64);
+  // Only gate when this guest is ADDING a vote (joining in); removals are fine.
+  const wantsToAdd = Array.isArray(b.add) && b.add.length > 0;
+  if (guestId && wantsToAdd) {
+    const reg = db.registerGuest(e.id, guestId, cap);
+    if (!reg.allowed) {
+      return res.status(403).json({ error: 'This event has reached its guest limit.', full: true });
+    }
+  }
+
   // Don't allow new votes on a song that's already been played.
   const add = Array.isArray(b.add) ? b.add.filter(t => t && t.id && t.title && !(e.tracks[t.id] && e.tracks[t.id].played)).slice(0, 50) : [];
   const remove = Array.isArray(b.remove) ? b.remove.filter(x => typeof x === 'string').slice(0, 50) : [];
