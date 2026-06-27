@@ -122,6 +122,10 @@
   .mini-btn.done{background:var(--neon);color:#0a1228;border-color:var(--neon)}
   .seg-btn{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:700;font-size:.78rem;padding:7px 14px;border-radius:100px;cursor:pointer;transition:.15s}
   .seg-btn.on{background:var(--ink);color:var(--paper)}
+  .switch-row{display:flex;align-items:center;gap:10px;padding:9px 0;font-size:.92rem;cursor:pointer}
+  .switch-row input{width:18px;height:18px;accent-color:var(--plum);cursor:pointer}
+  .modal-overlay{position:fixed;inset:0;background:rgba(5,8,20,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px}
+  .modal-card{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:28px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.4)}
 </style>
 </head>
 <body>
@@ -181,6 +185,11 @@
         </label>
       </div>
       <label class="field"><span>Hosted by</span><input id="f-host" placeholder="DJ Marco / The happy couple"></label>
+      <div style="margin:6px 0 18px">
+        <span style="display:block;font-size:.82rem;color:var(--muted);margin-bottom:10px">Ask guests a question the first time they join (optional)</span>
+        <label class="switch-row"><input type="checkbox" id="f-ask-name"><span>Ask guests their <b>name</b></span></label>
+        <label class="switch-row"><input type="checkbox" id="f-ask-nat"><span>Ask guests their <b>nationality</b></span></label>
+      </div>
       <button class="btn btn-neon" onclick="createSpinlistEvent()">Generate share link & QR →</button>
     </div>
   </div>
@@ -267,6 +276,20 @@
 </section>
 
 <div class="toast" id="toast"></div>
+
+<!-- GUEST WELCOME MODAL (shown on first scan if the host asks) -->
+<div id="guest-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card">
+    <h3 style="margin:0 0 4px;font-size:1.3rem">Welcome! 👋</h3>
+    <p style="color:var(--muted);margin:0 0 18px;font-size:.9rem">Tell the DJ who's requesting — or skip and just vote.</p>
+    <label class="field" id="gm-name-wrap" style="display:none;margin-bottom:14px"><span>Your name</span><input id="gm-name" maxlength="40" placeholder="e.g. Sarah"></label>
+    <label class="field" id="gm-nat-wrap" style="display:none;margin-bottom:14px"><span>Your nationality</span><input id="gm-nat" maxlength="40" placeholder="e.g. British"></label>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn btn-neon" style="flex:1" onclick="saveGuestInfo()">Let's go</button>
+      <button class="btn btn-ghost" onclick="skipGuestInfo()">Skip</button>
+    </div>
+  </div>
+</div>
 <footer class="wrap">Spinlist — search is powered by the live Spotify Web API via your backend proxy.<br>Voting state here is per-browser; add a shared backend store to sync guests in real time.</footer>
 
 <script>
@@ -305,10 +328,12 @@ async function createSpinlistEvent(){
   const votes=+document.getElementById('f-votes').value;
   let deadline=document.getElementById('f-deadline').value;
   if(!deadline){const d=new Date(Date.now()+1000*60*60*3);deadline=d.toISOString().slice(0,16);}
+  const askName=document.getElementById('f-ask-name').checked;
+  const askNationality=document.getElementById('f-ask-nat').checked;
 
   // Server checks the plan limit and issues the event id.
   let res;
-  try{ res=await fetch('/api/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type,host,votesPer:votes,deadline:new Date(deadline).getTime()})}); }
+  try{ res=await fetch('/api/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type,host,votesPer:votes,deadline:new Date(deadline).getTime(),askName,askNationality})}); }
   catch(e){ toast('Network error — try again'); return; }
   const data=await res.json();
   if(!res.ok){
@@ -389,7 +414,7 @@ async function openEvent(id){
       votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),tracks:{},
       branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
-    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt};});
+    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
     myVotes={};go('dashboard');
   }catch(e){ toast('Network error'); }
 }
@@ -417,6 +442,8 @@ async function toggleVote(track){
   }else{
     if(votesLeft()<=0){toast('No votes left — remove one first');return;}
     body={add:[{id:track.id,uri:track.uri||null,title:track.title,artist:track.artist,art:track.art||''}]};
+    // attach who's requesting, if they told us
+    if(guestInfo&&(guestInfo.name||guestInfo.nationality))body.guest={name:guestInfo.name,nationality:guestInfo.nationality};
   }
   try{
     const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/vote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -435,7 +462,7 @@ function applyServerEvent(ev){
   EVENT.locked=ev.locked;EVENT.closed=ev.locked||(ev.deadline&&Date.now()>ev.deadline);
   EVENT.deadline=ev.deadline;EVENT.votesPer=ev.votesPer;
   EVENT.tracks={};
-  (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt};});
+  (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
 }
 
 function ranked(){return Object.values(EVENT.tracks).sort((a,b)=>b.votes-a.votes)}
@@ -498,12 +525,25 @@ function renderLeaderboard(target){
   document.getElementById(target).innerHTML=list.length?list.map((t,i)=>{
     window.__ht[t.id]=t;
     const played=!!t.played;
+    // Build a "requested by" line from unique requester names/nationalities.
+    let reqLine='';
+    const reqs=(t.requesters||[]).filter(r=>r.name||r.nationality);
+    if(reqs.length){
+      const labels=reqs.map(r=>{
+        const nm=r.name||'Guest';
+        return r.nationality?`${esc(nm)} (${esc(r.nationality)})`:esc(nm);
+      });
+      const shown=labels.slice(0,3).join(', ');
+      const extra=labels.length>3?` +${labels.length-3} more`:'';
+      reqLine=`<div style="font-size:.78rem;color:var(--plum);margin-top:3px">🙋 ${shown}${extra}</div>`;
+    }
     return `<div class="rank" style="${played?'opacity:.55':''}">
       <div class="pos">${sortMode==='voted'?(i+1):'•'}</div>
       <div class="bar-wrap">
         <b>${esc(t.title)}</b> <span style="color:var(--muted)">— ${esc(t.artist)}</span>
         ${played?'<span class="pill-tag" style="margin-left:6px">Played</span>':''}
         <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8,t.votes/max*100)}%"></div></div>
+        ${reqLine}
       </div>
       <div class="votes-pill">${t.votes}</div>
       <button class="mini-btn" title="Copy song" onclick="copySong('${esc(t.id)}')">Copy</button>
@@ -737,8 +777,42 @@ window.addEventListener('load',async ()=>{
     await loadGuestEvent(eventId);
     go('guest');
     startGuestPolling();   // live auto-refresh
+    maybeAskGuest(eventId);
   }
 });
+
+// Per-browser guest identity for this event.
+let guestInfo={name:'',nationality:''};
+function guestKey(eventId){return 'spinlist_guest_'+eventId;}
+function maybeAskGuest(eventId){
+  if(!EVENT||(!EVENT.askName&&!EVENT.askNationality))return;
+  // Already answered/skipped on this browser?
+  let saved=null;
+  try{ saved=JSON.parse(localStorage.getItem(guestKey(eventId))||'null'); }catch(e){}
+  if(saved){ guestInfo={name:saved.name||'',nationality:saved.nationality||''}; return; }
+  // Show only the questions the host enabled.
+  document.getElementById('gm-name-wrap').style.display=EVENT.askName?'block':'none';
+  document.getElementById('gm-nat-wrap').style.display=EVENT.askNationality?'block':'none';
+  document.getElementById('guest-modal').style.display='flex';
+}
+function saveGuestInfo(){
+  guestInfo={
+    name:(document.getElementById('gm-name').value||'').trim().slice(0,40),
+    nationality:(document.getElementById('gm-nat').value||'').trim().slice(0,40),
+  };
+  persistGuest();
+  document.getElementById('guest-modal').style.display='none';
+  if(guestInfo.name)toast('Thanks, '+guestInfo.name+'!');
+}
+function skipGuestInfo(){
+  guestInfo={name:'',nationality:''};
+  persistGuest();   // remember the skip so we don't nag
+  document.getElementById('guest-modal').style.display='none';
+}
+function persistGuest(){
+  const eventId=EVENT&&EVENT.id;if(!eventId)return;
+  try{ localStorage.setItem(guestKey(eventId),JSON.stringify(guestInfo)); }catch(e){}
+}
 
 // When a guest arrives via the share link, strip all host navigation/chrome
 // so they only see the voting page.
@@ -763,9 +837,10 @@ async function loadGuestEvent(eventId){
     const d=await r.json();const ev=d.event;
     EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
       votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
+      askName:ev.askName,askNationality:ev.askNationality,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),
       tracks:{},branding:d.branding||null};
-    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt};});
+    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
   }catch(e){ EVENT=null; }
 }
 
