@@ -186,8 +186,18 @@ app.post('/api/billing/checkout', auth.requireAuth, async (req, res) => {
   if (!priceId) return res.status(500).json({ error: `Missing ${plan.stripePriceEnv} in environment.` });
 
   try {
-    // reuse an existing Stripe customer if we have one
+    // Reuse an existing Stripe customer if we have one — but verify it still
+    // exists in the CURRENT Stripe environment. A customer saved while testing
+    // in live mode won't exist in a sandbox (and vice versa), so we recreate.
     let customerId = req.user.stripe_customer;
+    if (customerId) {
+      try {
+        const existing = await stripe.customers.retrieve(customerId);
+        if (!existing || existing.deleted) customerId = null;
+      } catch (e) {
+        customerId = null;   // not found in this environment
+      }
+    }
     if (!customerId) {
       const customer = await stripe.customers.create({ email: req.user.email, metadata: { userId: req.user.id } });
       customerId = customer.id;
