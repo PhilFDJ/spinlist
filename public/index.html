@@ -244,6 +244,7 @@
           <button class="btn btn-primary" onclick="exportPDF()">⬇ Download DJ PDF</button>
           <button class="btn btn-neon" onclick="exportSpotify()">Export to Spotify ▸</button>
           <button class="btn btn-ghost" onclick="toggleDeadline()" id="close-btn">Close voting now</button>
+          <button class="btn btn-ghost" onclick="openEditModal(EVENT.id)">✎ Edit event</button>
         </div>
       </div>
     </div>
@@ -276,6 +277,35 @@
 </section>
 
 <div class="toast" id="toast"></div>
+
+<!-- EDIT EVENT MODAL (host) -->
+<div id="edit-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card" style="max-width:520px">
+    <h3 style="margin:0 0 4px;font-size:1.3rem">Edit event</h3>
+    <p style="color:var(--muted);margin:0 0 18px;font-size:.86rem">The share link and QR code stay the same.</p>
+    <label class="field" style="margin-bottom:12px"><span>Event name</span><input id="ed-name" maxlength="120"></label>
+    <div class="grid-2">
+      <label class="field"><span>Event type</span>
+        <select id="ed-type"><option>Wedding</option><option>Birthday</option><option>Prom</option><option>Corporate party</option><option>Festival stage</option><option>House party</option><option>Other</option></select>
+      </label>
+      <label class="field"><span>Votes per guest</span>
+        <select id="ed-votes"><option value="3">3 votes</option><option value="5">5 votes</option><option value="10">10 votes</option><option value="999">Unlimited</option></select>
+      </label>
+    </div>
+    <div class="grid-2" style="margin-top:12px">
+      <label class="field"><span>Hosted by</span><input id="ed-host" maxlength="80"></label>
+      <label class="field"><span>Vote deadline</span><input id="ed-deadline" type="datetime-local"></label>
+    </div>
+    <div style="margin:14px 0 18px">
+      <label class="switch-row"><input type="checkbox" id="ed-ask-name"><span>Ask guests their <b>name</b></span></label>
+      <label class="switch-row"><input type="checkbox" id="ed-ask-nat"><span>Ask guests their <b>nationality</b></span></label>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-neon" style="flex:1" onclick="saveEventEdits()">Save changes</button>
+      <button class="btn btn-ghost" onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <!-- GUEST WELCOME MODAL (shown on first scan if the host asks) -->
 <div id="guest-modal" class="modal-overlay" style="display:none">
@@ -395,6 +425,7 @@ async function renderEvents(){
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>
+          <button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="openEditModal('${e.id}')">Edit</button>
           ${archiveBtn}
         </div>
       </div>`;
@@ -427,6 +458,52 @@ async function archiveEvent(id,archived){
     if(!r.ok){toast(d.error||'Could not update');return;}
     toast(archived?'Event archived':'Event restored');
     renderEvents();
+  }catch(e){ toast('Network error'); }
+}
+
+// ---- Edit event ----
+let editingId=null;
+async function openEditModal(id){
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(id));
+    if(!r.ok){toast('Could not load event');return;}
+    const ev=(await r.json()).event;
+    editingId=id;
+    document.getElementById('ed-name').value=ev.name||'';
+    document.getElementById('ed-type').value=ev.type||'Other';
+    document.getElementById('ed-host').value=ev.host||'';
+    document.getElementById('ed-votes').value=String(ev.votesPer||5);
+    // datetime-local needs YYYY-MM-DDTHH:MM in local time
+    if(ev.deadline){const d=new Date(ev.deadline);const pad=n=>String(n).padStart(2,'0');
+      document.getElementById('ed-deadline').value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;}
+    else document.getElementById('ed-deadline').value='';
+    document.getElementById('ed-ask-name').checked=!!ev.askName;
+    document.getElementById('ed-ask-nat').checked=!!ev.askNationality;
+    document.getElementById('edit-modal').style.display='flex';
+  }catch(e){ toast('Network error'); }
+}
+function closeEditModal(){document.getElementById('edit-modal').style.display='none';editingId=null;}
+async function saveEventEdits(){
+  if(!editingId)return;
+  const dl=document.getElementById('ed-deadline').value;
+  const body={
+    name:document.getElementById('ed-name').value.trim()||'Untitled Event',
+    type:document.getElementById('ed-type').value,
+    host:document.getElementById('ed-host').value.trim()||'Your host',
+    votesPer:+document.getElementById('ed-votes').value,
+    deadline:dl?new Date(dl).getTime():null,
+    askName:document.getElementById('ed-ask-name').checked,
+    askNationality:document.getElementById('ed-ask-nat').checked,
+  };
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(editingId)+'/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not save');return;}
+    toast('Event updated');
+    // refresh whichever view is open
+    if(EVENT&&EVENT.id===editingId){applyServerEvent(d.event);EVENT.name=d.event.name;EVENT.type=d.event.type;EVENT.host=d.event.host;EVENT.askName=d.event.askName;EVENT.askNationality=d.event.askNationality;renderDashboard();}
+    closeEditModal();
+    if(document.getElementById('events').classList.contains('show'))renderEvents();
   }catch(e){ toast('Network error'); }
 }
 
