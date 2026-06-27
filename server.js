@@ -365,6 +365,24 @@ app.post('/api/events/:id/archive', auth.requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// --- edit an event's details (host only). Share link/id never change. ---
+app.post('/api/events/:id/update', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  const fields = {};
+  if (b.name !== undefined) fields.name = (b.name || 'Untitled Event').toString().slice(0, 120);
+  if (b.type !== undefined) fields.type = (b.type || 'Event').toString().slice(0, 40);
+  if (b.host !== undefined) fields.host = (b.host || 'Your host').toString().slice(0, 80);
+  if (b.votesPer !== undefined) fields.votes_per = Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999));
+  if (b.deadline !== undefined) fields.deadline = b.deadline ? Number(b.deadline) : null;
+  if (b.askName !== undefined) fields.ask_name = !!b.askName;
+  if (b.askNationality !== undefined) fields.ask_nationality = !!b.askNationality;
+  const updated = db.updateEvent(e.id, fields);
+  res.json({ event: publicEvent(updated, true) });
+});
+
 // --- delete an event (host only) ---
 app.delete('/api/events/:id', auth.requireAuth, (req, res) => {
   const e = db.getEvent(req.params.id);
