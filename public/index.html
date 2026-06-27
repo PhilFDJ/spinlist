@@ -129,7 +129,7 @@
 <header class="bar">
   <div class="wrap">
     <div class="logo" onclick="go('home')"><span class="dot"></span>Spinlist</div>
-    <nav class="nav-pills">
+    <nav class="nav-pills" id="main-nav">
       <button data-v="home" class="active" onclick="go('home')">Home</button>
       <button data-v="create" onclick="go('create')">Create</button>
       <button data-v="events" onclick="go('events')">My Events</button>
@@ -729,6 +729,8 @@ function renderAcctNav(){
 window.addEventListener('load',async ()=>{
   await loadMe();
   if(location.hash.startsWith('#vote/')){
+    guestMode=true;
+    applyGuestChrome();
     // share link form: #vote/<eventId>[/<hostId>]
     const parts=location.hash.replace('#vote/','').split('/');
     const eventId=parts[0];
@@ -737,6 +739,16 @@ window.addEventListener('load',async ()=>{
     startGuestPolling();   // live auto-refresh
   }
 });
+
+// When a guest arrives via the share link, strip all host navigation/chrome
+// so they only see the voting page.
+let guestMode=false;
+function applyGuestChrome(){
+  if(!guestMode)return;
+  const nav=document.getElementById('main-nav');if(nav)nav.style.display='none';
+  const acct=document.getElementById('acct-nav');if(acct)acct.style.display='none';
+  const logo=document.querySelector('.logo');if(logo){logo.onclick=null;logo.style.cursor='default';}
+}
 
 // Fetch a real event from the server by id (guest entry point).
 async function loadGuestEvent(eventId){
