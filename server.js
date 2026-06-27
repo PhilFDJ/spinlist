@@ -839,7 +839,7 @@ app.post('/api/events/:id/export-spotify', auth.requireAuth, async (req, res) =>
     // Add tracks in batches of 100 (API max per request).
     for (let i = 0; i < uris.length; i += 100) {
       const batch = uris.slice(i, i + 100);
-      const add = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
+      const add = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ uris: batch }),
