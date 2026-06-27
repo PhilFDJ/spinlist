@@ -753,7 +753,10 @@ function renderBranding(){
   if(b&&(b.logo||b.tagline)){
     el.style.display='flex';
     if(b.color)el.style.borderColor=b.color;
-    el.innerHTML=`${b.logo?`<img src="${esc(b.logo)}" alt="" style="height:46px;width:auto;border-radius:8px">`:''}
+    // Build an absolute URL so it resolves the same on every device/in-app browser.
+    let logoSrc='';
+    if(b.logo){ logoSrc = /^https?:\/\//i.test(b.logo) ? b.logo : (location.origin + (b.logo.charAt(0)==='/'?'':'/') + b.logo); }
+    el.innerHTML=`${b.logo?`<img src="${esc(logoSrc)}" alt="" referrerpolicy="no-referrer" style="height:46px;width:auto;max-width:60%;border-radius:8px;object-fit:contain" onerror="this.style.display='none'">`:''}
       ${b.tagline?`<span style="font-weight:700;font-size:1rem">${esc(b.tagline)}</span>`:''}`;
   }else{el.style.display='none';}
   // tint the vote bars / accents to the host colour if set
