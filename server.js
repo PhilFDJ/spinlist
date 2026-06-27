@@ -696,6 +696,168 @@ function safeUnlink(publicPath) {
 }
 
 /* =========================================================
+   SPOTIFY PLAYLIST EXPORT (OAuth Authorization Code flow)
+   ---------------------------------------------------------
+   The DJ logs into THEIR Spotify, we store their tokens, then
+   create a playlist in their account from the event's voted
+   tracks. Studio plan only.
+   ========================================================= */
+const SPOTIFY_REDIRECT = `${BASE_URL}/api/spotify/callback`;
+const SPOTIFY_SCOPE = 'playlist-modify-public playlist-modify-private';
+// short-lived state -> userId, to tie the callback back to the signed-in host
+const spotifyStates = new Map();
+
+// Step 1: start the OAuth handshake (host must be signed in + Studio).
+app.get('/api/spotify/connect', auth.requireAuth, (req, res) => {
+  const plan = PLANS[req.user.plan];
+  if (!plan || !plan.spotifyExport) {
+    return res.status(403).json({ error: 'Spotify export is a Studio feature.' });
+  }
+  const state = crypto.randomBytes(16).toString('hex');
+  spotifyStates.set(state, { userId: req.user.id, at: Date.now() });
+  // clean up old states (10 min)
+  for (const [k, v] of spotifyStates) if (Date.now() - v.at > 600000) spotifyStates.delete(k);
+  const url = new URL('https://accounts.spotify.com/authorize');
+  url.searchParams.set('client_id', CLIENT_ID);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('redirect_uri', SPOTIFY_REDIRECT);
+  url.searchParams.set('scope', SPOTIFY_SCOPE);
+  url.searchParams.set('state', state);
+  res.json({ url: url.toString() });
+});
+
+// Step 2: Spotify redirects back here with a code.
+app.get('/api/spotify/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error) return res.redirect('/account.html?spotify=denied');
+  const entry = state && spotifyStates.get(state);
+  if (!entry) return res.redirect('/account.html?spotify=invalid');
+  spotifyStates.delete(state);
+  try {
+    const creds = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+    const r = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: code.toString(),
+        redirect_uri: SPOTIFY_REDIRECT,
+      }),
+    });
+    if (!r.ok) return res.redirect('/account.html?spotify=failed');
+    const t = await r.json();
+    // fetch the user's Spotify id (needed for some calls / display)
+    let spotifyUserId = null;
+    try {
+      const me = await fetch('https://api.spotify.com/v1/me', { headers: { Authorization: `Bearer ${t.access_token}` } });
+      if (me.ok) spotifyUserId = (await me.json()).id;
+    } catch (_) {}
+    db.setSpotifyAuth(entry.userId, {
+      accessToken: t.access_token,
+      refreshToken: t.refresh_token,
+      expiresAt: Date.now() + t.expires_in * 1000,
+      spotifyUserId,
+    });
+    res.redirect('/account.html?spotify=connected');
+  } catch (e) {
+    res.redirect('/account.html?spotify=failed');
+  }
+});
+
+// Disconnect Spotify.
+app.post('/api/spotify/disconnect', auth.requireAuth, (req, res) => {
+  db.clearSpotifyAuth(req.user.id);
+  res.json({ ok: true });
+});
+
+// Whether the current host has Spotify connected.
+app.get('/api/spotify/status', auth.requireAuth, (req, res) => {
+  const u = db.getUserById(req.user.id);
+  res.json({ connected: !!(u && u.spotify_refresh), spotifyUserId: u && u.spotify_user_id });
+});
+
+// Get a valid access token for a user, refreshing if needed.
+async function getUserSpotifyToken(userId) {
+  const u = db.getUserById(userId);
+  if (!u || !u.spotify_refresh) return null;
+  if (u.spotify_access && Date.now() < (u.spotify_expires || 0) - 30000) return u.spotify_access;
+  // refresh
+  const creds = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+  const r = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: u.spotify_refresh }),
+  });
+  if (!r.ok) return null;
+  const t = await r.json();
+  db.setSpotifyAuth(userId, {
+    accessToken: t.access_token,
+    refreshToken: t.refresh_token,   // may be undefined; db keeps the old one
+    expiresAt: Date.now() + t.expires_in * 1000,
+  });
+  return t.access_token;
+}
+
+// Step 3: create a playlist in the DJ's account from an event's tracks.
+app.post('/api/events/:id/export-spotify', auth.requireAuth, async (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  const plan = PLANS[req.user.plan];
+  if (!plan || !plan.spotifyExport) return res.status(403).json({ error: 'Spotify export is a Studio feature.' });
+
+  const token = await getUserSpotifyToken(req.user.id);
+  if (!token) return res.status(401).json({ error: 'Connect your Spotify account first.', needsAuth: true });
+
+  // Collect track URIs (top voted first), skipping any without a Spotify URI.
+  const uris = Object.values(e.tracks || {})
+    .sort((a, b) => b.votes - a.votes)
+    .map(t => t.uri)
+    .filter(u => typeof u === 'string' && u.startsWith('spotify:track:'));
+  if (!uris.length) return res.status(400).json({ error: 'No Spotify tracks to export yet.' });
+
+  try {
+    // Create the playlist on the current user (POST /me/playlists — the
+    // per-user endpoint was removed in Feb 2026).
+    const makeP = await fetch('https://api.spotify.com/v1/me/playlists', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `${e.name} — Spinlist`,
+        description: `Crowd-voted setlist from ${e.name}, built with Spinlist.`,
+        public: false,
+      }),
+    });
+    if (!makeP.ok) {
+      const errTxt = await makeP.text();
+      console.error('Spotify create playlist failed:', makeP.status, errTxt);
+      if (makeP.status === 401) return res.status(401).json({ error: 'Spotify session expired — reconnect.', needsAuth: true });
+      return res.status(502).json({ error: 'Could not create the playlist on Spotify.' });
+    }
+    const playlist = await makeP.json();
+
+    // Add tracks in batches of 100 (API max per request).
+    for (let i = 0; i < uris.length; i += 100) {
+      const batch = uris.slice(i, i + 100);
+      const add = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uris: batch }),
+      });
+      if (!add.ok) {
+        const errTxt = await add.text();
+        console.error('Spotify add tracks failed:', add.status, errTxt);
+        return res.status(502).json({ error: 'Playlist created, but adding some tracks failed.', url: playlist.external_urls?.spotify });
+      }
+    }
+    res.json({ ok: true, url: playlist.external_urls?.spotify, count: uris.length });
+  } catch (err) {
+    console.error('export-spotify error:', err.message);
+    res.status(500).json({ error: 'Spotify export failed.' });
+  }
+});
+
+/* =========================================================
    SPOTIFY SEARCH PROXY (unchanged)
    ========================================================= */
 let cachedToken = null;
