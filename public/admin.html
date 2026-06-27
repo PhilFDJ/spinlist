@@ -41,6 +41,8 @@
   .badge.comp{background:rgba(198,242,78,.16);color:var(--neon)}
   .badge.discount{background:rgba(91,140,255,.18);color:var(--plum)}
   .badge.off{background:rgba(255,107,94,.16);color:var(--coral)}
+  .badge.paying{background:rgba(91,140,255,.18);color:var(--plum)}
+  .badge.free{background:rgba(160,170,190,.16);color:var(--muted)}
   .msg{font-size:.9rem;margin-top:12px;min-height:18px}
   .signed-out{text-align:center;padding:80px 20px;color:var(--muted)}
   .hint{color:var(--muted);font-size:.82rem;margin-top:4px}
@@ -105,9 +107,16 @@ async function boot(){
     <div class="panel">
       <h2>Your codes</h2>
       <div id="code-list"><p style="color:var(--muted);font-size:.9rem;margin-top:8px">Loading…</p></div>
+    </div>
+
+    <div class="panel">
+      <h2>Hosts &amp; subscribers</h2>
+      <div id="users-summary" style="color:var(--muted);font-size:.9rem;margin:4px 0 14px"></div>
+      <div id="users-list"><p style="color:var(--muted);font-size:.9rem;margin-top:8px">Loading…</p></div>
     </div>`;
   setKind('comp');
   loadCodes();
+  loadUsers();
 }
 
 let KIND='comp';
@@ -170,6 +179,37 @@ async function toggleCode(code){
   await fetch('/api/admin/codes/'+encodeURIComponent(code)+'/toggle',{method:'POST'});
   loadCodes();
 }
+
+async function loadUsers(){
+  const list=document.getElementById('users-list');
+  try{
+    const r=await fetch('/api/admin/users');const d=await r.json();
+    if(!r.ok){list.innerHTML='<p style="color:var(--muted);font-size:.9rem">Could not load.</p>';return;}
+    const s=d.summary||{};
+    document.getElementById('users-summary').textContent=`${s.total||0} hosts · ${s.paying||0} paying · ${s.comp||0} comp · ${s.free||0} free`;
+    if(!d.users||!d.users.length){list.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:8px">No hosts have signed up yet.</p>';return;}
+    const badge=st=>{
+      const map={paying:['Paying','paying'],comp:['Comp','comp'],active:['Active','comp'],free:['Free','free']};
+      const [label,cls]=map[st]||['Free','free'];
+      return `<span class="badge ${cls}">${label}</span>`;
+    };
+    list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th>Events</th><th>Joined</th></tr></thead><tbody>${
+      d.users.map(u=>{
+        const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
+        const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';
+        return `<tr>
+          <td><code>${esc(u.email)}</code>${adminTag}</td>
+          <td>${esc(u.name||'—')}</td>
+          <td>${esc(u.planName)}</td>
+          <td>${badge(u.status)}</td>
+          <td>${u.eventsCreated}</td>
+          <td>${joined}</td>
+        </tr>`;
+      }).join('')
+    }</tbody></table>`;
+  }catch(e){ list.innerHTML='<p style="color:var(--muted);font-size:.9rem">Could not load hosts.</p>'; }
+}
+
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}
 function esc(s){return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 boot();
