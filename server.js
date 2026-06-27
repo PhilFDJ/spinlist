@@ -825,7 +825,7 @@ app.post('/api/events/:id/export-spotify', auth.requireAuth, async (req, res) =>
       body: JSON.stringify({
         name: `${e.name} — Spinlist`,
         description: `Crowd-voted setlist from ${e.name}, built with Spinlist.`,
-        public: false,
+        public: true,
       }),
     });
     if (!makeP.ok) {
