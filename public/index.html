@@ -242,7 +242,7 @@
         <div id="leaderboard"></div>
         <div class="export-row">
           <button class="btn btn-primary" onclick="exportPDF()">⬇ Download DJ PDF</button>
-          <button class="btn btn-neon" onclick="exportSpotify()">Export to Spotify ▸</button>
+          <button class="btn btn-neon" id="spotify-btn" onclick="exportSpotify()" style="display:none">Export to Spotify ▸</button>
           <button class="btn btn-ghost" onclick="toggleDeadline()" id="close-btn">Close voting now</button>
           <button class="btn btn-ghost" onclick="openEditModal(EVENT.id)">✎ Edit event</button>
         </div>
@@ -522,10 +522,15 @@ async function toggleVote(track){
     // attach who's requesting, if they told us
     if(guestInfo&&(guestInfo.name||guestInfo.nationality))body.guest={name:guestInfo.name,nationality:guestInfo.nationality};
   }
+  body.guestId=getGuestId();   // anonymous per-browser id for the guest cap
   try{
     const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/vote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();
-    if(!r.ok){toast(d.error||'Vote failed');return;}
+    if(!r.ok){
+      if(d.full){toast('Sorry — this event is full and isn\'t taking new guests.');}
+      else toast(d.error||'Vote failed');
+      return;
+    }
     // update local mirror of my votes + the shared tally from the server
     if(myVotes[id])delete myVotes[id]; else myVotes[id]=track;
     applyServerEvent(d.event);
@@ -566,6 +571,8 @@ function renderDashboard(){
   document.getElementById('dash-name').textContent=EVENT.name;
   document.getElementById('dash-type').textContent=EVENT.type;
   document.getElementById('dash-host').textContent='Hosted by '+EVENT.host;
+  // Spotify export is Studio-only
+  const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.plan==='studio')?'inline-flex':'none';
   const closed=EVENT.closed||Date.now()>EVENT.deadline;
   const st=document.getElementById('dash-status');
   st.textContent=closed?'Voting closed':'Voting open';
@@ -722,8 +729,11 @@ async function exportPDF(){
 function clip(s,n){return (s||'').length>n?s.slice(0,n-1)+'…':s}
 
 function exportSpotify(){
-  // Real export (DJ Spotify login + playlist creation) is the next build.
-  // For now, be honest rather than implying it worked.
+  // Spotify export is a Studio-tier capability.
+  if(!ME||!(ME.plan==='studio')){
+    toast('Spotify export is a Studio feature. Upgrade to enable it.');
+    return;
+  }
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
   toast('Spotify playlist export is coming soon. Use the PDF export for now.');
@@ -864,6 +874,16 @@ window.addEventListener('load',async ()=>{
 // Per-browser guest identity for this event.
 let guestInfo={name:'',nationality:''};
 function guestKey(eventId){return 'spinlist_guest_'+eventId;}
+// A stable anonymous ID for this browser, used to count unique guests.
+function getGuestId(){
+  let id=null;
+  try{ id=localStorage.getItem('spinlist_guest_id'); }catch(e){}
+  if(!id){
+    id='g_'+Math.random().toString(36).slice(2)+Date.now().toString(36);
+    try{ localStorage.setItem('spinlist_guest_id',id); }catch(e){}
+  }
+  return id;
+}
 function maybeAskGuest(eventId){
   if(!EVENT||(!EVENT.askName&&!EVENT.askNationality))return;
   // Already answered/skipped on this browser?
