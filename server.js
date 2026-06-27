@@ -515,6 +515,44 @@ app.get('/api/admin/codes', requireAdmin, (_req, res) => {
   res.json({ codes: db.listCodes() });
 });
 
+// --- admin: list all registered hosts + their subscription status ---
+app.get('/api/admin/users', requireAdmin, (_req, res) => {
+  const now = Date.now();
+  const users = db.listAllUsers().map(u => {
+    // Classify the account's billing status.
+    let status = 'free';            // signed up, no plan
+    if (u.plan && u.plan !== 'none') {
+      if (u.sub_status === 'comp') {
+        status = (u.comp_until && now > u.comp_until) ? 'free' : 'comp';
+      } else if (u.sub_status === 'active' || u.stripe_sub) {
+        status = 'paying';
+      } else {
+        status = 'active';          // has a plan, non-Stripe (e.g. legacy/manual)
+      }
+    }
+    const planName = (PLANS[u.plan] && PLANS[u.plan].name) || 'None';
+    return {
+      email: u.email,
+      name: u.name || '',
+      plan: u.plan || 'none',
+      planName,
+      status,                       // 'paying' | 'comp' | 'active' | 'free'
+      compUntil: u.comp_until || null,
+      compCode: u.comp_code || null,
+      eventsCreated: db.listEventsByHost(u.id).length,
+      isAdmin: ADMIN_EMAILS.includes(u.email.toLowerCase()),
+      createdAt: u.created_at || null,
+    };
+  });
+  const summary = {
+    total: users.length,
+    paying: users.filter(u => u.status === 'paying').length,
+    comp: users.filter(u => u.status === 'comp').length,
+    free: users.filter(u => u.status === 'free' || u.status === 'active').length,
+  };
+  res.json({ users, summary });
+});
+
 // --- admin: enable/disable a code ---
 app.post('/api/admin/codes/:code/toggle', requireAdmin, (req, res) => {
   const c = db.getCode(req.params.code);
