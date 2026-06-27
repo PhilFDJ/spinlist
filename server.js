@@ -245,7 +245,14 @@ function handleStripeEvent(event) {
       const s = event.data.object;
       const userId = s.metadata?.userId || s.client_reference_id;
       if (userId && s.customer) db.setStripeCustomer(userId, s.customer);
-      // plan is set authoritatively by the subscription.* events below
+      // Set the plan here too — checkout completion is a reliable "they paid"
+      // signal. The subscription.* events below also set it (idempotent), but
+      // this guarantees the upgrade even if those events are delayed/missing.
+      if (userId && s.mode === 'subscription') {
+        const user = db.getUserById(userId);
+        const planId = s.metadata?.plan || 'pro';
+        if (user) db.setPlan(user.id, { plan: planId, sub_status: 'active', stripe_sub: s.subscription || null });
+      }
       break;
     }
     case 'customer.subscription.created':
