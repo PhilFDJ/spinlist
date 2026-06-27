@@ -272,7 +272,13 @@ function handleStripeEvent(event) {
     case 'customer.subscription.deleted': {
       const sub = event.data.object;
       const user = resolveUser(sub);
-      if (user) db.setPlan(user.id, { plan: 'none', sub_status: 'canceled', stripe_sub: null });
+      // Only drop access if the deleted subscription is the one currently on
+      // file. When a user upgrades/downgrades, an OLD subscription can be
+      // deleted while a NEW active one exists — deleting the old must not wipe
+      // the new plan.
+      if (user && (!user.stripe_sub || user.stripe_sub === sub.id)) {
+        db.setPlan(user.id, { plan: 'none', sub_status: 'canceled', stripe_sub: null });
+      }
       break;
     }
     case 'invoice.payment_failed': {
