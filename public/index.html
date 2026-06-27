@@ -171,7 +171,7 @@
       <div class="grid-2">
         <label class="field"><span>Event name</span><input id="f-name" placeholder="Sam & Riley's Wedding"></label>
         <label class="field"><span>Event type</span>
-          <select id="f-type"><option>Wedding</option><option>Birthday</option><option>Corporate party</option><option>Festival stage</option><option>House party</option><option>Other</option></select>
+          <select id="f-type"><option>Wedding</option><option>Birthday</option><option>Prom</option><option>Corporate party</option><option>Festival stage</option><option>House party</option><option>Other</option></select>
         </label>
       </div>
       <div class="grid-2">
@@ -338,16 +338,31 @@ function loadDemo(){
 }
 
 // ---- My Events list ----
+let eventsView='active';   // 'active' | 'archived'
+function setEventsView(v){eventsView=v;renderEvents();}
 async function renderEvents(){
   const el=document.getElementById('events-list');
   if(!ME){el.innerHTML='<div class="empty"><p>Please <a href="/pricing.html" style="color:var(--plum);font-weight:700">sign in</a> to see your events.</p></div>';return;}
   el.innerHTML='<div class="empty">Loading your events…</div>';
   try{
     const r=await fetch('/api/my-events');const d=await r.json();
-    const list=d.events||[];
-    if(!list.length){el.innerHTML='<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';return;}
-    el.innerHTML=list.map(e=>{
+    const all=d.events||[];
+    const active=all.filter(e=>!e.archived);
+    const archived=all.filter(e=>e.archived);
+    const list=eventsView==='archived'?archived:active;
+
+    const toggle=`<div style="display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;margin-bottom:18px;width:fit-content">
+      <button class="seg-btn ${eventsView==='active'?'on':''}" onclick="setEventsView('active')">Active (${active.length})</button>
+      <button class="seg-btn ${eventsView==='archived'?'on':''}" onclick="setEventsView('archived')">Archived (${archived.length})</button>
+    </div>`;
+
+    if(!all.length){el.innerHTML='<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';return;}
+
+    const rows=list.length?list.map(e=>{
       const status=e.closed?'<span class="pill-tag" style="background:var(--coral);color:#fff">Locked</span>':'<span class="pill-tag">Open</span>';
+      const archiveBtn=e.archived
+        ? `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveEvent('${e.id}',false)">Restore</button>`
+        : `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveEvent('${e.id}',true)">Archive</button>`;
       return `<div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
         <div>
           <div style="font-weight:800;font-size:1.1rem">${esc(e.name)} ${status}</div>
@@ -355,9 +370,12 @@ async function renderEvents(){
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>
+          ${archiveBtn}
         </div>
       </div>`;
-    }).join('');
+    }).join(''):`<div class="empty">No ${eventsView} events.</div>`;
+
+    el.innerHTML=toggle+rows;
   }catch(err){ el.innerHTML='<div class="empty">Could not load events.</div>'; }
 }
 
@@ -373,6 +391,17 @@ async function openEvent(id){
       branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
     (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt};});
     myVotes={};go('dashboard');
+  }catch(e){ toast('Network error'); }
+}
+
+// Archive or restore an event (host).
+async function archiveEvent(id,archived){
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(id)+'/archive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({archived})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not update');return;}
+    toast(archived?'Event archived':'Event restored');
+    renderEvents();
   }catch(e){ toast('Network error'); }
 }
 
