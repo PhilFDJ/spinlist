@@ -361,6 +361,17 @@ app.delete('/api/events/:id', auth.requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// --- mark a song played / unplayed (host only) ---
+app.post('/api/events/:id/played', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  if (!b.trackId) return res.status(400).json({ error: 'trackId required.' });
+  const updated = db.setPlayed(e.id, b.trackId, !!b.played);
+  res.json({ event: publicEvent(updated) });
+});
+
 // --- cast votes (PUBLIC — guests). body: { add:[track], remove:[trackId] } ---
 app.post('/api/events/:id/vote', (req, res) => {
   const e = db.getEvent(req.params.id);
@@ -368,7 +379,8 @@ app.post('/api/events/:id/vote', (req, res) => {
   const closed = e.locked || (e.deadline && Date.now() > e.deadline);
   if (closed) return res.status(403).json({ error: 'Voting is closed for this event.' });
   const b = req.body || {};
-  const add = Array.isArray(b.add) ? b.add.filter(t => t && t.id && t.title).slice(0, 50) : [];
+  // Don't allow new votes on a song that's already been played.
+  const add = Array.isArray(b.add) ? b.add.filter(t => t && t.id && t.title && !(e.tracks[t.id] && e.tracks[t.id].played)).slice(0, 50) : [];
   const remove = Array.isArray(b.remove) ? b.remove.filter(x => typeof x === 'string').slice(0, 50) : [];
   const updated = db.applyVotes(e.id, { add, remove });
   res.json({ event: publicEvent(updated) });
@@ -381,7 +393,9 @@ function publicEvent(e) {
     id: e.id, name: e.name, type: e.type, host: e.host,
     votesPer: e.votes_per, deadline: e.deadline,
     locked: !!e.locked, hostId: e.host_id,
-    tracks: Object.values(e.tracks || {}).sort((a, b) => b.votes - a.votes),
+    tracks: Object.values(e.tracks || {})
+      .map(t => ({ id: t.id, uri: t.uri, title: t.title, artist: t.artist, art: t.art, votes: t.votes, played: !!t.played, addedAt: t.addedAt || 0 }))
+      .sort((a, b) => b.votes - a.votes),
   };
 }
 // Compact shape for the host's event list.
