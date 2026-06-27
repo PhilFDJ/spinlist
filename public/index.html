@@ -245,6 +245,7 @@
         <div id="leaderboard"></div>
         <div class="export-row">
           <button class="btn btn-primary" onclick="exportPDF()">⬇ Download DJ PDF</button>
+          <button class="btn btn-neon" id="playlist-btn" onclick="openExportModal()" style="display:none">🎵 Export playlist ▸</button>
           <button class="btn btn-neon" id="spotify-btn" onclick="exportSpotify()" style="display:none">Export to Spotify ▸</button>
           <button class="btn btn-ghost" onclick="toggleDeadline()" id="close-btn">Close voting now</button>
           <button class="btn btn-ghost" onclick="openEditModal(EVENT.id)">✎ Edit event</button>
@@ -280,6 +281,30 @@
 </section>
 
 <div class="toast" id="toast"></div>
+
+<!-- PLAYLIST EXPORT MODAL (Studio) -->
+<div id="export-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card" style="max-width:500px">
+    <h3 style="margin:0 0 4px;font-size:1.3rem">Export playlist 🎵</h3>
+    <p style="color:var(--muted);margin:0 0 18px;font-size:.9rem">Turn the voted songs into a playlist on Spotify, Apple Music or Tidal.</p>
+
+    <div style="background:var(--paper-2);border-radius:12px;padding:16px;margin-bottom:16px">
+      <p style="font-weight:700;margin:0 0 8px;font-size:.95rem">Step 1 — get the song list</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-neon" onclick="downloadSongList()" style="flex:1;min-width:140px">⬇ Download list</button>
+        <button class="btn btn-ghost" onclick="copySongList()" style="flex:1;min-width:140px">📋 Copy list</button>
+      </div>
+    </div>
+
+    <div style="background:var(--paper-2);border-radius:12px;padding:16px;margin-bottom:18px">
+      <p style="font-weight:700;margin:0 0 8px;font-size:.95rem">Step 2 — import it</p>
+      <p style="color:var(--muted);font-size:.86rem;margin:0 0 12px;line-height:1.5">Open TuneMyMusic, choose <b>Upload file</b> (or <b>paste text</b>), pick the downloaded list, then choose Spotify, Apple Music or Tidal as the destination.</p>
+      <a class="btn btn-primary" href="https://www.tunemymusic.com/transfer" target="_blank" rel="noopener" style="width:100%;text-align:center">Open TuneMyMusic ▸</a>
+    </div>
+
+    <button class="btn btn-ghost" onclick="closeExportModal()" style="width:100%">Done</button>
+  </div>
+</div>
 
 <!-- EDIT EVENT MODAL (host) -->
 <div id="edit-modal" class="modal-overlay" style="display:none">
@@ -576,6 +601,7 @@ function renderDashboard(){
   document.getElementById('dash-host').textContent='Hosted by '+EVENT.host;
   // Spotify export is Studio-only
   const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.plan==='studio')?'inline-flex':'none';
+  const pb=document.getElementById('playlist-btn');if(pb)pb.style.display=(ME&&ME.plan==='studio')?'inline-flex':'none';
   const closed=EVENT.closed||Date.now()>EVENT.deadline;
   const st=document.getElementById('dash-status');
   st.textContent=closed?'Voting closed':'Voting open';
@@ -731,9 +757,36 @@ async function exportPDF(){
 }
 function clip(s,n){return (s||'').length>n?s.slice(0,n-1)+'…':s}
 
+// ---- Universal playlist export (via TuneMyMusic) ----
+function buildSongList(){
+  // Top-voted first, one per line: "Title - Artist"
+  return ranked().map(t=>`${t.title} - ${t.artist}`).join('\n');
+}
+function openExportModal(){
+  if(!ME||ME.plan!=='studio'){toast('Playlist export is a Studio feature.');return;}
+  if(!ranked().length){toast('No songs yet — nothing to export');return;}
+  document.getElementById('export-modal').style.display='flex';
+}
+function closeExportModal(){document.getElementById('export-modal').style.display='none';}
+function downloadSongList(){
+  const text=buildSongList();
+  const blob=new Blob([text],{type:'text/plain'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=(EVENT.name||'event').replace(/\W+/g,'-')+'-songs.txt';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('Song list downloaded ⬇');
+}
+function copySongList(){
+  const text=buildSongList();
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>toast('Song list copied 📋'),()=>fallbackCopy(text));
+  }else fallbackCopy(text);
+}
+
 async function exportSpotify(){
   if(!ME||ME.plan!=='studio'){toast('Spotify export is a Studio feature. Upgrade to enable it.');return;}
-  if(!EVENT){return;}
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
   toast('Exporting to Spotify…');
