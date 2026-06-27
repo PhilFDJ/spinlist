@@ -29,9 +29,13 @@ const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 /* ---------- logo uploads ---------- */
-// Stored on disk under /uploads and served statically. For production at scale
-// you'd point this at object storage (S3/R2); the route logic stays the same.
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
+// Stored on disk and served statically. On hosts with an ephemeral filesystem
+// (e.g. Render's free/standard instances), uploads must live on the SAME
+// persistent disk as the data file, or they vanish on redeploy. We derive the
+// upload dir from UPLOAD_DIR if set, else from the data file's directory, else
+// a local ./uploads for dev.
+const UPLOAD_DIR = process.env.UPLOAD_DIR
+  || (process.env.DATA_FILE ? path.join(path.dirname(process.env.DATA_FILE), 'uploads') : path.join(__dirname, 'uploads'));
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const ALLOWED_LOGO_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
 const upload = multer({
@@ -645,7 +649,10 @@ app.get('/api/branding/:userId', (req, res) => {
 
 function safeUnlink(publicPath) {
   try {
-    const f = path.join(__dirname, publicPath.replace(/^\//, ''));
+    // stored paths look like "/uploads/<filename>" — resolve to the real dir
+    const filename = path.basename(publicPath || '');
+    if (!filename) return;
+    const f = path.join(UPLOAD_DIR, filename);
     if (f.startsWith(UPLOAD_DIR) && fs.existsSync(f)) fs.unlinkSync(f);
   } catch (_) { /* ignore */ }
 }
