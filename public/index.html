@@ -740,16 +740,16 @@ function brandQR(qrEl){
     // centre logo on a white rounded pad
     const logo=new Image();
     logo.onload=()=>{
-      const lsize=qrSize*0.20;                   // ~20% — safe with level-H correction
+      const lsize=qrSize*0.17;                   // smaller logo — guaranteed clear margin
       const cx=w/2, cy=innerTop+pad+qrSize/2;
-      const padBox=lsize*1.5;                     // roomier pad so the S isn't clipped
+      const padBox=lsize*1.7;                     // generous white pad around it
       ctx.fillStyle='#ffffff';
-      roundRect(ctx,cx-padBox/2,cy-padBox/2,padBox,padBox,14);ctx.fill();
+      roundRect(ctx,cx-padBox/2,cy-padBox/2,padBox,padBox,16);ctx.fill();
       ctx.drawImage(logo,cx-lsize/2,cy-lsize/2,lsize,lsize);
       finish();
     };
     logo.onerror=finish;                         // if logo missing, still show framed QR
-    logo.src='/img/spinlist-mark.png';
+    logo.src='/img/spinlist-mark.png?v=3';
     function finish(){
       brandedQRCanvas=c;
       qrEl.innerHTML='';
