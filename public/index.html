@@ -117,6 +117,11 @@
   .api-warn{background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.4);color:#ffd24a;padding:10px 14px;border-radius:10px;font-size:.82rem;margin-bottom:18px;display:none}
   footer{margin:70px 0 40px;text-align:center;color:var(--muted);font-size:.82rem}
   .export-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}
+  .mini-btn{flex:none;border:1px solid var(--line);background:var(--paper-2);color:var(--ink);font:inherit;font-weight:600;font-size:.72rem;padding:6px 10px;border-radius:100px;cursor:pointer;transition:.15s;white-space:nowrap}
+  .mini-btn:hover{border-color:var(--plum)}
+  .mini-btn.done{background:var(--neon);color:#0a1228;border-color:var(--neon)}
+  .seg-btn{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:700;font-size:.78rem;padding:7px 14px;border-radius:100px;cursor:pointer;transition:.15s}
+  .seg-btn.on{background:var(--ink);color:var(--paper)}
 </style>
 </head>
 <body>
@@ -217,8 +222,13 @@
         </div>
       </div>
       <div class="panel">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
           <h3 style="font-size:1.2rem">Live leaderboard</h3><span style="color:var(--muted);font-size:.85rem" id="total-votes"></span>
+        </div>
+        <div id="sort-toggle" style="display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;margin-bottom:14px;width:fit-content">
+          <button class="seg-btn on" data-s="voted" onclick="setSort('voted')">Top voted</button>
+          <button class="seg-btn" data-s="newest" onclick="setSort('newest')">Newest</button>
+          <button class="seg-btn" data-s="oldest" onclick="setSort('oldest')">Oldest</button>
         </div>
         <div id="leaderboard"></div>
         <div class="export-row">
@@ -361,7 +371,7 @@ async function openEvent(id){
       votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),tracks:{},
       branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
-    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes};});
+    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt};});
     myVotes={};go('dashboard');
   }catch(e){ toast('Network error'); }
 }
@@ -396,11 +406,22 @@ function applyServerEvent(ev){
   EVENT.locked=ev.locked;EVENT.closed=ev.locked||(ev.deadline&&Date.now()>ev.deadline);
   EVENT.deadline=ev.deadline;EVENT.votesPer=ev.votesPer;
   EVENT.tracks={};
-  (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes};});
+  (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt};});
 }
 
 function ranked(){return Object.values(EVENT.tracks).sort((a,b)=>b.votes-a.votes)}
 function totalVotes(){return Object.values(EVENT.tracks).reduce((s,t)=>s+t.votes,0)}
+
+// Sort mode for the host list: 'voted' | 'newest' | 'oldest'
+let sortMode='voted';
+function sortTracks(){
+  const list=Object.values(EVENT.tracks);
+  if(sortMode==='newest')return list.sort((a,b)=>(b.addedAt||0)-(a.addedAt||0));
+  if(sortMode==='oldest')return list.sort((a,b)=>(a.addedAt||0)-(b.addedAt||0));
+  return list.sort((a,b)=>b.votes-a.votes); // voted
+}
+function setSort(m){sortMode=m;renderLeaderboard('leaderboard');
+  document.querySelectorAll('#sort-toggle button').forEach(b=>b.classList.toggle('on',b.dataset.s===m));}
 
 /* ---------- DASHBOARD ---------- */
 let cdTimer;
@@ -443,12 +464,51 @@ function startCountdown(){
   tick();cdTimer=setInterval(tick,1000);
 }
 function renderLeaderboard(target){
-  const list=ranked();const max=list.length?list[0].votes:1;
-  document.getElementById(target).innerHTML=list.length?list.map((t,i)=>`
-    <div class="rank"><div class="pos">${i+1}</div>
-      <div class="bar-wrap"><b>${esc(t.title)}</b> <span style="color:var(--muted)">— ${esc(t.artist)}</span>
-        <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8,t.votes/max*100)}%"></div></div></div>
-      <div class="votes-pill">${t.votes}</div></div>`).join(''):'<div class="empty">No votes yet — share the link to get the room started.</div>';
+  const list=sortTracks();const max=list.reduce((m,t)=>Math.max(m,t.votes),1);
+  window.__ht=window.__ht||{};
+  document.getElementById(target).innerHTML=list.length?list.map((t,i)=>{
+    window.__ht[t.id]=t;
+    const played=!!t.played;
+    return `<div class="rank" style="${played?'opacity:.55':''}">
+      <div class="pos">${sortMode==='voted'?(i+1):'•'}</div>
+      <div class="bar-wrap">
+        <b>${esc(t.title)}</b> <span style="color:var(--muted)">— ${esc(t.artist)}</span>
+        ${played?'<span class="pill-tag" style="margin-left:6px">Played</span>':''}
+        <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8,t.votes/max*100)}%"></div></div>
+      </div>
+      <div class="votes-pill">${t.votes}</div>
+      <button class="mini-btn" title="Copy song" onclick="copySong('${esc(t.id)}')">Copy</button>
+      <button class="mini-btn ${played?'done':''}" onclick="togglePlayed('${esc(t.id)}')">${played?'✓ Played':'Mark played'}</button>
+    </div>`;
+  }).join(''):'<div class="empty">No votes yet — share the link to get the room started.</div>';
+}
+
+// Copy "Title – Artist" for pasting into DJ software.
+function copySong(id){
+  const t=(window.__ht&&window.__ht[id])||EVENT.tracks[id];if(!t)return;
+  const text=t.title+' – '+t.artist;
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>toast('Copied: '+text),()=>fallbackCopy(text));
+  }else fallbackCopy(text);
+}
+function fallbackCopy(text){
+  const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast('Copied: '+text);}catch(e){toast('Copy failed');}
+  document.body.removeChild(ta);
+}
+
+// Mark a song played / unplayed (host).
+async function togglePlayed(id){
+  const t=(window.__ht&&window.__ht[id])||EVENT.tracks[id];if(!t)return;
+  const want=!t.played;
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/played',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trackId:id,played:want})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not update');return;}
+    applyServerEvent(d.event);
+    renderLeaderboard('leaderboard');
+    toast(want?'Marked played':'Unmarked');
+  }catch(e){ toast('Network error'); }
 }
 async function toggleDeadline(){
   const wantLock=!(EVENT.locked||EVENT.closed);
@@ -586,16 +646,20 @@ function renderResults(tracks){
   const closed=EVENT.closed||Date.now()>EVENT.deadline;
   if(!tracks.length){document.getElementById('search-results').innerHTML='<div class="empty">No matches. Try another song.</div>';return;}
   document.getElementById('search-results').innerHTML=tracks.map((t,idx)=>{
-    const v=EVENT.tracks[t.id]?.votes||0;
+    const existing=EVENT.tracks[t.id];
+    const v=existing?.votes||0;
     const voted=!!myVotes[t.id];
+    const played=!!(existing&&existing.played);
     const art=t.art?`<img class="art" src="${esc(t.art)}" alt="">`:`<div class="art">${esc((t.title||'?')[0])}</div>`;
     // stash the track object so the click handler has the URI etc.
     window.__sr=window.__sr||{};window.__sr[t.id]=t;
-    return `<div class="track">${art}
-      <div class="meta"><b>${esc(t.title)}</b><small>${esc(t.artist)}${t.explicit?' · 🅴':''}</small></div>
+    return `<div class="track" style="${played?'opacity:.5':''}">${art}
+      <div class="meta"><b>${esc(t.title)}</b><small>${esc(t.artist)}${t.explicit?' · 🅴':''}${played?' · Played':''}</small></div>
       <div class="votes-pill">${v}</div>
-      <button class="vote-btn ${voted?'voted':''}" ${closed?'disabled style="opacity:.4"':''} onclick="toggleVote(window.__sr['${t.id}'])">
-        ${voted?'✓ Voted':'▲ Vote'}</button></div>`;
+      ${played
+        ? '<button class="vote-btn" disabled style="opacity:.4">Played</button>'
+        : `<button class="vote-btn ${voted?'voted':''}" ${closed?'disabled style="opacity:.4"':''} onclick="toggleVote(window.__sr['${t.id}'])">${voted?'✓ Voted':'▲ Vote'}</button>`}
+      </div>`;
   }).join('');
 }
 
@@ -606,11 +670,15 @@ function renderLeaderboardGuest(){
   document.getElementById('g-leaderboard').innerHTML=list.length?list.map((t,i)=>{
     window.__sr[t.id]=t;                       // stash so toggleVote gets the full track
     const voted=!!myVotes[t.id];
-    return `<div class="rank"><div class="pos">${i+1}</div>
+    const played=!!t.played;
+    return `<div class="rank" style="${played?'opacity:.5':''}"><div class="pos">${i+1}</div>
       <div class="bar-wrap"><b>${esc(t.title)}</b> <span style="color:var(--muted)">— ${esc(t.artist)}</span>
+        ${played?'<span class="pill-tag" style="margin-left:6px">Played</span>':''}
         <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8,t.votes/max*100)}%"></div></div></div>
       <div class="votes-pill">${t.votes}</div>
-      <button class="vote-btn ${voted?'voted':''}" ${closed?'disabled style="opacity:.4"':''} onclick="toggleVote(window.__sr['${esc(t.id)}'])">${voted?'✓ Voted':'▲ Vote'}</button>
+      ${played
+        ? '<button class="vote-btn" disabled style="opacity:.4">Played</button>'
+        : `<button class="vote-btn ${voted?'voted':''}" ${closed?'disabled style="opacity:.4"':''} onclick="toggleVote(window.__sr['${esc(t.id)}'])">${voted?'✓ Voted':'▲ Vote'}</button>`}
     </div>`;
   }).join(''):'<div class="empty">Be the first to vote!</div>';
 }
@@ -656,7 +724,7 @@ async function loadGuestEvent(eventId){
       votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),
       tracks:{},branding:d.branding||null};
-    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes};});
+    (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt};});
   }catch(e){ EVENT=null; }
 }
 
