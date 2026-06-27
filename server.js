@@ -352,6 +352,15 @@ app.post('/api/events/:id/lock', auth.requireAuth, (req, res) => {
   res.json({ event: publicEvent(updated) });
 });
 
+// --- archive / unarchive an event (host only) ---
+app.post('/api/events/:id/archive', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  db.setArchived(e.id, !!(req.body || {}).archived);
+  res.json({ ok: true });
+});
+
 // --- delete an event (host only) ---
 app.delete('/api/events/:id', auth.requireAuth, (req, res) => {
   const e = db.getEvent(req.params.id);
@@ -404,7 +413,7 @@ function summaryEvent(e) {
   const tracks = Object.values(e.tracks || {});
   return {
     id: e.id, name: e.name, type: e.type, host: e.host,
-    locked: !!e.locked, closed: !!closed,
+    locked: !!e.locked, closed: !!closed, archived: !!e.archived,
     songCount: tracks.length,
     voteCount: tracks.reduce((s, t) => s + t.votes, 0),
     createdAt: e.created_at,
