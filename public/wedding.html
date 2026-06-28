@@ -62,6 +62,11 @@
   .tab.active{color:var(--ink);border-bottom-color:var(--neon)}
   .tab-pane{display:none}
   .tab-pane.show{display:block}
+  .drag-row{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+  .drag-handle{cursor:grab;color:var(--muted);font-size:1.1rem;user-select:none;padding:0 2px}
+  .drag-handle:active{cursor:grabbing}
+  .block.drag-row{display:block}
+  .block[draggable="true"]{cursor:default}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:100px;font-weight:600;opacity:0;transition:opacity .2s;z-index:80;pointer-events:none}
   .toast.show{opacity:1}
   @media(max-width:640px){.grid-2{grid-template-columns:1fr}}
@@ -109,6 +114,7 @@ async function api(path,opts){
 async function logout(){try{await fetch('/api/auth/logout',{method:'POST'});}catch(e){}location.href='/';}
 
 async function boot(){
+  initTouchDrag();
   const code=new URLSearchParams(location.search).get('code');   // invite link ?code=ABC123
   try{
     const me=await api('/api/me');
@@ -274,6 +280,62 @@ async function createWedding(){
   }catch(e){ msg.textContent=e.message; if(/PRO feature/.test(e.message)){setTimeout(()=>location.href='/pricing.html',1500);} }
 }
 
+/* ---------------- DRAG-AND-DROP REORDER (blocks) ---------------- */
+let dragIndex=null, dragCtx=null;
+function dragStart(e,i,ctx){dragIndex=i;dragCtx=ctx;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(i));}catch(_){}}
+function dragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';const row=e.currentTarget;row.style.borderTop='2px solid var(--neon)';}
+function dragEnd(e){document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');}
+function dropRow(e,toIndex,ctx){
+  e.preventDefault();
+  document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');
+  if(dragIndex===null||dragCtx!==ctx||dragIndex===toIndex)return;
+  if(ctx==='edit'){ moveItem(editBlocks,dragIndex,toIndex); renderEditBlocks(); }
+  else if(ctx==='music'){ moveItem(CURRENT.blocks,dragIndex,toIndex); renderBlocks(); saveBlockOrder(); }
+  dragIndex=null;dragCtx=null;
+}
+function moveItem(arr,from,to){const [it]=arr.splice(from,1);arr.splice(to,0,it);}
+
+// Touch fallback: native HTML5 drag doesn't fire on touchscreens, so we
+// implement a simple long-press-free drag using the handle on touch devices.
+let touchCtx=null,touchFrom=null;
+function initTouchDrag(){
+  document.addEventListener('touchmove',e=>{
+    if(touchFrom===null)return;
+    e.preventDefault();
+    const t=e.touches[0];
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    const row=el&&el.closest('.drag-row[data-i]');
+    document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');
+    if(row)row.style.borderTop='2px solid var(--neon)';
+  },{passive:false});
+  document.addEventListener('touchend',e=>{
+    if(touchFrom===null)return;
+    const t=e.changedTouches[0];
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    const row=el&&el.closest('.drag-row[data-i]');
+    document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');
+    if(row){
+      const to=parseInt(row.dataset.i,10);
+      if(!isNaN(to)&&to!==touchFrom){
+        if(touchCtx==='edit'){moveItem(editBlocks,touchFrom,to);renderEditBlocks();}
+        else if(touchCtx==='music'){moveItem(CURRENT.blocks,touchFrom,to);renderBlocks();saveBlockOrder();}
+      }
+    }
+    touchFrom=null;touchCtx=null;
+  });
+}
+function handleTouchStart(e,i,ctx){touchFrom=i;touchCtx=ctx;}
+
+// Persist a new block order from the Music tab (preserves songs — sends ids).
+async function saveBlockOrder(){
+  try{
+    const blocks=CURRENT.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity}));
+    const d=await api('/api/weddings/'+CURRENT.id+'/update',{method:'POST',body:JSON.stringify({name:CURRENT.name,coupleNames:CURRENT.coupleNames,blocks})});
+    CURRENT=d.wedding;
+    toast('Order saved');
+  }catch(e){ toast(e.message); }
+}
+
 /* ---------------- EDIT WEDDING (DJ) ---------------- */
 let editBlocks=[];
 async function openEditWedding(){
@@ -317,9 +379,11 @@ async function openEditWedding(){
 function renderEditBlocks(){
   const el=document.getElementById('eblocks-edit');
   el.innerHTML=editBlocks.map((b,i)=>`
-    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    <div class="drag-row" draggable="true" data-i="${i}"
+      ondragstart="dragStart(event,${i},'edit')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'edit')" ondragend="dragEnd(event)">
+      <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'edit')">⠿</span>
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editBlocks[${i}].name=this.value">
-      <input type="number" min="1" max="100" style="width:78px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editBlocks[${i}].capacity=+this.value" title="Songs">
+      <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editBlocks[${i}].capacity=+this.value" title="Songs">
       <button class="iconbtn" onclick="removeEditBlock(${i})" title="${b.songCount?('Has '+b.songCount+' song(s)'):'Remove'}">🗑</button>
     </div>`).join('');
 }
@@ -498,15 +562,16 @@ function switchTab(tab){
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('show',p.id==='pane-'+tab));
 }
 function renderBlocks(){
-  const w=CURRENT;
-  document.getElementById('blocks').innerHTML=w.blocks.map(b=>{
+  const w=CURRENT, isDJ=ME.role!=='couple';
+  document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
     const full=b.songs.length>=b.capacity;
-    return `<div class="block">
+    const dragAttrs=isDJ?`draggable="true" data-i="${i}" ondragstart="dragStart(event,${i},'music')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'music')" ondragend="dragEnd(event)"`:'';
+    return `<div class="block drag-row" ${dragAttrs}>
       <div class="block-head">
-        <h3>${esc(b.name)}</h3>
+        <h3>${isDJ?`<span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'music')">⠿</span> `:''}${esc(b.name)}</h3>
         <span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span>
       </div>
-      <div>${b.songs.map((s,i)=>songRow(b.id,s,i)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
+      <div>${b.songs.map((s,idx)=>songRow(b.id,s,idx)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
       ${full?'':`<button class="addbtn" onclick="openSearch('${b.id}')">+ Add a song</button>`}
     </div>`;
   }).join('');
