@@ -198,7 +198,7 @@ async function renderDJHome(){
   root.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:36px;flex-wrap:wrap;gap:12px">
       <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Your weddings</h1></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost" onclick="openBlockTemplates()">Block templates</button><button class="btn btn-ghost" onclick="openTemplates()">Questionnaire templates</button><button class="btn btn-neon" onclick="openCreate()">+ New wedding</button></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost" onclick="openBlockTemplates()">Music templates</button><button class="btn btn-ghost" onclick="openTemplates()">Questionnaire templates</button><button class="btn btn-neon" onclick="openCreate()">+ New wedding</button></div>
     </div>
     <p class="lead">Create a song plan, share the code with the couple, and they'll fill in their choices before the big day.</p>
     <div id="dj-list" style="margin-top:8px">
@@ -283,7 +283,7 @@ function loadBlockTemplate(id){
 async function saveBlocksAsTemplate(){
   const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1)}));
   if(!blocks.length){toast('Add some blocks first');return;}
-  const name=prompt('Name this block template:','My Wedding Set');
+  const name=prompt('Name this music template:','My Wedding Set');
   if(!name||!name.trim())return;
   try{
     await api('/api/block-templates',{method:'POST',body:JSON.stringify({name:name.trim(),blocks})});
@@ -295,9 +295,11 @@ async function saveBlocksAsTemplate(){
 function renderDraftBlocks(){
   const el=document.getElementById('blocks-edit');
   el.innerHTML=draftBlocks.map((b,i)=>`
-    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    <div class="drag-row" draggable="true" data-i="${i}"
+      ondragstart="dragStart(event,${i},'draft')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'draft')" ondragend="dragEnd(event)">
+      <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'draft')">⠿</span>
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="draftBlocks[${i}].name=this.value">
-      <input type="number" min="1" max="100" style="width:78px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="draftBlocks[${i}].capacity=+this.value" title="Number of songs">
+      <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="draftBlocks[${i}].capacity=+this.value" title="Number of songs">
       <button class="iconbtn" onclick="draftBlocks.splice(${i},1);renderDraftBlocks()">🗑</button>
     </div>`).join('');
 }
@@ -328,6 +330,8 @@ function dropRow(e,toIndex,ctx){
   if(dragIndex===null||dragCtx!==ctx||dragIndex===toIndex)return;
   if(ctx==='edit'){ moveItem(editBlocks,dragIndex,toIndex); renderEditBlocks(); }
   else if(ctx==='music'){ moveItem(CURRENT.blocks,dragIndex,toIndex); renderBlocks(); saveBlockOrder(); }
+  else if(ctx==='draft'){ moveItem(draftBlocks,dragIndex,toIndex); renderDraftBlocks(); }
+  else if(ctx==='btpl'){ moveItem(editingBTpl.blocks,dragIndex,toIndex); renderBTplBlocks(); }
   dragIndex=null;dragCtx=null;
 }
 function moveItem(arr,from,to){const [it]=arr.splice(from,1);arr.splice(to,0,it);}
@@ -356,6 +360,8 @@ function initTouchDrag(){
       if(!isNaN(to)&&to!==touchFrom){
         if(touchCtx==='edit'){moveItem(editBlocks,touchFrom,to);renderEditBlocks();}
         else if(touchCtx==='music'){moveItem(CURRENT.blocks,touchFrom,to);renderBlocks();saveBlockOrder();}
+        else if(touchCtx==='draft'){moveItem(draftBlocks,touchFrom,to);renderDraftBlocks();}
+        else if(touchCtx==='btpl'){moveItem(editingBTpl.blocks,touchFrom,to);renderBTplBlocks();}
       }
     }
     touchFrom=null;touchCtx=null;
@@ -458,14 +464,14 @@ async function openBlockTemplates(){
   const root=document.getElementById('root');
   root.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
-      <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Block templates</h1></div>
+      <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Music templates</h1></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← Back</button>
         ${BLOCK_TEMPLATES.length<5?'<button class="btn btn-neon" onclick="editBlockTemplate(null)">+ New template</button>':''}
       </div>
     </div>
     <p class="lead">Save your song block setups (up to 5) and load one when creating a wedding. (${BLOCK_TEMPLATES.length}/5)</p>
-    <div style="margin-top:8px">${BLOCK_TEMPLATES.length?BLOCK_TEMPLATES.map(bTplCard).join(''):'<div class="panel"><p class="muted">No block templates yet. Create your first one.</p></div>'}</div>`;
+    <div style="margin-top:8px">${BLOCK_TEMPLATES.length?BLOCK_TEMPLATES.map(bTplCard).join(''):'<div class="panel"><p class="muted">No music templates yet. Create your first one.</p></div>'}</div>`;
 }
 function bTplCard(t){
   const total=(t.blocks||[]).reduce((s,b)=>s+b.capacity,0);
@@ -478,7 +484,7 @@ function bTplCard(t){
   </div>`;
 }
 async function deleteBlockTemplate(id){
-  if(!confirm('Delete this block template?'))return;
+  if(!confirm('Delete this music template?'))return;
   await fetch('/api/block-templates/'+id,{method:'DELETE'});
   openBlockTemplates();
 }
@@ -491,7 +497,7 @@ function renderBlockTemplateEditor(){
   const t=editingBTpl;
   const root=document.getElementById('root');
   root.innerHTML=`
-    <h1 class="display" style="margin-top:34px">${t.id?'Edit block template':'New block template'}</h1>
+    <h1 class="display" style="margin-top:34px">${t.id?'Edit music template':'New music template'}</h1>
     <div class="panel" style="max-width:680px">
       <div class="field"><span>Template name</span><input id="btpl-name" value="${esc(t.name||'')}" placeholder="e.g. Standard Wedding Set"></div>
       <h2 style="font-size:1.1rem;margin:10px 0 4px">Blocks</h2>
@@ -509,9 +515,11 @@ function renderBlockTemplateEditor(){
 function renderBTplBlocks(){
   const el=document.getElementById('btpl-blocks');
   el.innerHTML=editingBTpl.blocks.map((b,i)=>`
-    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    <div class="drag-row" draggable="true" data-i="${i}"
+      ondragstart="dragStart(event,${i},'btpl')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'btpl')" ondragend="dragEnd(event)">
+      <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'btpl')">⠿</span>
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editingBTpl.blocks[${i}].name=this.value">
-      <input type="number" min="1" max="100" style="width:78px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editingBTpl.blocks[${i}].capacity=+this.value" title="Songs">
+      <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editingBTpl.blocks[${i}].capacity=+this.value" title="Songs">
       <button class="iconbtn" onclick="editingBTpl.blocks.splice(${i},1);renderBTplBlocks()">🗑</button>
     </div>`).join('')||'<p class="muted" style="margin-bottom:8px">No blocks yet.</p>';
 }
