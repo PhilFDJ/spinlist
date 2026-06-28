@@ -378,7 +378,7 @@ async function createWedding(){
 let dragIndex=null, dragCtx=null;
 function dragStart(e,i,ctx){dragIndex=i;dragCtx=ctx;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(i));}catch(_){}}
 function dragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';const row=e.currentTarget;row.style.borderTop='2px solid var(--neon)';}
-function dragEnd(e){document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');}
+function dragEnd(e){document.querySelectorAll('.drag-row').forEach(r=>{r.style.borderTop='';r.removeAttribute('draggable');});}
 function dropRow(e,toIndex,ctx){
   e.preventDefault();
   document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');
@@ -387,9 +387,14 @@ function dropRow(e,toIndex,ctx){
   else if(ctx==='music'){ moveItem(CURRENT.blocks,dragIndex,toIndex); renderBlocks(); saveBlockOrder(); }
   else if(ctx==='draft'){ moveItem(draftBlocks,dragIndex,toIndex); renderDraftBlocks(); }
   else if(ctx==='btpl'){ moveItem(editingBTpl.blocks,dragIndex,toIndex); renderBTplBlocks(); }
+  else if(ctx==='tplq'){ moveItem(editingTpl.questions,dragIndex,toIndex); renderTplQuestions(); }
   dragIndex=null;dragCtx=null;
 }
 function moveItem(arr,from,to){const [it]=arr.splice(from,1);arr.splice(to,0,it);}
+
+// Only make a row draggable while its handle is held — keeps inner inputs usable.
+function enableRowDrag(handle){const row=handle.closest('.drag-row');if(row)row.setAttribute('draggable','true');}
+function disableRowDrag(handle){const row=handle.closest('.drag-row');if(row)row.removeAttribute('draggable');}
 
 // Touch fallback: native HTML5 drag doesn't fire on touchscreens, so we
 // implement a simple long-press-free drag using the handle on touch devices.
@@ -417,6 +422,7 @@ function initTouchDrag(){
         else if(touchCtx==='music'){moveItem(CURRENT.blocks,touchFrom,to);renderBlocks();saveBlockOrder();}
         else if(touchCtx==='draft'){moveItem(draftBlocks,touchFrom,to);renderDraftBlocks();}
         else if(touchCtx==='btpl'){moveItem(editingBTpl.blocks,touchFrom,to);renderBTplBlocks();}
+        else if(touchCtx==='tplq'){moveItem(editingTpl.questions,touchFrom,to);renderTplQuestions();}
       }
     }
     touchFrom=null;touchCtx=null;
@@ -649,9 +655,12 @@ function renderTemplateEditor(){
 function renderTplQuestions(){
   const el=document.getElementById('tpl-questions');
   el.innerHTML=editingTpl.questions.map((q,i)=>{
+    const dragAttrs=`data-i="${i}" ondragstart="dragStart(event,${i},'tplq')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'tplq')" ondragend="dragEnd(event)"`;
+    const handle=`<span class="drag-handle" title="Drag to reorder" onmousedown="enableRowDrag(this)" onmouseup="disableRowDrag(this)" ontouchstart="handleTouchStart(event,${i},'tplq')">⠿</span>`;
     if(q.type==='header'){
-      return `<div style="background:rgba(91,140,255,.10);border:1px solid rgba(91,140,255,.35);border-radius:12px;padding:12px 14px;margin-bottom:10px">
+      return `<div class="drag-row" ${dragAttrs} style="background:rgba(91,140,255,.10);border:1px solid rgba(91,140,255,.35);border-radius:12px;padding:12px 14px;margin-bottom:10px;display:block">
         <div style="display:flex;gap:8px;align-items:center">
+          ${handle}
           <span class="muted" style="font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase">Section</span>
           <input value="${esc(q.label||'')}" placeholder="Section heading (e.g. Ceremony)" oninput="editingTpl.questions[${i}].label=this.value"
             style="flex:1;font:inherit;font-weight:700;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
@@ -659,13 +668,14 @@ function renderTplQuestions(){
         </div>
       </div>`;
     }
-    return `<div style="background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px">
+    return `<div class="drag-row" ${dragAttrs} style="background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;display:block">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        ${handle}
         <input value="${esc(q.label||'')}" placeholder="Question text" oninput="editingTpl.questions[${i}].label=this.value"
           style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
         <button class="iconbtn" onclick="editingTpl.questions.splice(${i},1);renderTplQuestions()">🗑</button>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-left:26px">
         <span class="muted" style="font-size:.82rem">Type:</span>
         <select onchange="setQType(${i},this.value)" style="font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">
           <option value="text" ${q.type==='text'?'selected':''}>Text answer</option>
