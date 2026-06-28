@@ -54,7 +54,7 @@
   .equalizer span:nth-child(4){animation-delay:.45s}.equalizer span:nth-child(5){animation-delay:.6s}.equalizer span:nth-child(6){animation-delay:.75s}
   @keyframes eq{0%,100%{height:40px}50%{height:200px}}
   @media(max-width:760px){.equalizer{opacity:.18;height:160px}}
-  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:14px 26px;cursor:pointer;font-size:.95rem;transition:transform .15s,box-shadow .15s;display:inline-flex;align-items:center;gap:9px}
+  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:14px 26px;cursor:pointer;font-size:.95rem;transition:transform .15s,box-shadow .15s;display:inline-flex;align-items:center;gap:9px;text-decoration:none}
   .btn:hover{transform:translateY(-2px)}
   .btn-primary{background:var(--ink);color:var(--paper);box-shadow:var(--shadow)}
   .btn-neon{background:var(--neon);color:#0a1228}
@@ -156,6 +156,7 @@
       <div class="cta-row">
         <button class="btn btn-primary" onclick="go('create')">Create an event →</button>
         <button class="btn btn-ghost" onclick="loadDemo()">See the demo</button>
+        <a class="btn btn-ghost" href="/wedding.html?demo=1">See the wedding planner</a>
       </div>
     </div>
     <div class="equalizer"><span></span><span></span><span></span><span></span><span></span><span></span></div>

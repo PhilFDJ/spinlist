@@ -115,7 +115,10 @@ async function logout(){try{await fetch('/api/auth/logout',{method:'POST'});}cat
 
 async function boot(){
   initTouchDrag();
-  const code=new URLSearchParams(location.search).get('code');   // invite link ?code=ABC123
+  const params=new URLSearchParams(location.search);
+  // Public read-only demo — no login needed.
+  if(params.get('demo')){ ME={role:'host',plan:'studio',name:'Demo DJ'}; DEMO=true; openDemoWedding(); return; }
+  const code=params.get('code');   // invite link ?code=ABC123
   try{
     const me=await api('/api/me');
     ME=me.user;
@@ -128,6 +131,58 @@ async function boot(){
   }
   if(ME.role==='couple'){ renderCoupleHome(); return; }
   renderDJHome();
+}
+
+// ---- Public demo: a fully-populated example wedding, read-only ----
+let DEMO=false;
+function openDemoWedding(){
+  CURRENT={
+    id:'DEMO', name:"Sarah & Tom's Wedding", coupleNames:'Sarah & Tom',
+    weddingDate:new Date(Date.now()+1000*60*60*24*120).getTime(),
+    inviteCode:'DEMO12', coupleJoined:true, canEdit:false,
+    blocks:[
+      {id:'b1',name:'First Dance',capacity:1,songs:[{id:'1',title:'Perfect',artist:'Ed Sheeran',art:''}]},
+      {id:'b2',name:'Cake Cutting',capacity:1,songs:[{id:'2',title:'Sugar, Sugar',artist:'The Archies',art:''}]},
+      {id:'b3',name:"Couple's Top 15",capacity:15,songs:[
+        {id:'3',title:'Dancing Queen',artist:'ABBA',art:''},
+        {id:'4',title:'September',artist:'Earth, Wind & Fire',art:''},
+        {id:'5',title:"Don't Stop Me Now",artist:'Queen',art:''},
+        {id:'6',title:'Mr. Brightside',artist:'The Killers',art:''}
+      ]},
+      {id:'b4',name:'Play If Possible',capacity:30,songs:[
+        {id:'7',title:'Valerie',artist:'Mark Ronson ft. Amy Winehouse',art:''},
+        {id:'8',title:'I Wanna Dance with Somebody',artist:'Whitney Houston',art:''}
+      ]},
+      {id:'b5',name:'Last Dance',capacity:1,songs:[{id:'9',title:'Time of My Life',artist:'Bill Medley & Jennifer Warnes',art:''}]},
+      {id:'b6',name:'Do Not Play',capacity:5,songs:[{id:'10',title:'Macarena',artist:'Los del Río',art:''}]}
+    ],
+    timeline:[
+      {id:'t1',time:'1:00pm',label:'Guests arrive'},
+      {id:'t2',time:'1:30pm',label:'Ceremony'},
+      {id:'t3',time:'3:00pm',label:'Wedding breakfast'},
+      {id:'t4',time:'7:00pm',label:'Evening guests arrive'},
+      {id:'t5',time:'7:30pm',label:'First dance'},
+      {id:'t6',time:'7:45pm',label:'Dancefloor opens'},
+      {id:'t7',time:'11:30pm',label:'Last dance & send-off'}
+    ],
+    questionnaire:{name:'Standard Wedding',questions:[
+      {id:'h1',type:'header',label:'The basics'},
+      {id:'q1',type:'text',label:'How should we announce your grand entrance?'},
+      {id:'q2',type:'yesno',label:'Are explicit/clean versions OK?'},
+      {id:'h2',type:'header',label:'The evening'},
+      {id:'q3',type:'choice',label:'Overall vibe for the night?',options:['Chilled & classy','Full-on party','A mix of both']},
+      {id:'q4',type:'text',label:'Any genres or artists to avoid?'}
+    ]},
+    answers:{q1:'Please welcome the new Mr & Mrs Roberts!',q2:'No',q3:'A mix of both',q4:'No heavy metal please!'}
+  };
+  renderPlan();
+  // Banner inviting them to upgrade
+  const root=document.getElementById('root');
+  const banner=document.createElement('div');
+  banner.className='panel';
+  banner.style.cssText='background:rgba(198,242,78,.12);border:1px solid rgba(198,242,78,.4);margin-top:20px;text-align:center';
+  banner.innerHTML='<b>This is a demo of the Spinlist Wedding Planner.</b><div class="muted" style="margin:6px 0 12px">Couples fill in their song choices, timeline and questionnaire — all in one place.</div><a class="btn btn-neon" href="/pricing.html">See plans to unlock it ▸</a>';
+  root.appendChild(banner);
 }
 
 /* ---------------- COUPLE SIGNUP (with code) ---------------- */
@@ -660,11 +715,11 @@ function renderPlan(){
         <p class="muted">${w.weddingDate?('📅 '+fmtWeddingDate(w.weddingDate)+' · '):''}${esc(w.coupleNames||'')} · ${filled} of ${cap} songs chosen</p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
+        ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
     </div>
-    ${isDJ&&w.inviteCode?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+    ${isDJ&&!DEMO&&w.inviteCode?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
       <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button></div>
     </div>`:''}
@@ -683,9 +738,9 @@ function renderPlan(){
     <section class="tab-pane" id="pane-timeline">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:22px">
         <h2>Timeline of the day</h2>
-        <button class="btn btn-ghost btn-sm" onclick="addTimelineRow()">+ Add moment</button>
+        ${DEMO?'':'<button class="btn btn-ghost btn-sm" onclick="addTimelineRow()">+ Add moment</button>'}
       </div>
-      <p class="muted" style="margin:4px 0 12px">The running order for the day — both you and your DJ can edit this.</p>
+      <p class="muted" style="margin:4px 0 12px">${DEMO?'The running order for the day, planned together by the couple and their DJ.':'The running order for the day — both you and your DJ can edit this.'}</p>
       <div class="panel" id="timeline-panel" style="margin-top:0"></div>
     </section>
 
@@ -703,25 +758,25 @@ function switchTab(tab){
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('show',p.id==='pane-'+tab));
 }
 function renderBlocks(){
-  const w=CURRENT, isDJ=ME.role!=='couple';
+  const w=CURRENT, isDJ=ME.role!=='couple', canEdit=!DEMO;
   document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
     const full=b.songs.length>=b.capacity;
-    const dragAttrs=isDJ?`draggable="true" data-i="${i}" ondragstart="dragStart(event,${i},'music')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'music')" ondragend="dragEnd(event)"`:'';
+    const dragAttrs=(isDJ&&canEdit)?`draggable="true" data-i="${i}" ondragstart="dragStart(event,${i},'music')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'music')" ondragend="dragEnd(event)"`:'';
     return `<div class="block drag-row" ${dragAttrs}>
       <div class="block-head">
-        <h3>${isDJ?`<span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'music')">⠿</span> `:''}${esc(b.name)}</h3>
+        <h3>${(isDJ&&canEdit)?`<span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'music')">⠿</span> `:''}${esc(b.name)}</h3>
         <span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span>
       </div>
-      <div>${b.songs.map((s,idx)=>songRow(b.id,s,idx)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
-      ${full?'':`<button class="addbtn" onclick="openSearch('${b.id}')">+ Add a song</button>`}
+      <div>${b.songs.map((s,idx)=>songRow(b.id,s,idx,canEdit)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
+      ${(full||!canEdit)?'':`<button class="addbtn" onclick="openSearch('${b.id}')">+ Add a song</button>`}
     </div>`;
   }).join('');
 }
-function songRow(blockId,s,i){
+function songRow(blockId,s,i,canEdit){
   return `<div class="song-row">
     <img src="${esc(s.art||'')}" alt="" onerror="this.style.visibility='hidden'">
     <div class="meta"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div>
-    <button class="iconbtn" title="Remove" onclick="removeSong('${blockId}',${i})">×</button>
+    ${canEdit===false?'':`<button class="iconbtn" title="Remove" onclick="removeSong('${blockId}',${i})">×</button>`}
   </div>`;
 }
 function copyInvite(code){
@@ -737,6 +792,14 @@ function renderTimeline(){
   if(!el)return;
   if(!tl.length){
     el.innerHTML='<p class="muted">No timeline yet. Add the first moment of the day above.</p>';
+    return;
+  }
+  if(DEMO){
+    el.innerHTML=tl.map(t=>`
+      <div style="display:flex;gap:14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)">
+        <span style="width:90px;font-weight:700;color:var(--neon)">${esc(t.time)}</span>
+        <span>${esc(t.label)}</span>
+      </div>`).join('');
     return;
   }
   el.innerHTML=tl.map((t,i)=>`
