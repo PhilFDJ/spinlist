@@ -56,6 +56,12 @@
   .result:hover{background:var(--paper-2)}
   .result img{width:40px;height:40px;border-radius:6px;object-fit:cover}
   .hide{display:none!important}
+  .tabs{display:flex;gap:6px;margin-top:26px;border-bottom:1px solid var(--line);overflow-x:auto}
+  .tab{background:transparent;border:0;border-bottom:3px solid transparent;color:var(--muted);font:inherit;font-weight:700;font-size:.95rem;padding:12px 16px;cursor:pointer;white-space:nowrap;transition:color .15s}
+  .tab:hover{color:var(--ink-2)}
+  .tab.active{color:var(--ink);border-bottom-color:var(--neon)}
+  .tab-pane{display:none}
+  .tab-pane.show{display:block}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:100px;font-weight:600;opacity:0;transition:opacity .2s;z-index:80;pointer-events:none}
   .toast.show{opacity:1}
   @media(max-width:640px){.grid-2{grid-template-columns:1fr}}
@@ -261,6 +267,7 @@ async function openWedding(id){
   catch(e){ toast(e.message); return; }
   renderPlan();
 }
+let currentTab='music';
 function renderPlan(){
   const w=CURRENT, isDJ=ME.role!=='couple';
   const root=document.getElementById('root');
@@ -281,17 +288,39 @@ function renderPlan(){
       <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
       <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button></div>
     </div>`:''}
-    ${!isDJ?`<p class="lead">Search and add your songs to each section below. Your choices save automatically — you can come back any time.</p>`:''}
-    <div id="blocks" style="margin-top:14px"></div>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:34px">
-      <h2>Timeline of the day</h2>
-      <button class="btn btn-ghost btn-sm" onclick="addTimelineRow()">+ Add moment</button>
+    <div class="tabs">
+      <button class="tab" data-tab="music" onclick="switchTab('music')">🎵 Music</button>
+      <button class="tab" data-tab="timeline" onclick="switchTab('timeline')">🕐 Timeline</button>
+      <button class="tab" data-tab="questionnaire" onclick="switchTab('questionnaire')">📋 Questionnaire</button>
     </div>
-    <p class="muted" style="margin:4px 0 12px">The running order for the day — both you and your DJ can edit this.</p>
-    <div class="panel" id="timeline-panel" style="margin-top:0"></div>`;
+
+    <section class="tab-pane" id="pane-music">
+      ${!isDJ?`<p class="lead" style="margin-top:18px">Search and add your songs to each section below. Your choices save automatically — you can come back any time.</p>`:''}
+      <div id="blocks" style="margin-top:14px"></div>
+    </section>
+
+    <section class="tab-pane" id="pane-timeline">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:22px">
+        <h2>Timeline of the day</h2>
+        <button class="btn btn-ghost btn-sm" onclick="addTimelineRow()">+ Add moment</button>
+      </div>
+      <p class="muted" style="margin:4px 0 12px">The running order for the day — both you and your DJ can edit this.</p>
+      <div class="panel" id="timeline-panel" style="margin-top:0"></div>
+    </section>
+
+    <section class="tab-pane" id="pane-questionnaire">
+      <div style="margin-top:22px"><h2>Questionnaire</h2></div>
+      <div class="panel"><p class="muted">Coming soon — your DJ will add questions here for you to answer.</p></div>
+    </section>`;
   renderBlocks();
   renderTimeline();
+  switchTab(currentTab);
+}
+function switchTab(tab){
+  currentTab=tab;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('show',p.id==='pane-'+tab));
 }
 function renderBlocks(){
   const w=CURRENT;
