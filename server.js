@@ -662,7 +662,7 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 // Save branding. Logo is optional on each save (colour/tagline can change alone).
 app.post('/api/branding', auth.requireAuth, (req, res) => {
   if (!planHasBranding(req.user)) {
-    return res.status(403).json({ error: 'Custom branding is available on the Pro and Studio plans.', upgrade: true });
+    return res.status(403).json({ error: 'Custom branding is available on the BASIC and PRO plans.', upgrade: true });
   }
   // Run multer only for this request so non-Pro hosts never write files.
   upload.single('logo')(req, res, (err) => {
@@ -728,7 +728,7 @@ const spotifyStates = new Map();
 app.get('/api/spotify/connect', auth.requireAuth, (req, res) => {
   const plan = PLANS[req.user.plan];
   if (!plan || !plan.spotifyExport) {
-    return res.status(403).json({ error: 'Spotify export is a Studio feature.' });
+    return res.status(403).json({ error: 'Spotify export is a PRO feature.' });
   }
   const state = crypto.randomBytes(16).toString('hex');
   spotifyStates.set(state, { userId: req.user.id, at: Date.now() });
@@ -821,7 +821,7 @@ app.post('/api/events/:id/export-spotify', auth.requireAuth, async (req, res) =>
   if (!e) return res.status(404).json({ error: 'Event not found.' });
   if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
   const plan = PLANS[req.user.plan];
-  if (!plan || !plan.spotifyExport) return res.status(403).json({ error: 'Spotify export is a Studio feature.' });
+  if (!plan || !plan.spotifyExport) return res.status(403).json({ error: 'Spotify export is a PRO feature.' });
 
   const token = await getUserSpotifyToken(req.user.id);
   if (!token) return res.status(401).json({ error: 'Connect your Spotify account first.', needsAuth: true });

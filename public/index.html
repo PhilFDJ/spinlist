@@ -843,7 +843,7 @@ function buildSongList(){
   return ranked().map(t=>`${t.title} - ${t.artist}`).join('\n');
 }
 function openExportModal(){
-  if(!ME||ME.plan!=='studio'){toast('Playlist export is a Studio feature.');return;}
+  if(!ME||ME.plan!=='studio'){toast('Playlist export is a PRO feature.');return;}
   if(!ranked().length){toast('No songs yet — nothing to export');return;}
   document.getElementById('export-modal').style.display='flex';
 }
@@ -866,7 +866,7 @@ function copySongList(){
 }
 
 async function exportSpotify(){
-  if(!ME||ME.plan!=='studio'){toast('Spotify export is a Studio feature. Upgrade to enable it.');return;}
+  if(!ME||ME.plan!=='studio'){toast('Spotify export is a PRO feature. Upgrade to enable it.');return;}
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
   toast('Exporting to Spotify…');
