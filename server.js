@@ -541,6 +541,8 @@ function publicWedding(w, viewerId) {
     coupleJoined: !!w.couple_id,
     blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: b.songs || [] })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
+    questionnaire: w.questionnaire || null,
+    answers: w.answers || {},
     canEdit: !!(isHost || isCouple),
     createdAt: w.created_at,
   };
@@ -569,7 +571,12 @@ app.post('/api/weddings', auth.requireAuth, (req, res) => {
     blocks,
     created_at: Date.now(),
   });
-  res.json({ wedding: publicWedding(wedding, req.user.id) });
+  // Optionally attach a questionnaire template chosen at creation.
+  if (b.templateId) {
+    const tpl = db.listTemplates(req.user.id).find(t => t.id === b.templateId);
+    if (tpl) db.setWeddingQuestionnaire(wedding.id, { name: tpl.name, questions: tpl.questions });
+  }
+  res.json({ wedding: publicWedding(db.getWedding(wedding.id), req.user.id) });
 });
 
 // DJ: list my weddings
@@ -647,6 +654,57 @@ app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
   }
   const timeline = Array.isArray((req.body || {}).timeline) ? req.body.timeline : [];
   const updated = db.setWeddingTimeline(w.id, timeline);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// ----- Questionnaire templates (DJ) -----
+// List my templates
+app.get('/api/q-templates', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) return res.status(403).json({ error: 'PRO feature.' });
+  res.json({ templates: db.listTemplates(req.user.id) });
+});
+// Create / update a template (max 5)
+app.post('/api/q-templates', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) return res.status(403).json({ error: 'PRO feature.' });
+  const saved = db.saveTemplate(req.user.id, req.body || {});
+  if (saved && saved.error === 'limit') {
+    return res.status(400).json({ error: 'You can have up to 5 templates. Delete one to add another.' });
+  }
+  res.json({ template: saved });
+});
+// Delete a template
+app.delete('/api/q-templates/:id', auth.requireAuth, (req, res) => {
+  db.deleteTemplate(req.user.id, req.params.id);
+  res.json({ ok: true });
+});
+
+// Attach a questionnaire to a wedding (DJ) — snapshots the chosen template
+app.post('/api/weddings/:id/questionnaire', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Only the DJ can set the questionnaire.' });
+  const b = req.body || {};
+  let questionnaire = null;
+  if (b.templateId) {
+    const tpl = db.listTemplates(req.user.id).find(t => t.id === b.templateId);
+    if (!tpl) return res.status(404).json({ error: 'Template not found.' });
+    questionnaire = { name: tpl.name, questions: tpl.questions };   // snapshot
+  } else if (b.questionnaire === null) {
+    questionnaire = null;   // remove
+  }
+  const updated = db.setWeddingQuestionnaire(w.id, questionnaire);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Save questionnaire answers (couple or DJ)
+app.post('/api/weddings/:id/answers', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  const answers = (req.body || {}).answers || {};
+  const updated = db.setWeddingAnswers(w.id, answers);
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 

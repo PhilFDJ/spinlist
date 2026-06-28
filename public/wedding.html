@@ -192,7 +192,7 @@ async function renderDJHome(){
   root.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:36px;flex-wrap:wrap;gap:12px">
       <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Your weddings</h1></div>
-      <button class="btn btn-neon" onclick="openCreate()">+ New wedding</button>
+      <div style="display:flex;gap:8px"><button class="btn btn-ghost" onclick="openTemplates()">Questionnaire templates</button><button class="btn btn-neon" onclick="openCreate()">+ New wedding</button></div>
     </div>
     <p class="lead">Create a song plan, share the code with the couple, and they'll fill in their choices before the big day.</p>
     <div id="dj-list" style="margin-top:8px">
@@ -217,8 +217,9 @@ const DEFAULT_BLOCKS=[
   {name:'Last Dance',capacity:1},{name:'Do Not Play',capacity:5}
 ];
 let draftBlocks=[];
-function openCreate(){
+async function openCreate(){
   draftBlocks=DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity}));
+  try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
   const root=document.getElementById('root');
   root.innerHTML=`
     <h1 class="display" style="margin-top:36px">New wedding plan</h1>
@@ -231,6 +232,17 @@ function openCreate(){
       <p class="muted" style="margin-bottom:12px">Customise the blocks and how many songs each can hold. The couple fills these in.</p>
       <div id="blocks-edit"></div>
       <button class="addbtn" onclick="addDraftBlock()">+ Add a block</button>
+
+      <h2 style="font-size:1.1rem;margin:18px 0 4px">Questionnaire</h2>
+      <div class="field" style="margin-top:6px">
+        <span>Attach a questionnaire template (optional)</span>
+        <select id="w-template" style="width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)">
+          <option value="">None</option>
+          ${TEMPLATES.map(t=>`<option value="${t.id}">${esc(t.name)} (${(t.questions||[]).length} questions)</option>`).join('')}
+        </select>
+      </div>
+      ${TEMPLATES.length?'':'<p class="muted" style="font-size:.85rem;margin-top:-6px">No templates yet — you can <a href="#" onclick="openTemplates();return false">create one</a> first, or add it later.</p>'}
+
       <div style="margin-top:18px;display:flex;gap:10px">
         <button class="btn btn-neon" onclick="createWedding()">Create &amp; get code ▸</button>
         <button class="btn btn-ghost" onclick="renderDJHome()">Cancel</button>
@@ -256,12 +268,102 @@ async function createWedding(){
   const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1)}));
   if(!blocks.length){msg.textContent='Add at least one block.';return;}
   try{
-    const d=await api('/api/weddings',{method:'POST',body:JSON.stringify({name,coupleNames,blocks})});
+    const templateId=val('w-template');
+    const d=await api('/api/weddings',{method:'POST',body:JSON.stringify({name,coupleNames,blocks,templateId:templateId||undefined})});
     openWedding(d.wedding.id);
   }catch(e){ msg.textContent=e.message; if(/PRO feature/.test(e.message)){setTimeout(()=>location.href='/pricing.html',1500);} }
 }
 
-/* ---------------- OPEN A WEDDING (shared plan editor) ---------------- */
+/* ---------------- QUESTIONNAIRE TEMPLATES (DJ) ---------------- */
+let TEMPLATES=[], editingTpl=null;
+async function openTemplates(){
+  try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
+      <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Questionnaire templates</h1></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← Back</button>
+        ${TEMPLATES.length<5?'<button class="btn btn-neon" onclick="editTemplate(null)">+ New template</button>':''}
+      </div>
+    </div>
+    <p class="lead">Build up to 5 questionnaire templates. Pick one when you create a wedding. (${TEMPLATES.length}/5)</p>
+    <div style="margin-top:8px">${TEMPLATES.length?TEMPLATES.map(tplCard).join(''):'<div class="panel"><p class="muted">No templates yet. Create your first one.</p></div>'}</div>`;
+}
+function tplCard(t){
+  return `<div class="wcard">
+    <div><b>${esc(t.name)}</b><div class="muted">${(t.questions||[]).length} question${(t.questions||[]).length===1?'':'s'}</div></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="editTemplate('${t.id}')">Edit</button>
+      <button class="iconbtn" onclick="deleteTemplate('${t.id}')">🗑</button>
+    </div>
+  </div>`;
+}
+async function deleteTemplate(id){
+  if(!confirm('Delete this template?'))return;
+  await fetch('/api/q-templates/'+id,{method:'DELETE'});
+  openTemplates();
+}
+function editTemplate(id){
+  editingTpl=id?JSON.parse(JSON.stringify(TEMPLATES.find(t=>t.id===id))):{name:'',questions:[]};
+  if(!editingTpl.questions)editingTpl.questions=[];
+  renderTemplateEditor();
+}
+function renderTemplateEditor(){
+  const t=editingTpl;
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <h1 class="display" style="margin-top:34px">${t.id?'Edit template':'New template'}</h1>
+    <div class="panel" style="max-width:680px">
+      <div class="field"><span>Template name</span><input id="tpl-name" value="${esc(t.name||'')}" placeholder="e.g. Standard Wedding"></div>
+      <h2 style="font-size:1.1rem;margin:10px 0 4px">Questions</h2>
+      <p class="muted" style="margin-bottom:12px">Each question can be a text answer, yes/no, or multiple choice.</p>
+      <div id="tpl-questions"></div>
+      <button class="addbtn" onclick="addTplQuestion()">+ Add a question</button>
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn btn-neon" onclick="saveTemplate()">Save template</button>
+        <button class="btn btn-ghost" onclick="openTemplates()">Cancel</button>
+      </div>
+      <div id="tpl-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+  renderTplQuestions();
+}
+function renderTplQuestions(){
+  const el=document.getElementById('tpl-questions');
+  el.innerHTML=editingTpl.questions.map((q,i)=>`
+    <div style="background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <input value="${esc(q.label||'')}" placeholder="Question text" oninput="editingTpl.questions[${i}].label=this.value"
+          style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
+        <button class="iconbtn" onclick="editingTpl.questions.splice(${i},1);renderTplQuestions()">🗑</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:.82rem">Type:</span>
+        <select onchange="setQType(${i},this.value)" style="font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">
+          <option value="text" ${q.type==='text'?'selected':''}>Text answer</option>
+          <option value="yesno" ${q.type==='yesno'?'selected':''}>Yes / No</option>
+          <option value="choice" ${q.type==='choice'?'selected':''}>Multiple choice</option>
+        </select>
+        ${q.type==='choice'?`<input value="${esc((q.options||[]).join(', '))}" placeholder="Options, comma-separated" oninput="editingTpl.questions[${i}].options=this.value.split(',').map(s=>s.trim()).filter(Boolean)"
+          style="flex:1;min-width:200px;font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">`:''}
+      </div>
+    </div>`).join('')||'<p class="muted" style="margin-bottom:8px">No questions yet.</p>';
+}
+function setQType(i,type){editingTpl.questions[i].type=type;if(type==='choice'&&!editingTpl.questions[i].options)editingTpl.questions[i].options=[];renderTplQuestions();}
+function addTplQuestion(){editingTpl.questions.push({type:'text',label:'',options:[]});renderTplQuestions();}
+async function saveTemplate(){
+  editingTpl.name=val('tpl-name');
+  const msg=document.getElementById('tpl-msg');msg.textContent='';
+  if(!editingTpl.name.trim()){msg.textContent='Give the template a name.';return;}
+  if(!editingTpl.questions.filter(q=>q.label&&q.label.trim()).length){msg.textContent='Add at least one question.';return;}
+  editingTpl.questions=editingTpl.questions.filter(q=>q.label&&q.label.trim());
+  try{
+    await api('/api/q-templates',{method:'POST',body:JSON.stringify(editingTpl)});
+    openTemplates();
+  }catch(e){ msg.textContent=e.message; }
+}
+
+
 async function openWedding(id){
   try{ CURRENT=(await api('/api/weddings/'+id)).wedding; }
   catch(e){ toast(e.message); return; }
@@ -310,11 +412,11 @@ function renderPlan(){
     </section>
 
     <section class="tab-pane" id="pane-questionnaire">
-      <div style="margin-top:22px"><h2>Questionnaire</h2></div>
-      <div class="panel"><p class="muted">Coming soon — your DJ will add questions here for you to answer.</p></div>
+      <div id="questionnaire-content" style="margin-top:22px"></div>
     </section>`;
   renderBlocks();
   renderTimeline();
+  renderQuestionnaire();
   switchTab(currentTab);
 }
 function switchTab(tab){
@@ -385,6 +487,57 @@ async function saveTimeline(){
     const d=await api('/api/weddings/'+CURRENT.id+'/timeline',{method:'POST',body:JSON.stringify({timeline:CURRENT.timeline})});
     CURRENT=d.wedding;
     toast('Timeline saved');
+  }catch(e){ toast(e.message); }
+}
+
+/* ---------------- QUESTIONNAIRE (couple answers / DJ views) ---------------- */
+function renderQuestionnaire(){
+  const w=CURRENT, isDJ=ME.role!=='couple';
+  const el=document.getElementById('questionnaire-content');
+  if(!el)return;
+  const q=w.questionnaire;
+  if(!q||!q.questions||!q.questions.length){
+    el.innerHTML=`<h2>Questionnaire</h2>
+      <div class="panel"><p class="muted">${isDJ?'No questionnaire attached yet. <a href="#" onclick="openTemplates();return false">Manage templates</a> to set one up.':'Your DJ has not added a questionnaire yet.'}</p></div>`;
+    return;
+  }
+  const answers=w.answers||{};
+  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><h2>${esc(q.name||'Questionnaire')}</h2>${isDJ?'<span class="muted" style="font-size:.85rem">Couple&#39;s answers</span>':''}</div>
+    ${!isDJ?'<p class="lead" style="margin-bottom:8px">Answer these for your DJ — saves automatically.</p>':''}
+    <div class="panel">${q.questions.map(qq=>questionField(qq,answers[qq.id],isDJ)).join('')}</div>`;
+}
+function questionField(q,val,isDJ){
+  val=val||'';
+  const lbl=`<div style="font-weight:700;margin-bottom:8px">${esc(q.label)}</div>`;
+  let input;
+  if(isDJ){
+    // DJ sees read-only answers
+    input=`<div class="muted" style="background:var(--paper-2);border-radius:8px;padding:10px 12px;min-height:20px">${val?esc(val):'<i>No answer yet</i>'}</div>`;
+  }else if(q.type==='yesno'){
+    input=`<div style="display:flex;gap:8px">
+      ${['Yes','No'].map(o=>`<button class="btn ${val===o?'btn-neon':'btn-ghost'} btn-sm" onclick="setAnswer('${q.id}','${o}')">${o}</button>`).join('')}</div>`;
+  }else if(q.type==='choice'){
+    input=`<div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${(q.options||[]).map(o=>`<button class="btn ${val===o?'btn-neon':'btn-ghost'} btn-sm" onclick="setAnswer('${q.id}','${esc(o).replace(/'/g,"&#39;")}')">${esc(o)}</button>`).join('')}</div>`;
+  }else{
+    input=`<input value="${esc(val)}" placeholder="Type your answer…" oninput="CURRENT.answers=CURRENT.answers||{};CURRENT.answers['${q.id}']=this.value;queueAnswerSave()"
+      style="width:100%;font:inherit;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">`;
+  }
+  return `<div style="padding:14px 0;border-top:1px solid var(--line)">${lbl}${input}</div>`;
+}
+function setAnswer(qid,val){
+  CURRENT.answers=CURRENT.answers||{};
+  CURRENT.answers[qid]=val;
+  renderQuestionnaire();
+  saveAnswers();
+}
+let ansT;
+function queueAnswerSave(){clearTimeout(ansT);ansT=setTimeout(saveAnswers,700);}
+async function saveAnswers(){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/answers',{method:'POST',body:JSON.stringify({answers:CURRENT.answers})});
+    CURRENT=d.wedding;
+    toast('Saved');
   }catch(e){ toast(e.message); }
 }
 
