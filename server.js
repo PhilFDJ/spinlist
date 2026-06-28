@@ -124,21 +124,30 @@ app.use(auth.attachUser);
    AUTH ROUTES
    ========================================================= */
 app.post('/api/auth/signup', (req, res) => {
-  const { email, password, name } = req.body || {};
+  const { email, password, name, weddingCode } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (db.getUserByEmail(email)) return res.status(409).json({ error: 'An account with that email already exists.' });
+
+  // If a wedding code is supplied, this is a couple joining their DJ's wedding.
+  let wedding = null;
+  if (weddingCode) {
+    wedding = db.getWeddingByCode(String(weddingCode).trim());
+    if (!wedding) return res.status(404).json({ error: 'That wedding code wasn\'t found. Check it with your DJ.' });
+  }
 
   const user = db.createUser({
     id: auth.newId(),
     email: email.toLowerCase(),
     password_hash: auth.hashPassword(password),
     name: name || '',
+    role: wedding ? 'couple' : 'host',
     created_at: Date.now(),
   });
+  if (wedding) db.linkCoupleToWedding(wedding.id, user.id);
   const token = auth.startSession(user.id);
   res.setHeader('Set-Cookie', auth.sessionCookie(token));
-  res.json({ user: publicUser(user) });
+  res.json({ user: publicUser(user), wedding: wedding ? { id: wedding.id } : null });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -502,6 +511,141 @@ function summaryEvent(e) {
     createdAt: e.created_at,
   };
 }
+
+/* =========================================================
+   WEDDING PLANNER (DJ tier) — song blocks the couple fills in
+   ========================================================= */
+// Default blocks a DJ starts from (they can customise per wedding).
+const DEFAULT_WEDDING_BLOCKS = [
+  { name: 'First Dance', capacity: 1 },
+  { name: 'Cake Cutting', capacity: 1 },
+  { name: "Couple's Top 15", capacity: 15 },
+  { name: 'Play If Possible', capacity: 30 },
+  { name: 'Last Dance', capacity: 1 },
+  { name: 'Do Not Play', capacity: 5 },
+];
+
+// Which plans can create wedding plans. (Available to PRO for now.)
+function planHasWeddingPlanner(user) {
+  const p = PLANS[user.plan];
+  return !!(p && (p.spotifyExport || p.id === 'studio'));   // PRO tier
+}
+
+function publicWedding(w, viewerId) {
+  if (!w) return null;
+  const isHost = viewerId && viewerId === w.host_id;
+  const isCouple = viewerId && viewerId === w.couple_id;
+  return {
+    id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
+    inviteCode: (isHost ? w.invite_code : undefined),   // only the DJ sees the code
+    coupleJoined: !!w.couple_id,
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: b.songs || [] })),
+    canEdit: !!(isHost || isCouple),
+    createdAt: w.created_at,
+  };
+}
+
+// DJ: create a wedding plan
+app.post('/api/weddings', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) {
+    return res.status(403).json({ error: 'The Wedding Planner is a PRO feature.', upgrade: true });
+  }
+  const b = req.body || {};
+  const blocksIn = Array.isArray(b.blocks) && b.blocks.length ? b.blocks : DEFAULT_WEDDING_BLOCKS;
+  const blocks = blocksIn.slice(0, 30).map((blk, i) => ({
+    id: 'b' + (i + 1) + '_' + auth.newId().slice(0, 4),
+    name: (blk.name || 'Block').toString().slice(0, 60),
+    capacity: Math.max(1, Math.min(parseInt(blk.capacity, 10) || 1, 100)),
+    songs: [],
+  }));
+  const wedding = db.createWedding({
+    id: auth.newId().slice(0, 8),
+    host_id: req.user.id,
+    invite_code: auth.newId().slice(0, 6).toUpperCase(),
+    name: (b.name || 'Wedding').toString().slice(0, 120),
+    couple_names: (b.coupleNames || '').toString().slice(0, 120),
+    wedding_date: b.weddingDate ? Number(b.weddingDate) : null,
+    blocks,
+    created_at: Date.now(),
+  });
+  res.json({ wedding: publicWedding(wedding, req.user.id) });
+});
+
+// DJ: list my weddings
+app.get('/api/weddings', auth.requireAuth, (req, res) => {
+  const list = db.listWeddingsByHost(req.user.id).map(w => ({
+    id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
+    inviteCode: w.invite_code, coupleJoined: !!w.couple_id,
+    blockCount: (w.blocks || []).length,
+    filledCount: (w.blocks || []).reduce((s, b) => s + ((b.songs || []).length), 0),
+    createdAt: w.created_at,
+  }));
+  res.json({ weddings: list });
+});
+
+// Couple: list weddings I'm linked to
+app.get('/api/my-weddings', auth.requireAuth, (req, res) => {
+  const list = db.listWeddingsByCouple(req.user.id).map(w => publicWedding(w, req.user.id));
+  res.json({ weddings: list });
+});
+
+// Get one wedding (DJ or its couple only)
+app.get('/api/weddings/:id', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  res.json({ wedding: publicWedding(w, req.user.id) });
+});
+
+// Save the songs for a block (DJ or couple)
+app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  const songs = Array.isArray((req.body || {}).songs) ? req.body.songs : [];
+  const updated = db.setWeddingBlockSongs(w.id, req.params.blockId, songs);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// DJ: edit wedding details / blocks structure
+app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Only the DJ can edit the structure.' });
+  const b = req.body || {};
+  const fields = {};
+  if (b.name !== undefined) fields.name = (b.name || 'Wedding').toString().slice(0, 120);
+  if (b.coupleNames !== undefined) fields.couple_names = (b.coupleNames || '').toString().slice(0, 120);
+  if (b.weddingDate !== undefined) fields.wedding_date = b.weddingDate ? Number(b.weddingDate) : null;
+  if (Array.isArray(b.blocks)) {
+    // preserve existing songs when a block id is kept
+    fields.blocks = b.blocks.slice(0, 30).map((blk, i) => {
+      const existing = (w.blocks || []).find(x => x.id === blk.id);
+      return {
+        id: blk.id || ('b' + (i + 1) + '_' + auth.newId().slice(0, 4)),
+        name: (blk.name || 'Block').toString().slice(0, 60),
+        capacity: Math.max(1, Math.min(parseInt(blk.capacity, 10) || 1, 100)),
+        songs: existing ? (existing.songs || []).slice(0, Math.max(1, parseInt(blk.capacity, 10) || 1)) : [],
+      };
+    });
+  }
+  const updated = db.updateWedding(w.id, fields);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// DJ: delete a wedding
+app.delete('/api/weddings/:id', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Not your wedding plan.' });
+  db.deleteWedding(w.id);
+  res.json({ ok: true });
+});
+
 
 /* =========================================================
    COMPLIMENTARY & DISCOUNT CODES
@@ -930,7 +1074,7 @@ function shapeResults(json) {
 
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, sub_status: u.sub_status };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, sub_status: u.sub_status, role: u.role || 'host' };
 }
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public')));
