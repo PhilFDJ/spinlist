@@ -642,7 +642,16 @@ app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
     });
   }
   const updated = db.updateWedding(w.id, fields);
-  res.json({ wedding: publicWedding(updated, req.user.id) });
+  // Optionally switch (or remove) the questionnaire template.
+  if (b.templateId !== undefined) {
+    if (b.templateId) {
+      const tpl = db.listTemplates(req.user.id).find(t => t.id === b.templateId);
+      if (tpl) db.setWeddingQuestionnaire(w.id, { name: tpl.name, questions: tpl.questions });
+    } else {
+      db.setWeddingQuestionnaire(w.id, null);
+    }
+  }
+  res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id) });
 });
 
 // Save the timeline (DJ or couple — both can edit)

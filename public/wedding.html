@@ -274,7 +274,79 @@ async function createWedding(){
   }catch(e){ msg.textContent=e.message; if(/PRO feature/.test(e.message)){setTimeout(()=>location.href='/pricing.html',1500);} }
 }
 
-/* ---------------- QUESTIONNAIRE TEMPLATES (DJ) ---------------- */
+/* ---------------- EDIT WEDDING (DJ) ---------------- */
+let editBlocks=[];
+async function openEditWedding(){
+  const w=CURRENT;
+  // editable copy of blocks (keep ids so songs are preserved on save)
+  editBlocks=w.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,songCount:(b.songs||[]).length}));
+  try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
+  const curTplName=w.questionnaire?w.questionnaire.name:'';
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <h1 class="display" style="margin-top:36px">Edit wedding</h1>
+    <div class="panel" style="max-width:640px">
+      <div class="grid-2">
+        <div class="field"><span>Wedding name</span><input id="ew-name" value="${esc(w.name||'')}"></div>
+        <div class="field"><span>Couple's names</span><input id="ew-couple" value="${esc(w.coupleNames||'')}"></div>
+      </div>
+      <h2 style="font-size:1.1rem;margin:10px 0 4px">Song blocks</h2>
+      <p class="muted" style="margin-bottom:12px">Rename or resize blocks. Existing song choices are kept. Removing a block deletes its songs.</p>
+      <div id="eblocks-edit"></div>
+      <button class="addbtn" onclick="addEditBlock()">+ Add a block</button>
+
+      <h2 style="font-size:1.1rem;margin:18px 0 4px">Questionnaire</h2>
+      <div class="field" style="margin-top:6px">
+        <span>Attached template${curTplName?` (currently: ${esc(curTplName)})`:''}</span>
+        <select id="ew-template" style="width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)">
+          <option value="__keep">Keep current${curTplName?` (${esc(curTplName)})`:' (none)'}</option>
+          <option value="">None / remove</option>
+          ${TEMPLATES.map(t=>`<option value="${t.id}">${esc(t.name)} (${(t.questions||[]).length} questions)</option>`).join('')}
+        </select>
+        <p class="muted" style="font-size:.82rem;margin-top:6px">Changing the template replaces the questions. Existing answers may no longer match.</p>
+      </div>
+
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn btn-neon" onclick="saveEditWedding()">Save changes</button>
+        <button class="btn btn-ghost" onclick="renderPlan()">Cancel</button>
+      </div>
+      <div id="ew-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+  renderEditBlocks();
+}
+function renderEditBlocks(){
+  const el=document.getElementById('eblocks-edit');
+  el.innerHTML=editBlocks.map((b,i)=>`
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+      <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editBlocks[${i}].name=this.value">
+      <input type="number" min="1" max="100" style="width:78px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editBlocks[${i}].capacity=+this.value" title="Songs">
+      <button class="iconbtn" onclick="removeEditBlock(${i})" title="${b.songCount?('Has '+b.songCount+' song(s)'):'Remove'}">🗑</button>
+    </div>`).join('');
+}
+function addEditBlock(){editBlocks.push({name:'New block',capacity:5,songCount:0});renderEditBlocks();}
+function removeEditBlock(i){
+  const b=editBlocks[i];
+  if(b.songCount&&!confirm('This block has '+b.songCount+' song(s). Remove it and its songs?'))return;
+  editBlocks.splice(i,1);renderEditBlocks();
+}
+async function saveEditWedding(){
+  const name=val('ew-name'),coupleNames=val('ew-couple');
+  const msg=document.getElementById('ew-msg');msg.textContent='';
+  if(!name.trim()){msg.textContent='Please give the wedding a name.';return;}
+  const blocks=editBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({id:b.id,name:b.name,capacity:Math.max(1,b.capacity||1)}));
+  if(!blocks.length){msg.textContent='Add at least one block.';return;}
+  const body={name,coupleNames,blocks};
+  const tpl=val('ew-template');
+  if(tpl!=='__keep')body.templateId=tpl;   // '' removes, an id switches; '__keep' omits
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/update',{method:'POST',body:JSON.stringify(body)});
+    CURRENT=d.wedding;
+    toast('Wedding updated');
+    renderPlan();
+  }catch(e){ msg.textContent=e.message; }
+}
+
+
 let TEMPLATES=[], editingTpl=null;
 async function openTemplates(){
   try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
@@ -383,7 +455,8 @@ function renderPlan(){
         <p class="muted">${esc(w.coupleNames||'')} · ${filled} of ${cap} songs chosen</p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>`:''}
+        ${isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
     </div>
     ${isDJ&&w.inviteCode?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
