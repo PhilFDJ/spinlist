@@ -166,6 +166,7 @@ app.get('/api/me', (req, res) => {
     user: publicUser(req.user),
     plan: PLANS[req.user.plan] || PLANS.none,
     eventsThisMonth: db.countEventsThisMonth(req.user.id),
+    eventsLifetime: db.countEventsLifetime(req.user.id),
     branding: db.getBranding(req.user.id),
     isAdmin: isAdmin(req.user),
     compUntil: req.user.comp_until || null,
@@ -320,6 +321,17 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
       error: 'You need an active plan to create events. Subscribe or redeem a complimentary code.',
       upgrade: true,
     });
+  }
+
+  // Free trial: lifetime cap on total events ever created.
+  if (plan.maxEventsLifetime != null) {
+    const everCreated = db.countEventsLifetime(req.user.id);
+    if (everCreated >= plan.maxEventsLifetime) {
+      return res.status(403).json({
+        error: `Your free trial includes ${plan.maxEventsLifetime} events. Subscribe to keep creating events.`,
+        upgrade: true, trialEnded: true,
+      });
+    }
   }
 
   const used = db.countEventsThisMonth(req.user.id);
@@ -563,7 +575,11 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
   const users = db.listAllUsers().map(u => {
     // Classify the account's billing status.
     let status = 'free';            // signed up, no plan
-    if (u.plan && u.plan !== 'none') {
+    if (u.plan === 'trial') {
+      // Trial is active until the lifetime event cap is reached.
+      const cap = (PLANS.trial && PLANS.trial.maxEventsLifetime) || 2;
+      status = db.countEventsLifetime(u.id) >= cap ? 'trial-ended' : 'trial';
+    } else if (u.plan && u.plan !== 'none') {
       if (u.sub_status === 'comp') {
         status = (u.comp_until && now > u.comp_until) ? 'free' : 'comp';
       } else if (u.sub_status === 'active' || u.stripe_sub) {
@@ -589,8 +605,9 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
   const summary = {
     total: users.length,
     paying: users.filter(u => u.status === 'paying').length,
+    trial: users.filter(u => u.status === 'trial').length,
     comp: users.filter(u => u.status === 'comp').length,
-    free: users.filter(u => u.status === 'free' || u.status === 'active').length,
+    free: users.filter(u => u.status === 'free' || u.status === 'active' || u.status === 'trial-ended').length,
   };
   res.json({ users, summary });
 });

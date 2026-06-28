@@ -64,6 +64,11 @@ async function boot(){
   const status=d.user.sub_status||'—';
   const statusWarn=['past_due','canceled'].includes(status);
   const isComp=status==='comp';
+  const isTrial=d.user.plan==='trial';
+  const trialCap=(plan.maxEventsLifetime)||2;
+  const trialUsed=d.eventsLifetime||0;
+  const trialLeft=Math.max(0,trialCap-trialUsed);
+  const trialEnded=isTrial&&trialLeft<=0;
   const noPlan=d.user.plan==='none'||!d.user.plan;
   const hasBranding=!!plan.branding;
   const b=d.branding||{};
@@ -78,7 +83,14 @@ async function boot(){
       <div class="row"><span class="k">Current plan</span><span class="v"><span class="pill ${statusWarn?'warn':''}" ${isComp?'style="background:var(--neon);color:#0a1228"':''}>${esc(plan.name)}${isComp?' (comp)':''}</span></span></div>
       <div class="row"><span class="k">Status</span><span class="v">${esc(status)}</span></div>
       ${compLine}
-      ${noPlan ? `
+      ${isTrial ? `
+      <div class="row" style="display:block">
+        <div style="display:flex;justify-content:space-between"><span class="k">Free trial events used</span><span class="v">${trialUsed} / ${trialCap}</span></div>
+        <div class="meter"><div class="fill" style="width:${Math.min(100,Math.round(trialUsed/trialCap*100))}%"></div></div>
+        ${trialEnded
+          ? '<p style="color:var(--coral);font-size:.88rem;margin-top:10px">Your free trial is used up. Subscribe to keep creating events.</p><a class="btn btn-primary" href="/pricing.html" style="margin-top:10px">Choose a plan ▸</a>'
+          : `<p style="color:var(--ink-2);font-size:.88rem;margin-top:10px">You have <b>${trialLeft}</b> free event${trialLeft===1?'':'s'} left — all features included. <a href="/pricing.html" style="color:var(--plum);font-weight:700">See plans</a> for unlimited.</p>`}
+      </div>` : noPlan ? `
       <div class="row" style="display:block">
         <p style="color:var(--ink-2);margin-bottom:12px">You don't have an active plan yet. Subscribe or redeem a complimentary code to start hosting.</p>
         <a class="btn btn-primary" href="/pricing.html">See plans &amp; redeem a code</a>
@@ -151,7 +163,7 @@ async function boot(){
 
     <div class="actions">
       <a class="btn btn-primary" href="/">Create an event</a>
-      ${(noPlan||isComp)
+      ${(noPlan||isComp||isTrial)
         ? '<a class="btn btn-ghost" href="/pricing.html">See plans</a>'
         : '<button class="btn btn-ghost" onclick="portal()">Manage billing</button>'}
     </div>`;

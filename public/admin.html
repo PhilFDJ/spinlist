@@ -45,6 +45,7 @@
   .badge.off{background:rgba(255,107,94,.16);color:var(--coral)}
   .badge.paying{background:rgba(91,140,255,.18);color:var(--plum)}
   .badge.free{background:rgba(160,170,190,.16);color:var(--muted)}
+  .badge.trial{background:rgba(91,140,255,.18);color:var(--plum)}
   .msg{font-size:.9rem;margin-top:12px;min-height:18px}
   .signed-out{text-align:center;padding:80px 20px;color:var(--muted)}
   .hint{color:var(--muted);font-size:.82rem;margin-top:4px}
@@ -188,10 +189,10 @@ async function loadUsers(){
     const r=await fetch('/api/admin/users');const d=await r.json();
     if(!r.ok){list.innerHTML='<p style="color:var(--muted);font-size:.9rem">Could not load.</p>';return;}
     const s=d.summary||{};
-    document.getElementById('users-summary').textContent=`${s.total||0} hosts · ${s.paying||0} paying · ${s.comp||0} comp · ${s.free||0} free`;
+    document.getElementById('users-summary').textContent=`${s.total||0} hosts · ${s.paying||0} paying · ${s.trial||0} on trial · ${s.comp||0} comp · ${s.free||0} free`;
     if(!d.users||!d.users.length){list.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:8px">No hosts have signed up yet.</p>';return;}
     const badge=st=>{
-      const map={paying:['Paying','paying'],comp:['Comp','comp'],active:['Active','comp'],free:['Free','free']};
+      const map={paying:['Paying','paying'],trial:['Trial','trial'],'trial-ended':['Trial ended','free'],comp:['Comp','comp'],active:['Active','comp'],free:['Free','free']};
       const [label,cls]=map[st]||['Free','free'];
       return `<span class="badge ${cls}">${label}</span>`;
     };
