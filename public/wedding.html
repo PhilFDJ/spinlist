@@ -207,13 +207,18 @@ async function renderDJHome(){
 }
 function djCard(w){
   const total=w.blockCount||0;
+  const dateStr=w.weddingDate?fmtWeddingDate(w.weddingDate):'No date set';
   return `<div class="wcard" onclick="openWedding('${w.id}')">
     <div>
       <b>${esc(w.name)}</b> ${w.coupleJoined?'<span class="pill done">Couple joined</span>':'<span class="pill">Awaiting couple</span>'}
-      <div class="muted">${esc(w.coupleNames||'')} · ${w.filledCount} songs across ${total} blocks · code <b>${esc(w.inviteCode)}</b></div>
+      <div class="muted">📅 ${dateStr} · ${esc(w.coupleNames||'')} · ${w.filledCount} songs · code <b>${esc(w.inviteCode)}</b></div>
     </div>
     <span class="btn btn-ghost btn-sm">Open ▸</span>
   </div>`;
+}
+function fmtWeddingDate(ts){
+  try{ return new Date(ts).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}); }
+  catch(e){ return ''; }
 }
 
 /* ---------------- CREATE WEDDING (DJ) ---------------- */
@@ -234,6 +239,7 @@ async function openCreate(){
         <div class="field"><span>Wedding name</span><input id="w-name" placeholder="Sarah & Tom's Wedding"></div>
         <div class="field"><span>Couple's names</span><input id="w-couple" placeholder="Sarah & Tom"></div>
       </div>
+      <div class="field"><span>Wedding date</span><input id="w-date" type="date"></div>
       <h2 style="font-size:1.1rem;margin:10px 0 4px">Song blocks</h2>
       <p class="muted" style="margin-bottom:12px">Customise the blocks and how many songs each can hold. The couple fills these in.</p>
       <div id="blocks-edit"></div>
@@ -275,7 +281,9 @@ async function createWedding(){
   if(!blocks.length){msg.textContent='Add at least one block.';return;}
   try{
     const templateId=val('w-template');
-    const d=await api('/api/weddings',{method:'POST',body:JSON.stringify({name,coupleNames,blocks,templateId:templateId||undefined})});
+    const dateStr=val('w-date');
+    const weddingDate=dateStr?new Date(dateStr).getTime():null;
+    const d=await api('/api/weddings',{method:'POST',body:JSON.stringify({name,coupleNames,blocks,weddingDate,templateId:templateId||undefined})});
     openWedding(d.wedding.id);
   }catch(e){ msg.textContent=e.message; if(/PRO feature/.test(e.message)){setTimeout(()=>location.href='/pricing.html',1500);} }
 }
@@ -352,6 +360,7 @@ async function openEditWedding(){
         <div class="field"><span>Wedding name</span><input id="ew-name" value="${esc(w.name||'')}"></div>
         <div class="field"><span>Couple's names</span><input id="ew-couple" value="${esc(w.coupleNames||'')}"></div>
       </div>
+      <div class="field"><span>Wedding date</span><input id="ew-date" type="date" value="${w.weddingDate?new Date(w.weddingDate).toISOString().slice(0,10):''}"></div>
       <h2 style="font-size:1.1rem;margin:10px 0 4px">Song blocks</h2>
       <p class="muted" style="margin-bottom:12px">Rename or resize blocks. Existing song choices are kept. Removing a block deletes its songs.</p>
       <div id="eblocks-edit"></div>
@@ -400,6 +409,8 @@ async function saveEditWedding(){
   const blocks=editBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({id:b.id,name:b.name,capacity:Math.max(1,b.capacity||1)}));
   if(!blocks.length){msg.textContent='Add at least one block.';return;}
   const body={name,coupleNames,blocks};
+  const dateStr=val('ew-date');
+  body.weddingDate=dateStr?new Date(dateStr).getTime():null;
   const tpl=val('ew-template');
   if(tpl!=='__keep')body.templateId=tpl;   // '' removes, an id switches; '__keep' omits
   try{
@@ -533,7 +544,7 @@ function renderPlan(){
       <div>
         <p class="eyebrow">${isDJ?'Wedding plan':'Your wedding songs'}</p>
         <h1 class="display" style="margin-top:6px">${esc(w.name)}</h1>
-        <p class="muted">${esc(w.coupleNames||'')} · ${filled} of ${cap} songs chosen</p>
+        <p class="muted">${w.weddingDate?('📅 '+fmtWeddingDate(w.weddingDate)+' · '):''}${esc(w.coupleNames||'')} · ${filled} of ${cap} songs chosen</p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
