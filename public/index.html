@@ -481,6 +481,10 @@ async function renderEvents(){
   try{
     const r=await fetch('/api/my-events');const d=await r.json();
     const all=d.events||[];
+    // Also pull in wedding plans (if the DJ has the planner). Harmless if none.
+    let weddings=[];
+    try{ const wr=await fetch('/api/weddings'); if(wr.ok){ weddings=(await wr.json()).weddings||[]; } }catch(e){}
+
     const active=all.filter(e=>!e.archived);
     const archived=all.filter(e=>e.archived);
     const list=eventsView==='archived'?archived:active;
@@ -490,7 +494,7 @@ async function renderEvents(){
       <button class="seg-btn ${eventsView==='archived'?'on':''}" onclick="setEventsView('archived')">Archived (${archived.length})</button>
     </div>`;
 
-    if(!all.length){el.innerHTML='<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';return;}
+    if(!all.length&&!weddings.length){el.innerHTML='<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';return;}
 
     const rows=list.length?list.map(e=>{
       const status=e.closed?'<span class="pill-tag" style="background:var(--coral);color:#fff">Locked</span>':'<span class="pill-tag">Open</span>';
@@ -508,9 +512,23 @@ async function renderEvents(){
           ${archiveBtn}
         </div>
       </div>`;
-    }).join(''):`<div class="empty">No ${eventsView} events.</div>`;
+    }).join(''):(weddings.length&&eventsView==='active'?'':`<div class="empty">No ${eventsView} events.</div>`);
 
-    el.innerHTML=toggle+rows;
+    // Wedding plans only show in the 'active' view (they aren't archivable here).
+    const weddingRows=(eventsView==='active'&&weddings.length)?weddings.map(w=>{
+      const dateStr=w.weddingDate?new Date(w.weddingDate).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'No date set';
+      return `<div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:800;font-size:1.1rem">${esc(w.name)} <span class="pill-tag" style="background:var(--plum);color:#fff">Wedding</span></div>
+          <div style="color:var(--muted);font-size:.88rem;margin-top:4px">📅 ${dateStr}${w.coupleNames?(' · '+esc(w.coupleNames)):''} · ${w.filledCount} songs · ${w.coupleJoined?'couple joined':'awaiting couple'}</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>
+        </div>
+      </div>`;
+    }).join(''):'';
+
+    el.innerHTML=toggle+rows+weddingRows;
   }catch(err){ el.innerHTML='<div class="empty">Could not load events.</div>'; }
 }
 
