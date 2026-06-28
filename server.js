@@ -539,7 +539,7 @@ function publicWedding(w, viewerId) {
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
     inviteCode: (isHost ? w.invite_code : undefined),   // only the DJ sees the code
     coupleJoined: !!w.couple_id,
-    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: b.songs || [] })),
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
     questionnaire: w.questionnaire || null,
     answers: w.answers || {},
@@ -616,6 +616,16 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
   }
   const songs = Array.isArray((req.body || {}).songs) ? req.body.songs : [];
   const updated = db.setWeddingBlockSongs(w.id, req.params.blockId, songs);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Mark a song played/unplayed (DJ only — used on the day)
+app.post('/api/weddings/:id/played', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Only the DJ can mark songs played.' });
+  const b = req.body || {};
+  const updated = db.setWeddingSongPlayed(w.id, b.blockId, b.songId, !!b.played);
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
