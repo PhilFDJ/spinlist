@@ -455,7 +455,10 @@ function renderTemplateEditor(){
       <h2 style="font-size:1.1rem;margin:10px 0 4px">Questions</h2>
       <p class="muted" style="margin-bottom:12px">Each question can be a text answer, yes/no, or multiple choice.</p>
       <div id="tpl-questions"></div>
-      <button class="addbtn" onclick="addTplQuestion()">+ Add a question</button>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="addbtn" style="margin-top:0" onclick="addTplQuestion()">+ Add a question</button>
+        <button class="addbtn" style="margin-top:0;flex:0 0 auto;width:auto;padding:9px 16px" onclick="addTplHeader()">+ Add section header</button>
+      </div>
       <div style="margin-top:18px;display:flex;gap:10px">
         <button class="btn btn-neon" onclick="saveTemplate()">Save template</button>
         <button class="btn btn-ghost" onclick="openTemplates()">Cancel</button>
@@ -466,8 +469,18 @@ function renderTemplateEditor(){
 }
 function renderTplQuestions(){
   const el=document.getElementById('tpl-questions');
-  el.innerHTML=editingTpl.questions.map((q,i)=>`
-    <div style="background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px">
+  el.innerHTML=editingTpl.questions.map((q,i)=>{
+    if(q.type==='header'){
+      return `<div style="background:rgba(91,140,255,.10);border:1px solid rgba(91,140,255,.35);border-radius:12px;padding:12px 14px;margin-bottom:10px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="muted" style="font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase">Section</span>
+          <input value="${esc(q.label||'')}" placeholder="Section heading (e.g. Ceremony)" oninput="editingTpl.questions[${i}].label=this.value"
+            style="flex:1;font:inherit;font-weight:700;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
+          <button class="iconbtn" onclick="editingTpl.questions.splice(${i},1);renderTplQuestions()">🗑</button>
+        </div>
+      </div>`;
+    }
+    return `<div style="background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
         <input value="${esc(q.label||'')}" placeholder="Question text" oninput="editingTpl.questions[${i}].label=this.value"
           style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
@@ -483,16 +496,20 @@ function renderTplQuestions(){
         ${q.type==='choice'?`<input value="${esc((q.options||[]).join(', '))}" placeholder="Options, comma-separated" oninput="editingTpl.questions[${i}].options=this.value.split(',').map(s=>s.trim()).filter(Boolean)"
           style="flex:1;min-width:200px;font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">`:''}
       </div>
-    </div>`).join('')||'<p class="muted" style="margin-bottom:8px">No questions yet.</p>';
+    </div>`;
+  }).join('')||'<p class="muted" style="margin-bottom:8px">No questions yet.</p>';
 }
 function setQType(i,type){editingTpl.questions[i].type=type;if(type==='choice'&&!editingTpl.questions[i].options)editingTpl.questions[i].options=[];renderTplQuestions();}
 function addTplQuestion(){editingTpl.questions.push({type:'text',label:'',options:[]});renderTplQuestions();}
+function addTplHeader(){editingTpl.questions.push({type:'header',label:'',options:[]});renderTplQuestions();}
 async function saveTemplate(){
   editingTpl.name=val('tpl-name');
   const msg=document.getElementById('tpl-msg');msg.textContent='';
   if(!editingTpl.name.trim()){msg.textContent='Give the template a name.';return;}
-  if(!editingTpl.questions.filter(q=>q.label&&q.label.trim()).length){msg.textContent='Add at least one question.';return;}
+  // keep only items that have a label; require at least one real (non-header) question
   editingTpl.questions=editingTpl.questions.filter(q=>q.label&&q.label.trim());
+  const realQuestions=editingTpl.questions.filter(q=>q.type!=='header');
+  if(!realQuestions.length){msg.textContent='Add at least one question (headers alone are not enough).';return;}
   try{
     await api('/api/q-templates',{method:'POST',body:JSON.stringify(editingTpl)});
     openTemplates();
@@ -645,6 +662,11 @@ function renderQuestionnaire(){
     <div class="panel">${q.questions.map(qq=>questionField(qq,answers[qq.id],isDJ)).join('')}</div>`;
 }
 function questionField(q,val,isDJ){
+  if(q.type==='header'){
+    return `<div style="padding:18px 0 4px;border-top:2px solid var(--line);margin-top:6px">
+      <div style="font-size:.78rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--plum)">${esc(q.label)}</div>
+    </div>`;
+  }
   val=val||'';
   const lbl=`<div style="font-weight:700;margin-bottom:8px">${esc(q.label)}</div>`;
   let input;
