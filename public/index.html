@@ -1003,8 +1003,9 @@ async function loadMe(){
 function planLabel(p){return p==='none'||!p?'no plan':p;}
 function renderAcctNav(){
   const el=document.getElementById('acct-nav');if(!el)return;
-  if(ME){el.innerHTML=`<a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(planLabel(ME.plan))}</a>`;}
-  else{el.innerHTML=`<a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
+  const contact='<a href="/contact.html" style="color:var(--ink);text-decoration:none">Contact</a>';
+  if(ME){el.innerHTML=`${contact} <a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(planLabel(ME.plan))}</a>`;}
+  else{el.innerHTML=`${contact} <a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
 }
 
 window.addEventListener('load',async ()=>{

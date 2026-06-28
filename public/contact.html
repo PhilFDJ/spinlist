@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spinlist — Contact</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png"><link rel="apple-touch-icon" sizes="180x180" href="/img/favicon-180.png">
+<style>
+  :root{--ink:#eaf0ff;--ink-2:#b6c2e0;--paper:#0a1228;--paper-2:#121d3d;--surface:#16234a;--neon:#c6f24e;--neon-dim:#a8d63f;--plum:#5b8cff;--coral:#ff6b5e;--muted:#7e8db5;--line:rgba(180,200,255,.16);--shadow:0 18px 50px -22px rgba(0,0,0,.7)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink)}
+  .wrap{max-width:720px;margin:0 auto;padding:0 22px}
+  .display{font-family:"Archivo Black","Helvetica Neue",sans-serif;font-weight:900;letter-spacing:-.03em}
+  .eyebrow{font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  header.bar{background:rgba(10,18,40,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .bar .wrap{display:flex;align-items:center;justify-content:space-between;height:74px;max-width:1080px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:900;font-size:1.15rem;text-decoration:none;color:var(--ink)}
+  .logo-img{height:54px;width:auto;display:block}
+  .bar nav a{color:var(--ink);text-decoration:none;font-weight:600;font-size:.9rem;margin-left:14px}
+  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:12px 22px;cursor:pointer;font-size:.92rem;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:transform .15s}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-neon{background:var(--neon);color:#0a1228}
+  .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px;margin-top:24px}
+  h1{font-size:2.2rem;margin-top:36px}
+  .lead{color:var(--ink-2);margin-top:10px;font-size:1.02rem;line-height:1.6}
+  label.field{display:block;margin-bottom:16px}
+  label.field span{display:block;font-size:.82rem;color:var(--muted);font-weight:700;margin-bottom:6px}
+  .field input,.field textarea{width:100%;font:inherit;padding:12px 14px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)}
+  .field textarea{min-height:130px;resize:vertical}
+  .muted{color:var(--muted);font-size:.88rem}
+  h2{font-size:1.5rem;margin-top:40px}
+  .faq-q{font-weight:800;margin-top:18px;font-size:1.02rem}
+  .faq-a{color:var(--ink-2);margin-top:6px;line-height:1.6;font-size:.95rem}
+  a.inline{color:var(--plum);font-weight:700;text-decoration:none}
+  footer{margin:50px 0 40px;color:var(--muted);font-size:.85rem;text-align:center}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
+  <nav><a href="/">Home</a><a href="/pricing.html">Plans</a><a href="/account.html">Account</a></nav>
+</div></header>
+
+<div class="wrap">
+  <p class="eyebrow" style="margin-top:36px">Get in touch</p>
+  <h1 class="display">Contact us</h1>
+  <p class="lead">Questions about Spinlist, help with an event, or feedback? Send a message below and we'll get back to you. You can also email us directly at <a class="inline" href="mailto:phil@phil-freeman.co.uk">phil@phil-freeman.co.uk</a>.</p>
+
+  <div class="panel">
+    <label class="field"><span>Your name</span><input id="c-name" maxlength="80" placeholder="Your name"></label>
+    <label class="field"><span>Your email</span><input id="c-email" type="email" maxlength="120" placeholder="you@example.com"></label>
+    <label class="field"><span>Message</span><textarea id="c-msg" maxlength="3000" placeholder="How can we help?"></textarea></label>
+    <button class="btn btn-neon" onclick="sendContact()">Send message ▸</button>
+    <p class="muted" style="margin-top:12px">This opens your email app with the message ready to send.</p>
+  </div>
+
+  <h2>Frequently asked questions</h2>
+
+  <div class="faq-q">Do my guests need to download an app or sign up?</div>
+  <p class="faq-a">No. Guests just scan the QR code or open the link, then search and vote — no app, no account, nothing to install.</p>
+
+  <div class="faq-q">How do guests vote for songs?</div>
+  <p class="faq-a">They search live, pick their favourites, and their votes appear on a live leaderboard you can watch update in real time during the event.</p>
+
+  <div class="faq-q">Is there a free trial?</div>
+  <p class="faq-a">Yes — new accounts get 2 free events with all features included, no card required. After that you can subscribe to keep hosting.</p>
+
+  <div class="faq-q">What's the difference between Pro and Studio?</div>
+  <p class="faq-a">Pro is for regular hosts (a set number of events each month, up to 75 guests per event). Studio is for running events at scale, with unlimited events and guests plus playlist export. See the <a class="inline" href="/pricing.html">plans page</a> for the full breakdown.</p>
+
+  <div class="faq-q">Can I export the voted songs to a playlist?</div>
+  <p class="faq-a">Yes (on Studio). You can export the song list and import it into Spotify, Apple Music or Tidal, so the crowd's picks become a ready-made playlist.</p>
+
+  <div class="faq-q">Can I add my own branding?</div>
+  <p class="faq-a">Yes — on paid plans you can add your logo, colour and tagline to the guest pages and exports, so it looks like your brand, not ours.</p>
+
+  <footer>Spinlist · <a class="inline" href="mailto:phil@phil-freeman.co.uk">phil@phil-freeman.co.uk</a></footer>
+</div>
+
+<script>
+function sendContact(){
+  const name=(document.getElementById('c-name').value||'').trim();
+  const email=(document.getElementById('c-email').value||'').trim();
+  const msg=(document.getElementById('c-msg').value||'').trim();
+  if(!msg){ alert('Please write a message first.'); return; }
+  const subject='Spinlist enquiry'+(name?(' from '+name):'');
+  const body=
+    'Name: '+(name||'(not given)')+'\n'+
+    'Email: '+(email||'(not given)')+'\n\n'+
+    msg;
+  window.location.href='mailto:phil@phil-freeman.co.uk'
+    +'?subject='+encodeURIComponent(subject)
+    +'&body='+encodeURIComponent(body);
+}
+</script>
+</body>
+</html>
