@@ -806,12 +806,12 @@ async function exportPDF(){
   // header band in the host's accent colour
   doc.setFillColor(accent[0],accent[1],accent[2]);doc.rect(0,0,210,34,'F');
 
-  // optional logo, right-aligned in the band
+  // optional host logo, right-aligned in the band — larger now
   let logoData=null;
   if(b&&b.logo){logoData=await loadImageData(b.logo);}
   if(logoData){
     try{const fmt=/\.png|image\/png/i.test(b.logo)?'PNG':(/\.svg|svg\+xml/i.test(b.logo)?'PNG':'JPEG');
-      doc.addImage(logoData,fmt,176,6,22,22);}catch(e){/* skip unsupported */}
+      doc.addImage(logoData,fmt,166,3,28,28);}catch(e){/* skip unsupported */}
   }
 
   doc.setTextColor(headText[0],headText[1],headText[2]);
@@ -826,13 +826,25 @@ async function exportPDF(){
   let y=58;doc.setFont('helvetica','bold');doc.setFontSize(11);
   doc.text('#',14,y);doc.text('TITLE',24,y);doc.text('ARTIST',110,y);doc.text('VOTES',180,y);
   doc.setFont('helvetica','normal');doc.setFontSize(10);y+=4;doc.setDrawColor(220);doc.line(14,y,196,y);y+=8;
-  list.forEach((t,i)=>{if(y>280){doc.addPage();y=20;}
+  list.forEach((t,i)=>{if(y>278){doc.addPage();y=20;}
     doc.setFont('helvetica','bold');doc.text(String(i+1),14,y);
     doc.setFont('helvetica','normal');doc.text(clip(t.title,48),24,y);doc.text(clip(t.artist,40),110,y);
     doc.setFont('helvetica','bold');doc.text(String(t.votes),182,y);y+=8;});
 
-  // small Spinlist credit footer when the host has their own branding
-  if(b&&(b.logo||b.tagline)){doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(150);doc.text('Made with Spinlist',14,290);}
+  // Spinlist logo footer ("powered by") — S-mark reads cleanly on white.
+  try{
+    const markData=await loadImageData('/img/spinlist-mark.png');
+    if(markData){
+      doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(120);
+      doc.text('Powered by',150,291);
+      doc.addImage(markData,'PNG',172,285,8,8);
+      doc.setFont('helvetica','bold');doc.setTextColor(90);doc.text('spinlist',181,291);
+    }else{
+      doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(150);doc.text('Powered by Spinlist',150,291);
+    }
+  }catch(e){
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(150);doc.text('Powered by Spinlist',150,291);
+  }
   doc.save((EVENT.name||'event').replace(/\W+/g,'-')+'-setlist.pdf');toast('PDF downloaded ⬇');
 }
 function clip(s,n){return (s||'').length>n?s.slice(0,n-1)+'…':s}
