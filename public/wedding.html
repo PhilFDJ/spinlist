@@ -198,7 +198,7 @@ async function renderDJHome(){
   root.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:36px;flex-wrap:wrap;gap:12px">
       <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Your weddings</h1></div>
-      <div style="display:flex;gap:8px"><button class="btn btn-ghost" onclick="openTemplates()">Questionnaire templates</button><button class="btn btn-neon" onclick="openCreate()">+ New wedding</button></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost" onclick="openBlockTemplates()">Block templates</button><button class="btn btn-ghost" onclick="openTemplates()">Questionnaire templates</button><button class="btn btn-neon" onclick="openCreate()">+ New wedding</button></div>
     </div>
     <p class="lead">Create a song plan, share the code with the couple, and they'll fill in their choices before the big day.</p>
     <div id="dj-list" style="margin-top:8px">
@@ -231,6 +231,7 @@ let draftBlocks=[];
 async function openCreate(){
   draftBlocks=DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity}));
   try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
+  try{ BLOCK_TEMPLATES=(await api('/api/block-templates')).templates||[]; }catch(e){ BLOCK_TEMPLATES=[]; }
   const root=document.getElementById('root');
   root.innerHTML=`
     <h1 class="display" style="margin-top:36px">New wedding plan</h1>
@@ -240,10 +241,18 @@ async function openCreate(){
         <div class="field"><span>Couple's names</span><input id="w-couple" placeholder="Sarah & Tom"></div>
       </div>
       <div class="field"><span>Wedding date</span><input id="w-date" type="date"></div>
-      <h2 style="font-size:1.1rem;margin:10px 0 4px">Song blocks</h2>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 4px">
+        <h2 style="font-size:1.1rem">Song blocks</h2>
+        ${BLOCK_TEMPLATES.length?`<select onchange="loadBlockTemplate(this.value)" style="font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--paper-2);color:var(--ink);font-size:.85rem">
+          <option value="">Load a template…</option>
+          ${BLOCK_TEMPLATES.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}
+        </select>`:''}
+      </div>
       <p class="muted" style="margin-bottom:12px">Customise the blocks and how many songs each can hold. The couple fills these in.</p>
       <div id="blocks-edit"></div>
       <button class="addbtn" onclick="addDraftBlock()">+ Add a block</button>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="saveBlocksAsTemplate()">💾 Save these blocks as a template</button>
 
       <h2 style="font-size:1.1rem;margin:18px 0 4px">Questionnaire</h2>
       <div class="field" style="margin-top:6px">
@@ -262,6 +271,26 @@ async function openCreate(){
       <div id="w-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
     </div>`;
   renderDraftBlocks();
+}
+function loadBlockTemplate(id){
+  if(!id)return;
+  const t=BLOCK_TEMPLATES.find(x=>x.id===id);
+  if(!t)return;
+  draftBlocks=t.blocks.map(b=>({name:b.name,capacity:b.capacity}));
+  renderDraftBlocks();
+  toast('Loaded "'+t.name+'"');
+}
+async function saveBlocksAsTemplate(){
+  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1)}));
+  if(!blocks.length){toast('Add some blocks first');return;}
+  const name=prompt('Name this block template:','My Wedding Set');
+  if(!name||!name.trim())return;
+  try{
+    await api('/api/block-templates',{method:'POST',body:JSON.stringify({name:name.trim(),blocks})});
+    try{ BLOCK_TEMPLATES=(await api('/api/block-templates')).templates||[]; }catch(e){}
+    toast('Saved as template ✓');
+    openCreate();   // refresh so the new template appears in the dropdown
+  }catch(e){ toast(e.message); }
 }
 function renderDraftBlocks(){
   const el=document.getElementById('blocks-edit');
@@ -421,6 +450,82 @@ async function saveEditWedding(){
   }catch(e){ msg.textContent=e.message; }
 }
 
+
+/* ---------------- MUSIC BLOCK TEMPLATES (DJ) ---------------- */
+let BLOCK_TEMPLATES=[], editingBTpl=null;
+async function openBlockTemplates(){
+  try{ BLOCK_TEMPLATES=(await api('/api/block-templates')).templates||[]; }catch(e){ BLOCK_TEMPLATES=[]; }
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
+      <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Block templates</h1></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← Back</button>
+        ${BLOCK_TEMPLATES.length<5?'<button class="btn btn-neon" onclick="editBlockTemplate(null)">+ New template</button>':''}
+      </div>
+    </div>
+    <p class="lead">Save your song block setups (up to 5) and load one when creating a wedding. (${BLOCK_TEMPLATES.length}/5)</p>
+    <div style="margin-top:8px">${BLOCK_TEMPLATES.length?BLOCK_TEMPLATES.map(bTplCard).join(''):'<div class="panel"><p class="muted">No block templates yet. Create your first one.</p></div>'}</div>`;
+}
+function bTplCard(t){
+  const total=(t.blocks||[]).reduce((s,b)=>s+b.capacity,0);
+  return `<div class="wcard">
+    <div><b>${esc(t.name)}</b><div class="muted">${(t.blocks||[]).length} blocks · ${total} songs total</div></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="editBlockTemplate('${t.id}')">Edit</button>
+      <button class="iconbtn" onclick="deleteBlockTemplate('${t.id}')">🗑</button>
+    </div>
+  </div>`;
+}
+async function deleteBlockTemplate(id){
+  if(!confirm('Delete this block template?'))return;
+  await fetch('/api/block-templates/'+id,{method:'DELETE'});
+  openBlockTemplates();
+}
+function editBlockTemplate(id){
+  editingBTpl=id?JSON.parse(JSON.stringify(BLOCK_TEMPLATES.find(t=>t.id===id))):{name:'',blocks:DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity}))};
+  if(!editingBTpl.blocks)editingBTpl.blocks=[];
+  renderBlockTemplateEditor();
+}
+function renderBlockTemplateEditor(){
+  const t=editingBTpl;
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <h1 class="display" style="margin-top:34px">${t.id?'Edit block template':'New block template'}</h1>
+    <div class="panel" style="max-width:680px">
+      <div class="field"><span>Template name</span><input id="btpl-name" value="${esc(t.name||'')}" placeholder="e.g. Standard Wedding Set"></div>
+      <h2 style="font-size:1.1rem;margin:10px 0 4px">Blocks</h2>
+      <p class="muted" style="margin-bottom:12px">Name each block and how many songs it holds.</p>
+      <div id="btpl-blocks"></div>
+      <button class="addbtn" onclick="editingBTpl.blocks.push({name:'New block',capacity:5});renderBTplBlocks()">+ Add a block</button>
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn btn-neon" onclick="saveBlockTemplate()">Save template</button>
+        <button class="btn btn-ghost" onclick="openBlockTemplates()">Cancel</button>
+      </div>
+      <div id="btpl-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+  renderBTplBlocks();
+}
+function renderBTplBlocks(){
+  const el=document.getElementById('btpl-blocks');
+  el.innerHTML=editingBTpl.blocks.map((b,i)=>`
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+      <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editingBTpl.blocks[${i}].name=this.value">
+      <input type="number" min="1" max="100" style="width:78px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editingBTpl.blocks[${i}].capacity=+this.value" title="Songs">
+      <button class="iconbtn" onclick="editingBTpl.blocks.splice(${i},1);renderBTplBlocks()">🗑</button>
+    </div>`).join('')||'<p class="muted" style="margin-bottom:8px">No blocks yet.</p>';
+}
+async function saveBlockTemplate(){
+  editingBTpl.name=val('btpl-name');
+  const msg=document.getElementById('btpl-msg');msg.textContent='';
+  if(!editingBTpl.name.trim()){msg.textContent='Give the template a name.';return;}
+  editingBTpl.blocks=editingBTpl.blocks.filter(b=>b.name&&b.name.trim());
+  if(!editingBTpl.blocks.length){msg.textContent='Add at least one block.';return;}
+  try{
+    await api('/api/block-templates',{method:'POST',body:JSON.stringify(editingBTpl)});
+    openBlockTemplates();
+  }catch(e){ msg.textContent=e.message; }
+}
 
 let TEMPLATES=[], editingTpl=null;
 async function openTemplates(){

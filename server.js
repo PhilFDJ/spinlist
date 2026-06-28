@@ -666,6 +666,24 @@ app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
+// ----- Music block templates (DJ) -----
+app.get('/api/block-templates', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) return res.status(403).json({ error: 'PRO feature.' });
+  res.json({ templates: db.listBlockTemplates(req.user.id) });
+});
+app.post('/api/block-templates', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) return res.status(403).json({ error: 'PRO feature.' });
+  const saved = db.saveBlockTemplate(req.user.id, req.body || {});
+  if (saved && saved.error === 'limit') {
+    return res.status(400).json({ error: 'You can have up to 5 block templates. Delete one to add another.' });
+  }
+  res.json({ template: saved });
+});
+app.delete('/api/block-templates/:id', auth.requireAuth, (req, res) => {
+  db.deleteBlockTemplate(req.user.id, req.params.id);
+  res.json({ ok: true });
+});
+
 // ----- Questionnaire templates (DJ) -----
 // List my templates
 app.get('/api/q-templates', auth.requireAuth, (req, res) => {
