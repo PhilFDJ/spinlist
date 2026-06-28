@@ -155,7 +155,7 @@
       <p class="sub">Hosts build an event, share one link or QR code, and guests search Spotify's real catalogue to vote for the songs they want. When voting closes, the DJ gets a ranked playlist — PDF and Spotify export.</p>
       <div class="cta-row">
         <button class="btn btn-primary" onclick="go('create')">Create an event →</button>
-        <button class="btn btn-ghost" onclick="loadDemo()">Try the demo wedding</button>
+        <button class="btn btn-ghost" onclick="loadDemo()">See the demo</button>
       </div>
     </div>
     <div class="equalizer"><span></span><span></span><span></span><span></span><span></span><span></span></div>
@@ -462,7 +462,7 @@ async function createSpinlistEvent(){
 }
 
 function loadDemo(){
-  EVENT={id:'DEMO42',name:"Sam & Riley's Wedding",type:'Wedding',host:'DJ Marco',votesPer:5,deadline:Date.now()+1000*60*90,closed:false,tracks:{}};
+  EVENT={id:'DEMO42',name:"Sam's 30th Birthday",type:'Birthday',host:'DJ Marco',votesPer:5,deadline:Date.now()+1000*60*90,closed:false,tracks:{}};
   // Seed leaderboard with a few placeholder entries (no Spotify URIs — guests add real ones by voting).
   [['Dancing Queen','ABBA',38],['Uptown Funk','Mark Ronson ft. Bruno Mars',31],['Sweet Caroline','Neil Diamond',27],["Don't Stop Me Now",'Queen',24],['Blinding Lights','The Weeknd',19]]
     .forEach(([title,artist,votes],i)=>{const id='seed'+i;EVENT.tracks[id]={id,title,artist,votes,uri:null,art:''};});
