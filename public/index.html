@@ -315,6 +315,7 @@
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn btn-neon" onclick="downloadSongList()" style="flex:1;min-width:140px">⬇ Download list</button>
         <button class="btn btn-ghost" onclick="copySongList()" style="flex:1;min-width:140px">📋 Copy list</button>
+        <button class="btn btn-ghost" onclick="downloadSongCSV()" style="flex:1;min-width:140px">⬇ Export CSV</button>
       </div>
     </div>
 
@@ -919,6 +920,25 @@ function downloadSongList(){
   document.body.appendChild(a);a.click();document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast('Song list downloaded ⬇');
+}
+function csvCell(s){
+  s=(s==null?'':String(s));
+  if(/[",\n]/.test(s))return '"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function downloadSongCSV(){
+  const list=ranked();
+  if(!list.length){toast('No songs yet — nothing to export');return;}
+  const rows=[['Artist','Title','Votes']];
+  list.forEach(t=>rows.push([t.artist,t.title,t.votes]));
+  const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=(EVENT.name||'event').replace(/\W+/g,'-')+'-songs.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('CSV downloaded ⬇');
 }
 function copySongList(){
   const text=buildSongList();

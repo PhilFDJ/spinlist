@@ -747,6 +747,7 @@ function renderPlan(){
 
     <section class="tab-pane" id="pane-music">
       ${!isDJ?`<p class="lead" style="margin-top:18px">Search and add your songs to each section below. Your choices save automatically — you can come back any time.</p>`:''}
+      ${(isDJ&&!DEMO)?`<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost btn-sm" onclick="exportWeddingCSV()">⬇ Export CSV</button></div>`:''}
       <div id="blocks" style="margin-top:14px"></div>
     </section>
 
@@ -827,6 +828,34 @@ async function toggleWedPlayed(blockId,songId){
 function copyInvite(code){
   const link=location.origin+'/wedding.html?code='+encodeURIComponent(code);
   navigator.clipboard?.writeText(link).then(()=>toast('Invite link copied'),()=>toast('Link: '+link));
+}
+
+/* ---------------- CSV EXPORT (DJ) ---------------- */
+function csvCell(s){
+  s=(s==null?'':String(s));
+  // Quote if it contains comma, quote, or newline; escape quotes by doubling.
+  if(/[",\n]/.test(s))return '"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function downloadCSV(filename,rows){
+  const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=filename;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function exportWeddingCSV(){
+  const w=CURRENT;
+  const rows=[['Block','Artist','Title','Played']];
+  (w.blocks||[]).forEach(b=>{
+    (b.songs||[]).forEach(s=>{
+      rows.push([b.name,s.artist,s.title,s.played?'Yes':'']);
+    });
+  });
+  if(rows.length===1){toast('No songs to export yet');return;}
+  downloadCSV((w.name||'wedding').replace(/\W+/g,'-')+'-songs.csv',rows);
+  toast('CSV downloaded ⬇');
 }
 
 /* ---------------- PDF RUN-SHEET EXPORT (DJ) ---------------- */
