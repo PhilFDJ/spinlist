@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Spinlist — Wedding Planner</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png"><link rel="apple-touch-icon" sizes="180x180" href="/img/favicon-180.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   :root{--ink:#eaf0ff;--ink-2:#b6c2e0;--paper:#0a1228;--paper-2:#121d3d;--surface:#16234a;--neon:#c6f24e;--plum:#5b8cff;--coral:#ff6b5e;--muted:#7e8db5;--line:rgba(180,200,255,.16)}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -729,6 +730,7 @@ function renderPlan(){
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportWeddingPDF()">⬇ PDF run-sheet</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
     </div>
@@ -825,6 +827,114 @@ async function toggleWedPlayed(blockId,songId){
 function copyInvite(code){
   const link=location.origin+'/wedding.html?code='+encodeURIComponent(code);
   navigator.clipboard?.writeText(link).then(()=>toast('Invite link copied'),()=>toast('Link: '+link));
+}
+
+/* ---------------- PDF RUN-SHEET EXPORT (DJ) ---------------- */
+async function loadImageData(url){
+  try{
+    const res=await fetch(url);const blob=await res.blob();
+    return await new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=reject;fr.readAsDataURL(blob);});
+  }catch(e){return null;}
+}
+async function exportWeddingPDF(){
+  if(!window.jspdf||!window.jspdf.jsPDF){toast('PDF tool could not load — try refreshing');return;}
+  const {jsPDF}=window.jspdf;const doc=new jsPDF();const w=CURRENT;
+  const PW=210, M=14;            // page width, margin
+  let y=0;
+  const NEON=[150,180,40], INK=[13,18,30], MUT=[110,120,140];
+  function clip(s,n){s=(s||'').toString();return s.length>n?s.slice(0,n-1)+'…':s;}
+  function need(h){ if(y+h>284){doc.addPage();y=18;} }
+
+  // Header band
+  doc.setFillColor(13,18,40);doc.rect(0,0,PW,34,'F');
+  doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(20);
+  doc.text(clip(w.name||'Wedding',40),M,16);
+  doc.setFont('helvetica','normal');doc.setFontSize(11);
+  let sub=[];if(w.coupleNames)sub.push(w.coupleNames);if(w.weddingDate)sub.push(fmtWeddingDate(w.weddingDate));
+  doc.text(sub.join('   ·   '),M,25);
+  y=44;
+
+  function sectionTitle(t){
+    need(16);
+    doc.setTextColor(NEON[0],NEON[1],NEON[2]);doc.setFont('helvetica','bold');doc.setFontSize(9);
+    doc.text(t.toUpperCase(),M,y);
+    doc.setDrawColor(220);doc.line(M,y+2,PW-M,y+2);
+    y+=10;doc.setTextColor(INK[0],INK[1],INK[2]);
+  }
+
+  // ---- Song blocks ----
+  sectionTitle('Song blocks');
+  (w.blocks||[]).forEach(b=>{
+    need(12);
+    doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(INK[0],INK[1],INK[2]);
+    doc.text(clip(b.name,50),M,y);
+    doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(MUT[0],MUT[1],MUT[2]);
+    doc.text(`${(b.songs||[]).length}/${b.capacity}`,PW-M,y,{align:'right'});
+    y+=6;
+    if(!(b.songs||[]).length){
+      doc.setFont('helvetica','italic');doc.setFontSize(10);doc.setTextColor(MUT[0],MUT[1],MUT[2]);
+      doc.text('—',M+4,y);y+=6;
+    }else{
+      b.songs.forEach((s,i)=>{
+        need(7);
+        doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(INK[0],INK[1],INK[2]);
+        const played=s.played?'  ✓ played':'';
+        doc.text(`${i+1}.  ${clip(s.title,46)} — ${clip(s.artist,34)}${played}`,M+4,y);
+        y+=6;
+      });
+    }
+    y+=4;
+  });
+
+  // ---- Timeline ----
+  if((w.timeline||[]).length){
+    y+=2;sectionTitle('Timeline of the day');
+    w.timeline.forEach(t=>{
+      need(7);
+      doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(INK[0],INK[1],INK[2]);
+      doc.text(clip(t.time||'',12),M+4,y);
+      doc.setFont('helvetica','normal');
+      doc.text(clip(t.label||'',70),M+34,y);
+      y+=7;
+    });
+  }
+
+  // ---- Questionnaire ----
+  const q=w.questionnaire;
+  if(q&&(q.questions||[]).length){
+    y+=2;sectionTitle('Questionnaire — '+clip(q.name||'',40));
+    const ans=w.answers||{};
+    q.questions.forEach(qq=>{
+      if(qq.type==='header'){
+        need(10);
+        doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(91,140,255);
+        doc.text(clip(qq.label,60).toUpperCase(),M,y);y+=7;
+        return;
+      }
+      need(13);
+      doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(INK[0],INK[1],INK[2]);
+      const qlines=doc.splitTextToSize(clip(qq.label,120),PW-2*M-4);
+      doc.text(qlines,M+4,y);y+=qlines.length*5;
+      doc.setFont('helvetica','normal');doc.setTextColor(70,80,100);
+      const a=ans[qq.id]?String(ans[qq.id]):'—';
+      const alines=doc.splitTextToSize(a,PW-2*M-8);
+      doc.text(alines,M+8,y);y+=alines.length*5+4;
+    });
+  }
+
+  // ---- Footer on every page ----
+  const markData=await loadImageData('/img/spinlist-mark.png');
+  const pages=doc.getNumberOfPages();
+  for(let p=1;p<=pages;p++){
+    doc.setPage(p);
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(150);
+    doc.text('Powered by',PW-M-30,291);
+    if(markData){try{doc.addImage(markData,'PNG',PW-M-12,285.5,7,7);}catch(e){}}
+    doc.setFont('helvetica','bold');doc.setTextColor(90);doc.text('spinlist',PW-M-4,291,{align:'right'});
+    doc.setFont('helvetica','normal');doc.setTextColor(180);doc.text('Page '+p+' of '+pages,M,291);
+  }
+  doc.save((w.name||'wedding').replace(/\W+/g,'-')+'-run-sheet.pdf');
+  toast('Run-sheet downloaded ⬇');
 }
 
 /* ---------------- TIMELINE (DJ + couple both edit) ---------------- */
