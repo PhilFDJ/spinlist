@@ -174,6 +174,7 @@
 <section class="view" id="create">
   <div class="wrap">
     <div class="section-head"><h2>Create your event</h2><p>This is the host setup. Guests never see this screen.</p></div>
+    <div id="trial-banner" style="display:none;max-width:680px;background:rgba(91,140,255,.12);border:1px solid rgba(91,140,255,.4);border-radius:12px;padding:14px 18px;margin-bottom:16px;font-size:.92rem;color:var(--ink-2)"></div>
     <div class="panel" style="max-width:680px">
       <div class="grid-2">
         <label class="field"><span>Event name</span><input id="f-name" placeholder="Sam & Riley's Wedding"></label>
@@ -282,6 +283,26 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- TRIAL-ENDED / UPGRADE MODAL -->
+<div id="upgrade-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card" style="max-width:460px;text-align:center">
+    <div style="font-size:2.2rem;margin-bottom:6px">🎉</div>
+    <h3 style="margin:0 0 8px;font-size:1.4rem">You're on a roll!</h3>
+    <p id="upgrade-msg" style="color:var(--ink-2);margin:0 0 20px;font-size:.95rem;line-height:1.5">You've used both of your free events. Keep the party going — pick a plan to host more.</p>
+    <div style="background:var(--paper-2);border-radius:12px;padding:16px;margin-bottom:18px;text-align:left">
+      <div style="font-weight:800;margin-bottom:10px;font-size:.9rem">With a paid plan you get:</div>
+      <div style="display:flex;flex-direction:column;gap:7px;font-size:.9rem;color:var(--ink-2)">
+        <div>✓ More events every month</div>
+        <div>✓ Your own logo, colour &amp; branding</div>
+        <div>✓ Playlist export to Spotify, Apple Music &amp; Tidal</div>
+        <div>✓ Up to 75 guests (BASIC) or unlimited (PRO)</div>
+      </div>
+    </div>
+    <a class="btn btn-neon" href="/pricing.html" style="width:100%;justify-content:center">Choose a plan ▸</a>
+    <button class="btn btn-ghost" onclick="document.getElementById('upgrade-modal').style.display='none'" style="width:100%;margin-top:10px">Maybe later</button>
+  </div>
+</div>
+
 <!-- PLAYLIST EXPORT MODAL (Studio) -->
 <div id="export-modal" class="modal-overlay" style="display:none">
   <div class="modal-card" style="max-width:500px">
@@ -368,6 +389,7 @@ function go(v){
   if(v==='dashboard')renderDashboard();
   if(v==='guest')renderGuest();
   if(v==='events')renderEvents();
+  if(v==='create')updateTrialBanner();
   // Safari can throw "Not enough arguments" on the object form of scrollTo,
   // so fall back to the classic two-number signature.
   try{ window.scrollTo({top:0,behavior:'smooth'}); }
@@ -375,6 +397,26 @@ function go(v){
 }
 let toastT;
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600);}
+
+// Show a friendly trial-status nudge on the Create page.
+function updateTrialBanner(){
+  const el=document.getElementById('trial-banner');if(!el)return;
+  const me=window.__me;
+  if(!me||!me.user||me.user.plan!=='trial'){el.style.display='none';return;}
+  const cap=(me.plan&&me.plan.maxEventsLifetime)||2;
+  const used=me.eventsLifetime||0;
+  const left=Math.max(0,cap-used);
+  if(left<=0){
+    el.innerHTML='Your free trial is used up. <a href="/pricing.html" style="color:var(--plum);font-weight:700">Choose a plan</a> to keep hosting.';
+    el.style.display='block';
+  }else if(left===1){
+    el.innerHTML='🎉 This is your <b>last free event</b>. After this, <a href="/pricing.html" style="color:var(--plum);font-weight:700">pick a plan</a> to keep hosting — all features, from £5/mo.';
+    el.style.display='block';
+  }else{
+    el.innerHTML=`✨ You're on the free trial — <b>${left} free events</b> left, all features included.`;
+    el.style.display='block';
+  }
+}
 
 async function createSpinlistEvent(){
  try{
@@ -395,6 +437,13 @@ async function createSpinlistEvent(){
   catch(e){ toast('Network error — try again'); return; }
   const data=await res.json();
   if(!res.ok){
+    if(data.trialEnded){
+      // Trial used up — show the persuasive upgrade modal rather than a bare error.
+      const m=document.getElementById('upgrade-msg');
+      if(m)m.textContent=data.error||"You've used both of your free events. Keep the party going — pick a plan to host more.";
+      document.getElementById('upgrade-modal').style.display='flex';
+      return;
+    }
     toast(data.error||'Could not create event');
     if(data.upgrade)setTimeout(()=>location.href='/pricing.html',1400);
     return;
@@ -1009,19 +1058,24 @@ function esc(s){return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':
 
 let ME=null;
 async function loadMe(){
-  try{const r=await fetch('/api/me');const d=await r.json();ME=d.user;window.__myBranding=d.branding||null;}catch(e){ME=null;}
+  try{const r=await fetch('/api/me');const d=await r.json();ME=d.user;window.__myBranding=d.branding||null;window.__me=d;}catch(e){ME=null;}
   renderAcctNav();
 }
 function planLabel(p){return p==='none'||!p?'no plan':p;}
 function renderAcctNav(){
   const el=document.getElementById('acct-nav');if(!el)return;
   const contact='<a href="/contact.html" style="color:var(--ink);text-decoration:none">Contact</a>';
-  if(ME){el.innerHTML=`${contact} <a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(planLabel(ME.plan))}</a>`;}
+  const wed=(ME&&ME.plan==='studio')?'<a href="/wedding.html" style="color:var(--ink);text-decoration:none">Wedding Planner</a> ':'';
+  if(ME){el.innerHTML=`${wed}${contact} <a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(planLabel(ME.plan))}</a>`;}
   else{el.innerHTML=`${contact} <a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
 }
 
 window.addEventListener('load',async ()=>{
   await loadMe();
+  // Wedding-couple accounts belong in the wedding planner, not the DJ app.
+  if(ME&&ME.role==='couple'&&!location.hash.startsWith('#vote/')){
+    location.href='/wedding.html';return;
+  }
   if(location.hash.startsWith('#vote/')){
     guestMode=true;
     applyGuestChrome();
