@@ -540,6 +540,7 @@ function publicWedding(w, viewerId) {
     inviteCode: (isHost ? w.invite_code : undefined),   // only the DJ sees the code
     coupleJoined: !!w.couple_id,
     blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: b.songs || [] })),
+    timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
     canEdit: !!(isHost || isCouple),
     createdAt: w.created_at,
   };
@@ -634,6 +635,18 @@ app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
     });
   }
   const updated = db.updateWedding(w.id, fields);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Save the timeline (DJ or couple — both can edit)
+app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  const timeline = Array.isArray((req.body || {}).timeline) ? req.body.timeline : [];
+  const updated = db.setWeddingTimeline(w.id, timeline);
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 

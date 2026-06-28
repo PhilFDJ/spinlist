@@ -282,8 +282,16 @@ function renderPlan(){
       <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button></div>
     </div>`:''}
     ${!isDJ?`<p class="lead">Search and add your songs to each section below. Your choices save automatically — you can come back any time.</p>`:''}
-    <div id="blocks" style="margin-top:14px"></div>`;
+    <div id="blocks" style="margin-top:14px"></div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:34px">
+      <h2>Timeline of the day</h2>
+      <button class="btn btn-ghost btn-sm" onclick="addTimelineRow()">+ Add moment</button>
+    </div>
+    <p class="muted" style="margin:4px 0 12px">The running order for the day — both you and your DJ can edit this.</p>
+    <div class="panel" id="timeline-panel" style="margin-top:0"></div>`;
   renderBlocks();
+  renderTimeline();
 }
 function renderBlocks(){
   const w=CURRENT;
@@ -310,6 +318,47 @@ function copyInvite(code){
   const link=location.origin+'/wedding.html?code='+encodeURIComponent(code);
   navigator.clipboard?.writeText(link).then(()=>toast('Invite link copied'),()=>toast('Link: '+link));
 }
+
+/* ---------------- TIMELINE (DJ + couple both edit) ---------------- */
+function renderTimeline(){
+  const w=CURRENT;
+  const tl=w.timeline||[];
+  const el=document.getElementById('timeline-panel');
+  if(!el)return;
+  if(!tl.length){
+    el.innerHTML='<p class="muted">No timeline yet. Add the first moment of the day above.</p>';
+    return;
+  }
+  el.innerHTML=tl.map((t,i)=>`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <input value="${esc(t.time)}" placeholder="7:30pm" oninput="CURRENT.timeline[${i}].time=this.value;queueTimelineSave()"
+        style="width:110px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
+      <input value="${esc(t.label)}" placeholder="e.g. First dance" oninput="CURRENT.timeline[${i}].label=this.value;queueTimelineSave()"
+        style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
+      <button class="iconbtn" title="Remove" onclick="removeTimelineRow(${i})">🗑</button>
+    </div>`).join('');
+}
+function addTimelineRow(){
+  if(!CURRENT.timeline)CURRENT.timeline=[];
+  CURRENT.timeline.push({id:'tl'+Date.now(),time:'',label:''});
+  renderTimeline();
+  queueTimelineSave();
+}
+function removeTimelineRow(i){
+  CURRENT.timeline.splice(i,1);
+  renderTimeline();
+  saveTimeline();
+}
+let tlSaveT;
+function queueTimelineSave(){clearTimeout(tlSaveT);tlSaveT=setTimeout(saveTimeline,700);}
+async function saveTimeline(){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/timeline',{method:'POST',body:JSON.stringify({timeline:CURRENT.timeline})});
+    CURRENT=d.wedding;
+    toast('Timeline saved');
+  }catch(e){ toast(e.message); }
+}
+
 
 /* ---------------- SONG SEARCH + SAVE ---------------- */
 function openSearch(blockId){
