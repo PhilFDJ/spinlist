@@ -36,10 +36,11 @@
   .logo-img{height:54px;width:auto;display:block}
   @media(max-width:640px){.logo-img{height:44px}}
   .logo .dot{width:13px;height:13px;border-radius:50%;background:var(--neon);box-shadow:0 0 0 4px rgba(198,242,78,.25)}
-  .nav-pills{display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px}
-  .nav-pills button{border:0;background:transparent;font:inherit;font-size:.82rem;font-weight:600;padding:7px 14px;border-radius:100px;cursor:pointer;color:var(--muted);transition:.2s}
-  .nav-pills button.active{background:var(--ink);color:var(--paper)}
-  @media(max-width:640px){.nav-pills button{padding:7px 10px;font-size:.74rem}}
+  .nav-pills{display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;flex-wrap:wrap}
+  .nav-pills button,.nav-pills a{border:0;background:transparent;font:inherit;font-size:.82rem;font-weight:600;padding:7px 14px;border-radius:100px;cursor:pointer;color:var(--muted);transition:.2s;text-decoration:none;display:inline-flex;align-items:center}
+  .nav-pills button.active,.nav-pills a.active{background:var(--ink);color:var(--paper)}
+  .nav-pills button:hover,.nav-pills a:hover{color:var(--ink)}
+  @media(max-width:640px){.nav-pills button,.nav-pills a{padding:7px 10px;font-size:.74rem}}
   .view{display:none;animation:fade .4s ease}
   .view.show{display:block}
   @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -1183,11 +1184,24 @@ async function loadMe(){
 function planLabel(p){return p==='none'||!p?'no plan':p;}
 function renderAcctNav(){
   const el=document.getElementById('acct-nav');if(!el)return;
-  const contact='<a href="/contact.html" style="color:var(--ink);text-decoration:none">Contact</a>';
-  const wed=(ME&&ME.weddingPlanner)?'<a href="/wedding.html" style="color:var(--ink);text-decoration:none">Wedding Planner</a> ':'';
-  const team=(ME&&ME.multiOp)?'<a href="/team.html" style="color:var(--ink);text-decoration:none">My DJs</a> ':'';
-  if(ME){el.innerHTML=`${team}${wed}${contact} <a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(ME.planName||planLabel(ME.plan))}</a>`;}
-  else{el.innerHTML=`${contact} <a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
+  // Inject feature links into the central nav pills (after the built-in tabs).
+  renderMainNavExtras();
+  if(ME){el.innerHTML=`<a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(ME.planName||planLabel(ME.plan))}</a>`;}
+  else{el.innerHTML=`<a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
+}
+// Add Wedding Planner / My DJs / Contact as pill buttons in the main central menu.
+function renderMainNavExtras(){
+  const nav=document.getElementById('main-nav');if(!nav)return;
+  // Clear any previously-added extras (so we don't duplicate on re-render).
+  nav.querySelectorAll('[data-extra]').forEach(n=>n.remove());
+  const add=(label,href)=>{
+    const a=document.createElement('a');
+    a.textContent=label;a.href=href;a.setAttribute('data-extra','1');
+    nav.appendChild(a);
+  };
+  if(ME&&ME.multiOp)add('My DJs','/team.html');
+  if(ME&&ME.weddingPlanner)add('Wedding Planner','/wedding.html');
+  add('Contact','/contact.html');
 }
 
 window.addEventListener('load',async ()=>{
