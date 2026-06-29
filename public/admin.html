@@ -61,6 +61,9 @@
 
 <script>
 let IS_ADMIN=false;
+// Friendly names for plan ids (ids are stable; display names live here).
+const PLAN_LABELS={pro:'BASIC',studio:'PRO',prowedding:'PRO WEDDING',proweddingmulti:'PRO WEDDING MULTI-OP'};
+function planLabel(id){return PLAN_LABELS[id]||(id?id.toUpperCase():'');}
 
 async function boot(){
   const r=await fetch('/api/me');const d=await r.json();
@@ -161,7 +164,7 @@ async function loadCodes(){
   el.innerHTML=`<table><thead><tr><th>Code</th><th>Type</th><th>Grants</th><th>Uses</th><th>Expires</th><th>Note</th><th></th></tr></thead><tbody>${
     d.codes.map(c=>{
       const grants=c.kind==='comp'
-        ? (c.plan.toUpperCase()+(c.months?(' · '+c.months+'mo'):' · forever'))
+        ? (planLabel(c.plan)+(c.months?(' · '+c.months+'mo'):' · forever'))
         : (c.discount_kind==='percent'?(c.discount_val+'% off'):('£'+(c.discount_val/100).toFixed(2)+' off'));
       const uses=c.uses+(c.max_uses?('/'+c.max_uses):'');
       const exp=c.expires_at?new Date(c.expires_at).toLocaleDateString():'never';
