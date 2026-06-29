@@ -1068,14 +1068,17 @@ function requireMultiOp(req, res, next) {
 function publicSubDj(u, ownerId) {
   return {
     id: u.id, email: u.email, name: u.name || '', profile: u.profile || '',
-    linked: u.role !== 'subdj',           // true = their own account, linked in
+    linked: u.role !== 'subdj' && u.id !== ownerId,   // true = their own account, linked in
+    isMe: u.id === ownerId,                            // the owner themselves
     createdAt: u.created_at,
   };
 }
 
-// Owner: list my team (created sub-DJs + linked existing accounts)
+// Owner: list my team — the owner's own DJ profile first, then created sub-DJs + linked accounts.
 app.get('/api/team', auth.requireAuth, requireMultiOp, (req, res) => {
-  res.json({ djs: db.listTeam(req.user.id).map(u => publicSubDj(u, req.user.id)) });
+  const me = publicSubDj(req.user, req.user.id);
+  const others = db.listTeam(req.user.id).map(u => publicSubDj(u, req.user.id));
+  res.json({ djs: [me, ...others] });
 });
 
 // Owner: add a DJ — links an existing account by email, or creates a new sub-account.
@@ -1111,14 +1114,22 @@ app.post('/api/team', auth.requireAuth, requireMultiOp, (req, res) => {
   res.json({ dj: publicSubDj(dj, req.user.id), linked: false });
 });
 
-// Owner: update a managed sub-DJ (name, profile, optional new password).
-// Linked independent accounts can't be edited by the owner — only unlinked.
+// Owner: update a managed sub-DJ (name, profile, optional new password),
+// or the owner's own DJ profile (name + bio).
 app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
+  const b = req.body || {};
+  // Owner editing their own profile.
+  if (req.params.id === req.user.id) {
+    const fields = {};
+    if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+    if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+    db.updateUserProfile(req.user.id, fields);
+    return res.json({ dj: publicSubDj(db.getUserById(req.user.id), req.user.id) });
+  }
   const dj = db.getUserById(req.params.id);
   if (!dj || dj.role !== 'subdj' || dj.parent_id !== req.user.id) {
     return res.status(404).json({ error: 'That is a linked account — you can only manage sub-accounts you created.' });
   }
-  const b = req.body || {};
   const fields = {};
   if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
   if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
@@ -1127,7 +1138,7 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
     fields.password_hash = auth.hashPassword(b.password);
   }
   db.updateSubDj(dj.id, fields);
-  res.json({ dj: publicSubDj(db.getUserById(dj.id)) });
+  res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
 });
 
 // Owner: delete a sub-DJ
@@ -1153,7 +1164,8 @@ app.post('/api/events/:id/assign', auth.requireAuth, requireMultiOp, (req, res) 
   const e = db.getEvent(req.params.id);
   if (!e || e.host_id !== req.user.id) return res.status(404).json({ error: 'Event not found.' });
   const djId = (req.body || {}).djId || null;
-  if (djId && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
+  // Owner can assign to a team DJ, or to themselves.
+  if (djId && djId !== req.user.id && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
   db.assignEventDj(e.id, djId);
   res.json({ ok: true, assignedDj: djId });
 });
@@ -1163,7 +1175,7 @@ app.post('/api/weddings/:id/assign', auth.requireAuth, requireMultiOp, (req, res
   const w = db.getWedding(req.params.id);
   if (!w || w.host_id !== req.user.id) return res.status(404).json({ error: 'Wedding not found.' });
   const djId = (req.body || {}).djId || null;
-  if (djId && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
+  if (djId && djId !== req.user.id && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
   db.assignWeddingDj(w.id, djId);
   // Keep the linked live-requests event assigned to the same DJ, so they can run it.
   if (w.live_event_id && db.getEvent(w.live_event_id)) db.assignEventDj(w.live_event_id, djId);

@@ -806,7 +806,7 @@ async function loadAssignControl(){
   if(!team.length){ el.innerHTML='<a class="btn btn-ghost btn-sm" href="/team.html">+ Add DJs to your team</a>'; return; }
   const cur=CURRENT.assignedDj||'';
   const opts=['<option value="">— Unassigned —</option>'].concat(
-    team.map(dj=>`<option value="${dj.id}" ${cur===dj.id?'selected':''}>${esc(dj.name||dj.email)}</option>`)
+    team.map(dj=>`<option value="${dj.id}" ${cur===dj.id?'selected':''}>${esc(dj.name||dj.email)}${dj.isMe?' (you)':''}</option>`)
   ).join('');
   el.innerHTML=`<select onchange="assignWeddingDJTo(this.value)" style="font:inherit;font-size:.88rem;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">${opts}</select>`;
 }

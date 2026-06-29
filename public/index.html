@@ -526,7 +526,7 @@ async function renderEvents(){
     function assignSelect(kind,id,current){
       if(!isOwner||!team.length)return '';
       const opts=['<option value="">— Unassigned —</option>'].concat(
-        team.map(dj=>`<option value="${dj.id}" ${current===dj.id?'selected':''}>${esc(dj.name||dj.email)}</option>`)
+        team.map(dj=>`<option value="${dj.id}" ${current===dj.id?'selected':''}>${esc(dj.name||dj.email)}${dj.isMe?' (you)':''}</option>`)
       ).join('');
       return `<select onchange="assign('${kind}','${id}',this.value)" style="font:inherit;font-size:.8rem;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--paper-2);color:var(--ink)">${opts}</select>`;
     }

@@ -119,25 +119,28 @@ function renderList(){
   if(!DJS.length){el.innerHTML='<p class="empty">No DJs yet. Add your first one above.</p>';return;}
   el.innerHTML=DJS.map(dj=>{
     if(editingId===dj.id){
-      // Inline edit form (managed sub-accounts only).
+      // Inline edit form. Owner's own profile has no password field.
       return `<div class="dj-card">
         <label class="field"><span>DJ name</span><input id="e-name-${dj.id}" value="${esc(dj.name||'')}" maxlength="80"></label>
         <label class="field"><span>Profile / bio</span><textarea id="e-profile-${dj.id}">${esc(dj.profile||'')}</textarea></label>
-        <label class="field"><span>New password <span style="font-weight:400">(leave blank to keep current)</span></span><input id="e-pass-${dj.id}" type="text" placeholder="Set a new temporary password" minlength="6"></label>
+        ${dj.isMe?'':`<label class="field"><span>New password <span style="font-weight:400">(leave blank to keep current)</span></span><input id="e-pass-${dj.id}" type="text" placeholder="Set a new temporary password" minlength="6"></label>`}
         <div class="err" id="e-err-${dj.id}"></div>
         <div class="dj-actions">
-          <button class="btn btn-neon btn-sm" onclick="saveDj('${dj.id}')">Save</button>
+          <button class="btn btn-neon btn-sm" onclick="saveDj('${dj.id}',${!!dj.isMe})">Save</button>
           <button class="btn btn-ghost btn-sm" onclick="cancelEdit()">Cancel</button>
         </div>
       </div>`;
     }
+    const badge=dj.isMe
+      ? '<span style="font-size:.7rem;font-weight:800;background:var(--neon);color:#0a1228;padding:3px 9px;border-radius:100px;vertical-align:middle">YOU</span>'
+      : (dj.linked?'<span style="font-size:.7rem;font-weight:800;background:var(--plum);color:#fff;padding:3px 9px;border-radius:100px;vertical-align:middle">LINKED</span>':'');
     return `<div class="dj-card">
-      <h3>${esc(dj.name||'(no name)')} ${dj.linked?'<span style="font-size:.7rem;font-weight:800;background:var(--plum);color:#fff;padding:3px 9px;border-radius:100px;vertical-align:middle">LINKED</span>':''}</h3>
-      <div class="dj-meta">${esc(dj.email)}${dj.linked?' · their own account':''}</div>
-      ${dj.profile?`<div class="dj-profile">${esc(dj.profile)}</div>`:''}
+      <h3>${esc(dj.name||'(no name)')} ${badge}</h3>
+      <div class="dj-meta">${esc(dj.email)}${dj.isMe?' · account owner':(dj.linked?' · their own account':'')}</div>
+      ${dj.profile?`<div class="dj-profile">${esc(dj.profile)}</div>`:(dj.isMe?'<div class="dj-profile" style="color:var(--muted);font-style:italic">No profile yet — add one so it shows alongside your team.</div>':'')}
       <div class="dj-actions">
-        ${dj.linked?'':`<button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit</button>`}
-        <button class="btn btn-danger btn-sm" onclick="removeDj('${dj.id}','${esc(dj.name||dj.email)}',${dj.linked})">${dj.linked?'Unlink':'Remove'}</button>
+        ${(dj.isMe||!dj.linked)?`<button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit</button>`:''}
+        ${dj.isMe?'':`<button class="btn btn-danger btn-sm" onclick="removeDj('${dj.id}','${esc(dj.name||dj.email)}',${dj.linked})">${dj.linked?'Unlink':'Remove'}</button>`}
       </div>
     </div>`;
   }).join('');
@@ -145,10 +148,11 @@ function renderList(){
 let editingId=null;
 function startEdit(id){ editingId=id; renderList(); }
 function cancelEdit(){ editingId=null; renderList(); }
-async function saveDj(id){
+async function saveDj(id,isMe){
   const name=document.getElementById('e-name-'+id).value.trim();
   const profile=document.getElementById('e-profile-'+id).value.trim();
-  const password=document.getElementById('e-pass-'+id).value;
+  const passEl=document.getElementById('e-pass-'+id);
+  const password=passEl?passEl.value:'';
   const err=document.getElementById('e-err-'+id);err.textContent='';
   if(password&&password.length<6){err.textContent='Password must be at least 6 characters (or leave blank).';return;}
   const body={name,profile};
