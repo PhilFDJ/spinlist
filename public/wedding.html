@@ -6,6 +6,7 @@
 <title>Spinlist — Wedding Planner</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png"><link rel="apple-touch-icon" sizes="180x180" href="/img/favicon-180.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{--ink:#eaf0ff;--ink-2:#b6c2e0;--paper:#0a1228;--paper-2:#121d3d;--surface:#16234a;--neon:#c6f24e;--plum:#5b8cff;--coral:#ff6b5e;--muted:#7e8db5;--line:rgba(180,200,255,.16)}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -839,7 +840,7 @@ function liveEventControls(){
   const link=location.origin+'/#vote/'+w.liveEventCode;
   return `<div style="background:var(--paper-2);border-radius:10px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
     <div><b>Guest requests are open</b><div class="muted" style="font-size:.84rem">Share this so guests can request &amp; vote.</div></div>
-    <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.liveEventCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyLiveLink('${esc(link)}')">Copy link</button></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="code">${esc(w.liveEventCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyLiveLink('${esc(link)}')">Copy link</button><button class="btn btn-ghost btn-sm" onclick="downloadLiveQR()">⬇ QR code</button></div>
   </div>`;
 }
 async function toggleLiveBlock(blockId){
@@ -859,6 +860,58 @@ async function createLiveEvent(){
 }
 function copyLiveLink(link){
   navigator.clipboard?.writeText(link).then(()=>toast('Guest link copied'),()=>toast('Link: '+link));
+}
+// Generate + download a branded QR (lime frame + S-mark) for the live requests link.
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();
+}
+function downloadLiveQR(){
+  const w=CURRENT;
+  if(!w.liveEventCode){toast('Open guest requests first');return;}
+  if(typeof QRCode==='undefined'){toast('QR tool could not load — try refreshing');return;}
+  const link=location.origin+'/#vote/'+w.liveEventCode;
+  // Render a raw QR off-screen, then draw the branded frame around it.
+  const tmp=document.createElement('div');tmp.style.position='fixed';tmp.style.left='-9999px';
+  document.body.appendChild(tmp);
+  new QRCode(tmp,{text:link,width:240,height:240,colorDark:'#0d0b14',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.H});
+  const grab=()=>{
+    const src=tmp.querySelector('img')||tmp.querySelector('canvas');
+    if(!src){document.body.removeChild(tmp);toast('QR not ready, try again');return;}
+    const draw=(qrImg)=>{
+      const qrSize=240,pad=22,border=10,headH=52;
+      const cw=qrSize+pad*2+border*2, ch=qrSize+pad*2+border*2+headH;
+      const c=document.createElement('canvas');c.width=cw;c.height=ch;
+      const ctx=c.getContext('2d');
+      ctx.fillStyle='#c6f24e';roundRect(ctx,0,0,cw,ch,28);ctx.fill();
+      ctx.fillStyle='#0d0b14';ctx.font='800 30px "Helvetica Neue",Arial,sans-serif';
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText('Requests',cw/2,border+headH/2+2);
+      const innerTop=border+headH;
+      ctx.fillStyle='#ffffff';roundRect(ctx,border,innerTop,cw-border*2,ch-innerTop-border,20);ctx.fill();
+      ctx.drawImage(qrImg,border+pad,innerTop+pad,qrSize,qrSize);
+      const finish=()=>{
+        const a=document.createElement('a');
+        a.href=c.toDataURL('image/png');
+        a.download=(w.name||'wedding').replace(/\W+/g,'-')+'-requests-QR.png';
+        a.click();
+        document.body.removeChild(tmp);
+        toast('QR saved ⬇');
+      };
+      const logo=new Image();
+      logo.onload=()=>{
+        const lsize=qrSize*0.17, cx=cw/2, cy=innerTop+pad+qrSize/2, padBox=lsize*1.7;
+        ctx.fillStyle='#ffffff';roundRect(ctx,cx-padBox/2,cy-padBox/2,padBox,padBox,16);ctx.fill();
+        ctx.drawImage(logo,cx-lsize/2,cy-lsize/2,lsize,lsize);finish();
+      };
+      logo.onerror=finish;
+      logo.src='/img/spinlist-mark.png?v=4';
+    };
+    if(src.tagName==='IMG'){ if(src.complete)draw(src); else src.onload=()=>draw(src); }
+    else draw(src);
+  };
+  setTimeout(grab,250);   // give QRCode a moment to render
 }
 // ---- Live leaderboard auto-refresh ----
 let livePollTimer=null;
