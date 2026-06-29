@@ -655,6 +655,14 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
   }
   const id = auth.newId().slice(0, 6).toUpperCase();
   db.recordEvent(id, req.user.id);
+  // Keep requests open through the wedding day: deadline = end of the wedding date
+  // (23:59). If no date is set, leave it open indefinitely (null).
+  let liveDeadline = null;
+  if (w.wedding_date) {
+    const d = new Date(w.wedding_date);
+    d.setHours(23, 59, 59, 999);
+    liveDeadline = d.getTime();
+  }
   db.createEvent({
     id,
     host_id: req.user.id,
@@ -662,7 +670,7 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
     type: 'Wedding',
     host: req.user.name || 'Your DJ',
     votes_per: 5,
-    deadline: null,
+    deadline: liveDeadline,
     event_date: w.wedding_date || null,
     locked: false,
     ask_name: false,
@@ -731,6 +739,16 @@ app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
     });
   }
   const updated = db.updateWedding(w.id, fields);
+  // If the wedding date changed and a live-requests event is linked, keep its
+  // deadline (end of the wedding day) in sync so requests stay open through the day.
+  if (b.weddingDate !== undefined && updated.live_event_id) {
+    const ev = db.getEvent(updated.live_event_id);
+    if (ev) {
+      let dl = null;
+      if (updated.wedding_date) { const d = new Date(updated.wedding_date); d.setHours(23, 59, 59, 999); dl = d.getTime(); }
+      db.updateEvent(ev.id, { deadline: dl });
+    }
+  }
   // Optionally switch (or remove) the questionnaire template.
   if (b.templateId !== undefined) {
     if (b.templateId) {
