@@ -763,6 +763,10 @@ function renderPlan(){
       <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
       <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button></div>
     </div>`:''}
+    ${(ME.multiOp&&!DEMO&&w.id!=='DEMO')?`<div class="panel" id="assign-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><b>Assign a DJ</b><div class="muted">Give one of your team this wedding to run. They'll see it in their events.</div></div>
+      <div id="assign-control" class="muted" style="font-size:.9rem">Loading team…</div>
+    </div>`:''}
 
     <div class="tabs">
       <button class="tab" data-tab="music" onclick="switchTab('music')">🎵 Music</button>
@@ -792,6 +796,26 @@ function renderPlan(){
   renderTimeline();
   renderQuestionnaire();
   switchTab(currentTab);
+  if(ME.multiOp&&!DEMO&&CURRENT.id!=='DEMO')loadAssignControl();
+}
+// Owner: populate the "Assign a DJ" dropdown on this wedding.
+async function loadAssignControl(){
+  const el=document.getElementById('assign-control');if(!el)return;
+  let team=[];
+  try{ const r=await api('/api/team'); team=r.djs||[]; }catch(e){ el.textContent='Could not load team.'; return; }
+  if(!team.length){ el.innerHTML='<a class="btn btn-ghost btn-sm" href="/team.html">+ Add DJs to your team</a>'; return; }
+  const cur=CURRENT.assignedDj||'';
+  const opts=['<option value="">— Unassigned —</option>'].concat(
+    team.map(dj=>`<option value="${dj.id}" ${cur===dj.id?'selected':''}>${esc(dj.name||dj.email)}</option>`)
+  ).join('');
+  el.innerHTML=`<select onchange="assignWeddingDJTo(this.value)" style="font:inherit;font-size:.88rem;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">${opts}</select>`;
+}
+async function assignWeddingDJTo(djId){
+  try{
+    await api('/api/weddings/'+CURRENT.id+'/assign',{method:'POST',body:JSON.stringify({djId:djId||null})});
+    CURRENT.assignedDj=djId||null;
+    toast(djId?'Wedding assigned ✓':'Unassigned');
+  }catch(e){ toast(e.message); }
 }
 function switchTab(tab){
   currentTab=tab;

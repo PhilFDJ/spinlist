@@ -611,6 +611,7 @@ function publicWedding(w, viewerId) {
     liveEventCode: w.live_event_id || null,   // event id doubles as the join code
     liveVotesPer: liveEv ? liveEv.votes_per : 5,
     liveAskName: liveEv ? !!liveEv.ask_name : false,
+    assignedDj: w.assigned_dj || null,
     canEdit: !!(isHost || isCouple),
     createdAt: w.created_at,
   };
