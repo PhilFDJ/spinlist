@@ -577,6 +577,10 @@ function canAccessEvent(user, e) {
   if (!e) return false;
   if (e.host_id === user.id) return true;
   if (e.assigned_dj === user.id) return true;
+  // If this is a wedding's live-requests event, inherit access from that wedding
+  // (so whoever can run the wedding can also manage its live requests).
+  const w = db.getWeddingByLiveEvent && db.getWeddingByLiveEvent(e.id);
+  if (w && canAccessWedding(user, w)) return true;
   return false;
 }
 // True if the user owns this wedding, the linked couple, or it's assigned to them.
@@ -1161,6 +1165,8 @@ app.post('/api/weddings/:id/assign', auth.requireAuth, requireMultiOp, (req, res
   const djId = (req.body || {}).djId || null;
   if (djId && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
   db.assignWeddingDj(w.id, djId);
+  // Keep the linked live-requests event assigned to the same DJ, so they can run it.
+  if (w.live_event_id && db.getEvent(w.live_event_id)) db.assignEventDj(w.live_event_id, djId);
   res.json({ ok: true, assignedDj: djId });
 });
 
