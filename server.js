@@ -681,6 +681,12 @@ app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   const blockId = (req.body || {}).blockId || null;
+  if (blockId) {
+    const block = (w.blocks || []).find(b => b.id === blockId);
+    if (!block || !/play if possible/i.test(block.name || '')) {
+      return res.status(400).json({ error: 'Only the "Play If Possible" block can be set to live requests.' });
+    }
+  }
   const updated = db.setWeddingLiveBlock(w.id, blockId);
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });

@@ -803,8 +803,9 @@ function renderBlocks(){
     const isLive=w.liveBlockId===b.id;
     const full=b.songs.length>=b.capacity;
     const dragAttrs=(isDJ&&canEdit&&!isLive)?`draggable="true" data-i="${i}" ondragstart="dragStart(event,${i},'music')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'music')" ondragend="dragEnd(event)"`:'';
-    // The live-toggle: couple or DJ can switch a block to "guests request live".
-    const liveToggle=(canEdit)?`<button class="mini-btn ${isLive?'done':''}" onclick="toggleLiveBlock('${b.id}')">${isLive?'★ Live requests on':'Make live requests'}</button>`:'';
+    // Live requests can only be enabled on the "Play If Possible" block.
+    const canBeLive=/play if possible/i.test(b.name||'');
+    const liveToggle=(canEdit&&(canBeLive||isLive))?`<button class="mini-btn ${isLive?'done':''}" onclick="toggleLiveBlock('${b.id}')">${isLive?'★ Live requests on':'Make live requests'}</button>`:'';
     if(isLive){
       return `<div class="block" style="border:1.5px solid var(--neon)">
         <div class="block-head">
