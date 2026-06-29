@@ -930,8 +930,17 @@ async function refreshLiveBoard(){
     <div class="song-row" style="${s.played?'opacity:.55':''}">
       <span style="font-weight:800;color:var(--neon);min-width:24px">${idx+1}</span>
       <div class="meta"><div class="t">${esc(s.title)}${s.played?' · <span style="color:var(--neon)">played</span>':''}</div><div class="a">${esc(s.artist)} · ${s.votes} vote${s.votes===1?'':'s'}</div></div>
-      ${(isDJ&&!DEMO)?`<button class="mini-btn" onclick="copyLiveSong('${esc(s.title).replace(/'/g,"&#39;")}','${esc(s.artist).replace(/'/g,"&#39;")}')">Copy</button>`:''}
+      ${(isDJ&&!DEMO)?`<button class="mini-btn" onclick="copyLiveSong('${esc(s.title).replace(/'/g,"&#39;")}','${esc(s.artist).replace(/'/g,"&#39;")}')">Copy</button>
+      <button class="mini-btn ${s.played?'done':''}" onclick="toggleLivePlayed('${esc(s.id)}',${s.played?0:1})">${s.played?'✓ Played':'Mark played'}</button>`:''}
     </div>`).join('');
+}
+async function toggleLivePlayed(trackId,want){
+  const w=CURRENT;
+  if(!w.liveEventId)return;
+  try{
+    await api('/api/events/'+encodeURIComponent(w.liveEventId)+'/played',{method:'POST',body:JSON.stringify({trackId,played:!!want})});
+    refreshLiveBoard();   // re-render with updated played state
+  }catch(e){ toast(e.message); }
 }
 function copyLiveSong(title,artist){
   const text=title+' – '+artist;
