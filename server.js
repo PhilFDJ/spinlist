@@ -414,6 +414,14 @@ app.post('/api/events/:id/archive', auth.requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/weddings/:id/archive', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (w.host_id !== req.user.id) return res.status(403).json({ error: 'Not your wedding.' });
+  db.setWeddingArchived(w.id, !!(req.body || {}).archived);
+  res.json({ ok: true });
+});
+
 // --- edit an event's details (host only). Share link/id never change. ---
 app.post('/api/events/:id/update', auth.requireAuth, (req, res) => {
   const e = db.getEvent(req.params.id);
@@ -589,6 +597,7 @@ app.get('/api/weddings', auth.requireAuth, (req, res) => {
     inviteCode: w.invite_code, coupleJoined: !!w.couple_id,
     blockCount: (w.blocks || []).length,
     filledCount: (w.blocks || []).reduce((s, b) => s + ((b.songs || []).length), 0),
+    archived: !!w.archived,
     createdAt: w.created_at,
   }));
   res.json({ weddings: list });

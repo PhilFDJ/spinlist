@@ -498,10 +498,13 @@ async function renderEvents(){
     const active=all.filter(e=>!e.archived);
     const archived=all.filter(e=>e.archived);
     const list=eventsView==='archived'?archived:active;
+    const activeWeddings=weddings.filter(w=>!w.archived);
+    const archivedWeddings=weddings.filter(w=>w.archived);
+    const wlist=eventsView==='archived'?archivedWeddings:activeWeddings;
 
     const toggle=`<div style="display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;margin-bottom:18px;width:fit-content">
-      <button class="seg-btn ${eventsView==='active'?'on':''}" onclick="setEventsView('active')">Active (${active.length})</button>
-      <button class="seg-btn ${eventsView==='archived'?'on':''}" onclick="setEventsView('archived')">Archived (${archived.length})</button>
+      <button class="seg-btn ${eventsView==='active'?'on':''}" onclick="setEventsView('active')">Active (${active.length+activeWeddings.length})</button>
+      <button class="seg-btn ${eventsView==='archived'?'on':''}" onclick="setEventsView('archived')">Archived (${archived.length+archivedWeddings.length})</button>
     </div>`;
 
     if(!all.length&&!weddings.length){el.innerHTML='<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';return;}
@@ -528,9 +531,12 @@ async function renderEvents(){
       </div>`;
     })()}));
 
-    // Weddings only appear in the 'active' view (managed/archived in the planner).
-    if(eventsView==='active'){
-      weddings.forEach(w=>cards.push({kind:'wedding',date:w.weddingDate||null,createdAt:w.createdAt||0,html:`
+    // Weddings respect the active/archived toggle, same as events.
+    wlist.forEach(w=>{
+      const wArchiveBtn=w.archived
+        ? `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveWedding('${w.id}',false)">Restore</button>`
+        : `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveWedding('${w.id}',true)">Archive</button>`;
+      cards.push({kind:'wedding',date:w.weddingDate||null,createdAt:w.createdAt||0,html:`
         <div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
           <div>
             <div style="font-weight:800;font-size:1.1rem">${esc(w.name)} <span class="pill-tag" style="background:var(--plum);color:#fff">Wedding</span></div>
@@ -538,9 +544,10 @@ async function renderEvents(){
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>
+            ${wArchiveBtn}
           </div>
-        </div>`}));
-    }
+        </div>`});
+    });
 
     // Sort: dated soonest-first, undated last (newest created first among undated).
     cards.sort((a,b)=>{
@@ -577,6 +584,15 @@ async function archiveEvent(id,archived){
     const d=await r.json();
     if(!r.ok){toast(d.error||'Could not update');return;}
     toast(archived?'Event archived':'Event restored');
+    renderEvents();
+  }catch(e){ toast('Network error'); }
+}
+async function archiveWedding(id,archived){
+  try{
+    const r=await fetch('/api/weddings/'+encodeURIComponent(id)+'/archive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({archived})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not update');return;}
+    toast(archived?'Wedding archived':'Wedding restored');
     renderEvents();
   }catch(e){ toast('Network error'); }
 }
