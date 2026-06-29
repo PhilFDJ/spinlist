@@ -362,6 +362,7 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
     host: (b.host || req.user.name || 'Your host').toString().slice(0, 80),
     votes_per: Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999)),
     deadline: b.deadline ? Number(b.deadline) : null,
+    event_date: b.eventDate ? Number(b.eventDate) : null,
     locked: false,
     ask_name: !!b.askName,
     ask_nationality: !!b.askNationality,
@@ -425,6 +426,7 @@ app.post('/api/events/:id/update', auth.requireAuth, (req, res) => {
   if (b.host !== undefined) fields.host = (b.host || 'Your host').toString().slice(0, 80);
   if (b.votesPer !== undefined) fields.votes_per = Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999));
   if (b.deadline !== undefined) fields.deadline = b.deadline ? Number(b.deadline) : null;
+  if (b.eventDate !== undefined) fields.event_date = b.eventDate ? Number(b.eventDate) : null;
   if (b.askName !== undefined) fields.ask_name = !!b.askName;
   if (b.askNationality !== undefined) fields.ask_nationality = !!b.askNationality;
   const updated = db.updateEvent(e.id, fields);
@@ -486,7 +488,7 @@ function publicEvent(e, hostView) {
   if (!e) return null;
   return {
     id: e.id, name: e.name, type: e.type, host: e.host,
-    votesPer: e.votes_per, deadline: e.deadline,
+    votesPer: e.votes_per, deadline: e.deadline, eventDate: e.event_date || null,
     locked: !!e.locked, hostId: e.host_id,
     askName: !!e.ask_name, askNationality: !!e.ask_nationality,
     tracks: Object.values(e.tracks || {})
@@ -508,6 +510,7 @@ function summaryEvent(e) {
     locked: !!e.locked, closed: !!closed, archived: !!e.archived,
     songCount: tracks.length,
     voteCount: tracks.reduce((s, t) => s + t.votes, 0),
+    eventDate: e.event_date || null,
     createdAt: e.created_at,
   };
 }
