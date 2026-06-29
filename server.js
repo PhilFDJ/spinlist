@@ -383,21 +383,23 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
 
 // --- list my events (host dashboard) ---
 app.get('/api/my-events', auth.requireAuth, (req, res) => {
+  // Wedding live-requests events never show as standalone events (planner-only).
+  const liveIds = new Set(db.allWeddingLiveEventIds());
+
   // Sub-DJs (managed accounts) see only the events assigned to them.
   if (req.user.role === 'subdj') {
-    const events = db.listEventsAssignedTo(req.user.id).map(e => Object.assign(summaryEvent(e), { assignedToMe: true }));
+    const events = db.listEventsAssignedTo(req.user.id)
+      .filter(e => !liveIds.has(e.id))
+      .map(e => Object.assign(summaryEvent(e), { assignedToMe: true }));
     return res.json({ events });
   }
-  // Regular hosts: their own events (minus wedding live-events), PLUS any events
-  // assigned to them by a multi-op owner (read-only, marked assignedToMe).
-  const liveIds = new Set(
-    db.listWeddingsByHost(req.user.id).map(w => w.live_event_id).filter(Boolean)
-  );
+  // Regular hosts: their own events PLUS any assigned to them — both with
+  // wedding live-events filtered out.
   const own = db.listEventsByHost(req.user.id)
     .filter(e => !liveIds.has(e.id))
     .map(summaryEvent);
   const assigned = db.listEventsAssignedTo(req.user.id)
-    .filter(e => e.host_id !== req.user.id)   // not my own (avoid dupes)
+    .filter(e => e.host_id !== req.user.id && !liveIds.has(e.id))
     .map(e => Object.assign(summaryEvent(e), { assignedToMe: true }));
   res.json({ events: [...own, ...assigned] });
 });
