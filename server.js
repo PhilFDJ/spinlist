@@ -906,8 +906,8 @@ app.post('/api/admin/codes', requireAdmin, async (req, res) => {
 
   try {
     if (kind === 'comp') {
-      const plan = ['pro', 'studio'].includes(body.plan) ? body.plan : null;
-      if (!plan) return res.status(400).json({ error: 'Choose a plan (pro or studio) for a comp code.' });
+      const plan = ['pro', 'studio', 'prowedding'].includes(body.plan) ? body.plan : null;
+      if (!plan) return res.status(400).json({ error: 'Choose a plan (pro, studio or prowedding) for a comp code.' });
       base.plan = plan;
       base.months = body.months ? parseInt(body.months, 10) : null; // null = forever
     } else {
@@ -1006,11 +1006,12 @@ app.post('/api/redeem', auth.requireAuth, (req, res) => {
     db.grantComp(req.user.id, { plan: c.plan, comp_until: compUntil, comp_code: c.code });
     db.incrementCodeUses(c.code);
     db.recordRedemption({ id: auth.newId(), code: c.code, user_id: req.user.id, redeemed_at: Date.now() });
+    const planLabel = (PLANS[c.plan] && PLANS[c.plan].name) || c.plan.toUpperCase();
     return res.json({
       type: 'comp',
       plan: c.plan,
       until: compUntil,
-      message: `Complimentary ${c.plan.toUpperCase()} access unlocked${c.months ? ` for ${c.months} month(s)` : ' — no expiry'}.`,
+      message: `Complimentary ${planLabel} access unlocked${c.months ? ` for ${c.months} month(s)` : ' — no expiry'}.`,
     });
   }
 
