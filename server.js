@@ -554,6 +554,9 @@ function publicWedding(w, viewerId) {
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
     questionnaire: w.questionnaire || null,
     answers: w.answers || {},
+    liveBlockId: w.live_block_id || null,
+    liveEventId: w.live_event_id || null,
+    liveEventCode: w.live_event_id || null,   // event id doubles as the join code
     canEdit: !!(isHost || isCouple),
     createdAt: w.created_at,
   };
@@ -639,6 +642,64 @@ app.post('/api/weddings/:id/played', auth.requireAuth, (req, res) => {
   const b = req.body || {};
   const updated = db.setWeddingSongPlayed(w.id, b.blockId, b.songId, !!b.played);
   res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// DJ: create (or return existing) a live-requests event linked to this wedding.
+app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Only the DJ can do this.' });
+  // If one already exists and is still valid, just return it.
+  if (w.live_event_id && db.getEvent(w.live_event_id)) {
+    return res.json({ wedding: publicWedding(w, req.user.id), eventId: w.live_event_id });
+  }
+  const id = auth.newId().slice(0, 6).toUpperCase();
+  db.recordEvent(id, req.user.id);
+  db.createEvent({
+    id,
+    host_id: req.user.id,
+    name: (w.name || 'Wedding') + ' — Live Requests',
+    type: 'Wedding',
+    host: req.user.name || 'Your DJ',
+    votes_per: 5,
+    deadline: null,
+    event_date: w.wedding_date || null,
+    locked: false,
+    ask_name: false,
+    ask_nationality: false,
+    created_at: Date.now(),
+  });
+  db.setWeddingLiveEvent(w.id, id);
+  res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id), eventId: id });
+});
+
+// Couple or DJ: set which block is in live guest-requests mode (or clear it).
+app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  const blockId = (req.body || {}).blockId || null;
+  const updated = db.setWeddingLiveBlock(w.id, blockId);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Anyone viewing the plan: live leaderboard from the linked event (auto-refresh source).
+app.get('/api/weddings/:id/live-leaderboard', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  if (!w.live_event_id) return res.json({ songs: [], eventId: null });
+  const ev = db.getEvent(w.live_event_id);
+  if (!ev) return res.json({ songs: [], eventId: null });
+  const songs = Object.values(ev.tracks || {})
+    .sort((a, b) => b.votes - a.votes)
+    .slice(0, 50)
+    .map(t => ({ id: t.id, title: t.title, artist: t.artist, art: t.art || '', votes: t.votes, played: t.played ? 1 : 0 }));
+  res.json({ songs, eventId: w.live_event_id });
 });
 
 // DJ: edit wedding details / blocks structure

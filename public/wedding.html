@@ -254,6 +254,7 @@ async function renderCoupleHome(){
 /* ---------------- DJ HOME ---------------- */
 let djShowArchived=false;
 async function renderDJHome(){
+  stopLivePolling();
   const root=document.getElementById('root');
   let weddings=[];
   try{ weddings=(await api('/api/weddings')).weddings; }catch(e){}
@@ -799,17 +800,88 @@ function switchTab(tab){
 function renderBlocks(){
   const w=CURRENT, isDJ=ME.role!=='couple', canEdit=!DEMO;
   document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
+    const isLive=w.liveBlockId===b.id;
     const full=b.songs.length>=b.capacity;
-    const dragAttrs=(isDJ&&canEdit)?`draggable="true" data-i="${i}" ondragstart="dragStart(event,${i},'music')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'music')" ondragend="dragEnd(event)"`:'';
+    const dragAttrs=(isDJ&&canEdit&&!isLive)?`draggable="true" data-i="${i}" ondragstart="dragStart(event,${i},'music')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'music')" ondragend="dragEnd(event)"`:'';
+    // The live-toggle: couple or DJ can switch a block to "guests request live".
+    const liveToggle=(canEdit)?`<button class="mini-btn ${isLive?'done':''}" onclick="toggleLiveBlock('${b.id}')">${isLive?'★ Live requests on':'Make live requests'}</button>`:'';
+    if(isLive){
+      return `<div class="block" style="border:1.5px solid var(--neon)">
+        <div class="block-head">
+          <h3>${esc(b.name)} <span class="pill" style="background:var(--neon);color:#0a1228">LIVE</span></h3>
+          ${liveToggle}
+        </div>
+        <p class="muted" style="margin:2px 0 10px">Guests request songs on the night — top requests appear here automatically.</p>
+        ${(isDJ&&!DEMO)?liveEventControls():'<p class="muted" style="font-size:.85rem">Your DJ will open requests on the day.</p>'}
+        <div id="live-board-${b.id}" style="margin-top:10px"></div>
+      </div>`;
+    }
     return `<div class="block drag-row" ${dragAttrs}>
       <div class="block-head">
         <h3>${(isDJ&&canEdit)?`<span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'music')">⠿</span> `:''}${esc(b.name)}</h3>
-        <span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span>
+        <div style="display:flex;gap:8px;align-items:center">${liveToggle}<span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span></div>
       </div>
       <div>${b.songs.map((s,idx)=>songRow(b.id,s,idx,canEdit,isDJ)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
       ${(full||!canEdit)?'':`<button class="addbtn" onclick="openSearch('${b.id}')">+ Add a song</button>`}
     </div>`;
   }).join('');
+  // Kick off the live leaderboard auto-refresh if a block is live.
+  if(w.liveBlockId){ refreshLiveBoard(); startLivePolling(); }
+  else stopLivePolling();
+}
+// DJ controls inside a live block: create/share the requests event.
+function liveEventControls(){
+  const w=CURRENT;
+  if(!w.liveEventId){
+    return `<button class="btn btn-neon btn-sm" onclick="createLiveEvent()">▸ Open guest requests</button>`;
+  }
+  const link=location.origin+'/#vote/'+w.liveEventCode;
+  return `<div style="background:var(--paper-2);border-radius:10px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <div><b>Guest requests are open</b><div class="muted" style="font-size:.84rem">Share this so guests can request &amp; vote.</div></div>
+    <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.liveEventCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyLiveLink('${esc(link)}')">Copy link</button></div>
+  </div>`;
+}
+async function toggleLiveBlock(blockId){
+  const turningOn=CURRENT.liveBlockId!==blockId;
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/live-block',{method:'POST',body:JSON.stringify({blockId:turningOn?blockId:null})});
+    CURRENT=d.wedding;renderBlocks();
+    toast(turningOn?'Block set to live guest requests':'Live requests turned off');
+  }catch(e){ toast(e.message); }
+}
+async function createLiveEvent(){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/live-event',{method:'POST',body:JSON.stringify({})});
+    CURRENT=d.wedding;renderBlocks();
+    toast('Guest requests opened ✓');
+  }catch(e){ toast(e.message); }
+}
+function copyLiveLink(link){
+  navigator.clipboard?.writeText(link).then(()=>toast('Guest link copied'),()=>toast('Link: '+link));
+}
+// ---- Live leaderboard auto-refresh ----
+let livePollTimer=null;
+function startLivePolling(){ if(livePollTimer)return; livePollTimer=setInterval(refreshLiveBoard,5000); }
+function stopLivePolling(){ if(livePollTimer){clearInterval(livePollTimer);livePollTimer=null;} }
+async function refreshLiveBoard(){
+  const w=CURRENT; if(!w||!w.liveBlockId)return;
+  const el=document.getElementById('live-board-'+w.liveBlockId);
+  if(!el){stopLivePolling();return;}
+  if(!w.liveEventId){el.innerHTML='<p class="muted" style="font-size:.85rem">No guest requests yet.</p>';return;}
+  let songs=[];
+  try{ songs=(await api('/api/weddings/'+w.id+'/live-leaderboard')).songs||[]; }catch(e){return;}
+  const isDJ=ME.role!=='couple';
+  if(!songs.length){el.innerHTML='<p class="muted" style="font-size:.85rem">No requests yet — they will appear here as guests vote.</p>';return;}
+  el.innerHTML=songs.map((s,idx)=>`
+    <div class="song-row" style="${s.played?'opacity:.55':''}">
+      <span style="font-weight:800;color:var(--neon);min-width:24px">${idx+1}</span>
+      <div class="meta"><div class="t">${esc(s.title)}${s.played?' · <span style="color:var(--neon)">played</span>':''}</div><div class="a">${esc(s.artist)} · ${s.votes} vote${s.votes===1?'':'s'}</div></div>
+      ${(isDJ&&!DEMO)?`<button class="mini-btn" onclick="copyLiveSong('${esc(s.title).replace(/'/g,"&#39;")}','${esc(s.artist).replace(/'/g,"&#39;")}')">Copy</button>`:''}
+    </div>`).join('');
+}
+function copyLiveSong(title,artist){
+  const text=title+' – '+artist;
+  navigator.clipboard?.writeText(text).then(()=>toast('Copied: '+text),()=>toast(text));
 }
 function songRow(blockId,s,i,canEdit,isDJ){
   const played=!!s.played;
