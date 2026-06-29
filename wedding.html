@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spinlist — Wedding Planner</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png"><link rel="apple-touch-icon" sizes="180x180" href="/img/favicon-180.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root{--ink:#eaf0ff;--ink-2:#b6c2e0;--paper:#0a1228;--paper-2:#121d3d;--surface:#16234a;--neon:#c6f24e;--plum:#5b8cff;--coral:#ff6b5e;--muted:#7e8db5;--line:rgba(180,200,255,.16)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:0 20px}
+  .display{font-weight:900;letter-spacing:-.02em}
+  a{color:var(--plum);text-decoration:none}
+  header.bar{background:rgba(10,18,40,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:40}
+  .bar .wrap{display:flex;align-items:center;justify-content:space-between;height:74px;max-width:1080px}
+  .logo{display:flex;align-items:center;gap:10px}
+  .logo-img{height:54px;width:auto;display:block}
+  .bar nav a{color:var(--ink);font-weight:600;font-size:.9rem;margin-left:16px}
+  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:11px 20px;cursor:pointer;font-size:.92rem;display:inline-flex;align-items:center;gap:8px;transition:transform .15s;text-decoration:none}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-neon{background:var(--neon);color:#0a1228}
+  .btn-primary{background:var(--ink);color:var(--paper)}
+  .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+  .btn-sm{padding:7px 13px;font-size:.83rem}
+  .mini-btn{font:inherit;font-size:.76rem;font-weight:700;padding:5px 10px;border-radius:100px;border:1.5px solid var(--line);background:transparent;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+  .mini-btn:hover{border-color:var(--plum);color:var(--ink)}
+  .mini-btn.done{background:var(--neon);color:#0a1228;border-color:var(--neon)}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin-top:20px}
+  h1{font-size:2.1rem;margin-top:34px}
+  h2{font-size:1.4rem}
+  .eyebrow{font-size:.72rem;letter-spacing:.26em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .lead{color:var(--ink-2);margin-top:10px;line-height:1.6}
+  .field{display:block;margin-bottom:14px}
+  .field span{display:block;font-size:.8rem;color:var(--muted);font-weight:700;margin-bottom:6px}
+  .field input{width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .muted{color:var(--muted);font-size:.88rem}
+  .pill{display:inline-block;background:rgba(91,140,255,.16);color:var(--plum);font-size:.75rem;font-weight:700;padding:4px 10px;border-radius:100px}
+  .pill.done{background:rgba(198,242,78,.16);color:var(--neon)}
+  .block{background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  .block-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;flex-wrap:wrap}
+  .block-head h3{font-size:1.08rem}
+  .song-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+  .song-row img{width:38px;height:38px;border-radius:6px;object-fit:cover;background:var(--surface)}
+  .song-row .meta{flex:1;min-width:0}
+  .song-row .t{font-weight:600;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .song-row .a{color:var(--muted);font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .iconbtn{background:transparent;border:0;color:var(--coral);cursor:pointer;font-size:1.1rem;padding:4px 8px}
+  .addbtn{background:transparent;border:1.5px dashed var(--line);color:var(--ink-2);border-radius:10px;padding:9px;width:100%;cursor:pointer;font:inherit;font-size:.88rem;margin-top:8px}
+  .wcard{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;cursor:pointer}
+  .wcard:hover{border-color:var(--plum)}
+  .code{font-family:ui-monospace,Menlo,monospace;background:var(--paper-2);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-weight:700;letter-spacing:.1em}
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(5,9,22,.74);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:60;overflow-y:auto}
+  .overlay.show{display:flex}
+  .modal{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px;max-width:540px;width:100%}
+  .result{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;cursor:pointer}
+  .result:hover{background:var(--paper-2)}
+  .result img{width:40px;height:40px;border-radius:6px;object-fit:cover}
+  .hide{display:none!important}
+  .tabs{display:flex;gap:6px;margin-top:26px;border-bottom:1px solid var(--line);overflow-x:auto}
+  .tab{background:transparent;border:0;border-bottom:3px solid transparent;color:var(--muted);font:inherit;font-weight:700;font-size:.95rem;padding:12px 16px;cursor:pointer;white-space:nowrap;transition:color .15s}
+  .tab:hover{color:var(--ink-2)}
+  .tab.active{color:var(--ink);border-bottom-color:var(--neon)}
+  .tab-pane{display:none}
+  .tab-pane.show{display:block}
+  .drag-row{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+  .drag-handle{cursor:grab;color:var(--muted);font-size:1.1rem;user-select:none;padding:0 2px}
+  .drag-handle:active{cursor:grabbing}
+  .block.drag-row{display:block}
+  .block[draggable="true"]{cursor:default}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:100px;font-weight:600;opacity:0;transition:opacity .2s;z-index:80;pointer-events:none}
+  .toast.show{opacity:1}
+  @media(max-width:640px){.grid-2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
+  <nav><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+</div></header>
+
+<div class="wrap" id="root">
+  <p class="muted" style="margin-top:40px">Loading…</p>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- SONG SEARCH MODAL -->
+<div class="overlay" id="search-modal">
+  <div class="modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h2 id="search-title" style="font-size:1.15rem">Add a song</h2>
+      <button class="iconbtn" style="color:var(--muted);font-size:1.4rem" onclick="closeSearch()">×</button>
+    </div>
+    <p class="muted" id="search-sub" style="margin-bottom:12px"></p>
+    <input id="search-input" class="field" style="margin-bottom:8px" placeholder="Search Spotify for a song or artist…" oninput="debouncedSearch()" autocomplete="off">
+    <div id="search-results"></div>
+  </div>
+</div>
+
+<script>
+let ME=null, CURRENT=null;     // CURRENT = the wedding being edited
+let activeBlockId=null;
+
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2400);}
+function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+async function api(path,opts){
+  const r=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opts||{}));
+  let d={}; try{d=await r.json();}catch(e){}
+  if(!r.ok) throw new Error(d.error||'Something went wrong');
+  return d;
+}
+
+async function logout(){try{await fetch('/api/auth/logout',{method:'POST'});}catch(e){}location.href='/';}
+
+async function boot(){
+  initTouchDrag();
+  const params=new URLSearchParams(location.search);
+  // Public read-only demo — no login needed.
+  if(params.get('demo')){ ME={role:'host',plan:'studio',name:'Demo DJ'}; DEMO=true; openDemoWedding(); return; }
+  const code=params.get('code');   // invite link ?code=ABC123
+  try{
+    const me=await api('/api/me');
+    ME=me.user;
+  }catch(e){ME=null;}
+
+  if(!ME){
+    // Not logged in: if there's a code, show couple signup; else show a sign-in prompt.
+    renderSignup(code);
+    return;
+  }
+  if(ME.role==='couple'){ renderCoupleHome(); return; }
+  renderDJHome();
+}
+
+// ---- Public demo: a fully-populated example wedding, read-only ----
+let DEMO=false;
+function openDemoWedding(){
+  CURRENT={
+    id:'DEMO', name:"Sarah & Tom's Wedding", coupleNames:'Sarah & Tom',
+    weddingDate:new Date(Date.now()+1000*60*60*24*120).getTime(),
+    inviteCode:'DEMO12', coupleJoined:true, canEdit:false,
+    blocks:[
+      {id:'b1',name:'First Dance',capacity:1,songs:[{id:'1',title:'Perfect',artist:'Ed Sheeran',art:''}]},
+      {id:'b2',name:'Cake Cutting',capacity:1,songs:[{id:'2',title:'Sugar, Sugar',artist:'The Archies',art:''}]},
+      {id:'b3',name:"Couple's Top 15",capacity:15,songs:[
+        {id:'3',title:'Dancing Queen',artist:'ABBA',art:''},
+        {id:'4',title:'September',artist:'Earth, Wind & Fire',art:''},
+        {id:'5',title:"Don't Stop Me Now",artist:'Queen',art:''},
+        {id:'6',title:'Mr. Brightside',artist:'The Killers',art:''}
+      ]},
+      {id:'b4',name:'Play If Possible',capacity:30,songs:[
+        {id:'7',title:'Valerie',artist:'Mark Ronson ft. Amy Winehouse',art:''},
+        {id:'8',title:'I Wanna Dance with Somebody',artist:'Whitney Houston',art:''}
+      ]},
+      {id:'b5',name:'Last Dance',capacity:1,songs:[{id:'9',title:'Time of My Life',artist:'Bill Medley & Jennifer Warnes',art:''}]},
+      {id:'b6',name:'Do Not Play',capacity:5,songs:[{id:'10',title:'Macarena',artist:'Los del Río',art:''}]}
+    ],
+    timeline:[
+      {id:'t1',time:'1:00pm',label:'Guests arrive'},
+      {id:'t2',time:'1:30pm',label:'Ceremony'},
+      {id:'t3',time:'3:00pm',label:'Wedding breakfast'},
+      {id:'t4',time:'7:00pm',label:'Evening guests arrive'},
+      {id:'t5',time:'7:30pm',label:'First dance'},
+      {id:'t6',time:'7:45pm',label:'Dancefloor opens'},
+      {id:'t7',time:'11:30pm',label:'Last dance & send-off'}
+    ],
+    questionnaire:{name:'Standard Wedding',questions:[
+      {id:'h1',type:'header',label:'The basics'},
+      {id:'q1',type:'text',label:'How should we announce your grand entrance?'},
+      {id:'q2',type:'yesno',label:'Are explicit/clean versions OK?'},
+      {id:'h2',type:'header',label:'The evening'},
+      {id:'q3',type:'choice',label:'Overall vibe for the night?',options:['Chilled & classy','Full-on party','A mix of both']},
+      {id:'q4',type:'text',label:'Any genres or artists to avoid?'}
+    ]},
+    answers:{q1:'Please welcome the new Mr & Mrs Roberts!',q2:'No',q3:'A mix of both',q4:'No heavy metal please!'}
+  };
+  renderPlan();
+  // Banner inviting them to upgrade
+  const root=document.getElementById('root');
+  const banner=document.createElement('div');
+  banner.className='panel';
+  banner.style.cssText='background:rgba(198,242,78,.12);border:1px solid rgba(198,242,78,.4);margin-top:20px;text-align:center';
+  banner.innerHTML='<b>This is a demo of the Spinlist Wedding Planner.</b><div class="muted" style="margin:6px 0 12px">Couples fill in their song choices, timeline and questionnaire — all in one place.</div><a class="btn btn-neon" href="/pricing.html">See plans to unlock it ▸</a>';
+  root.appendChild(banner);
+}
+
+/* ---------------- COUPLE SIGNUP (with code) ---------------- */
+function renderSignup(code){
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <p class="eyebrow" style="margin-top:40px">Wedding planner</p>
+    <h1 class="display">${code?'Plan your wedding songs':'Sign in'}</h1>
+    <p class="lead">${code?'Your DJ has set up a song plan for your big day. Create a free account to fill it in.':'Log in to access your wedding plan.'}</p>
+    <div class="panel" style="max-width:460px">
+      ${code?`<div class="field"><span>Your wedding code</span><input id="su-code" value="${esc(code)}" ${code?'readonly':''}></div>`:`<div class="field"><span>Wedding code (from your DJ)</span><input id="su-code" placeholder="e.g. ABC123"></div>`}
+      <div class="field"><span>Your names</span><input id="su-name" placeholder="Sarah & Tom"></div>
+      <div class="field"><span>Email</span><input id="su-email" type="email" placeholder="you@example.com"></div>
+      <div class="field"><span>Password (min 8 chars)</span><input id="su-pass" type="password" placeholder="••••••••"></div>
+      <button class="btn btn-neon" style="width:100%;justify-content:center" onclick="doSignup()">Create account &amp; start ▸</button>
+      <p class="muted" style="margin-top:12px;text-align:center">Already have an account? <a href="#" onclick="doShowLogin();return false">Log in</a></p>
+      <div id="su-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+}
+function doShowLogin(){
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <p class="eyebrow" style="margin-top:40px">Wedding planner</p>
+    <h1 class="display">Log in</h1>
+    <div class="panel" style="max-width:420px">
+      <div class="field"><span>Email</span><input id="li-email" type="email"></div>
+      <div class="field"><span>Password</span><input id="li-pass" type="password"></div>
+      <button class="btn btn-neon" style="width:100%;justify-content:center" onclick="doLogin()">Log in ▸</button>
+      <div id="li-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+}
+async function doLogin(){
+  const email=val('li-email'),password=val('li-pass');
+  try{ await api('/api/auth/login',{method:'POST',body:JSON.stringify({email,password})}); location.reload(); }
+  catch(e){ document.getElementById('li-msg').textContent=e.message; }
+}
+async function doSignup(){
+  const weddingCode=val('su-code'),name=val('su-name'),email=val('su-email'),password=val('su-pass');
+  const msg=document.getElementById('su-msg');msg.textContent='';
+  if(!weddingCode){msg.textContent='Please enter your wedding code.';return;}
+  if(password.length<8){msg.textContent='Password must be at least 8 characters.';return;}
+  try{
+    await api('/api/auth/signup',{method:'POST',body:JSON.stringify({email,password,name,weddingCode})});
+    location.href='/wedding.html';
+  }catch(e){ msg.textContent=e.message; }
+}
+
+/* ---------------- COUPLE HOME ---------------- */
+async function renderCoupleHome(){
+  const root=document.getElementById('root');
+  let weddings=[];
+  try{ weddings=(await api('/api/my-weddings')).weddings; }catch(e){}
+  if(!weddings.length){
+    root.innerHTML=`<h1 class="display" style="margin-top:40px">No wedding plan yet</h1>
+      <p class="lead">Ask your DJ for your wedding code, then <a href="#" onclick="renderSignup();return false">enter it here</a>.</p>`;
+    return;
+  }
+  if(weddings.length===1){ openWedding(weddings[0].id); return; }
+  root.innerHTML=`<h1 class="display" style="margin-top:40px">Your weddings</h1>`+
+    weddings.map(w=>`<div class="wcard" onclick="openWedding('${w.id}')"><div><b>${esc(w.name)}</b><div class="muted">${esc(w.coupleNames||'')}</div></div><span class="btn btn-ghost btn-sm">Open ▸</span></div>`).join('');
+}
+
+/* ---------------- DJ HOME ---------------- */
+let djShowArchived=false;
+async function renderDJHome(){
+  const root=document.getElementById('root');
+  let weddings=[];
+  try{ weddings=(await api('/api/weddings')).weddings; }catch(e){}
+  const active=weddings.filter(w=>!w.archived);
+  const archived=weddings.filter(w=>w.archived);
+  const shown=djShowArchived?archived:active;
+  root.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:36px;flex-wrap:wrap;gap:12px">
+      <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Your weddings</h1></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost" onclick="openBlockTemplates()">Music templates</button><button class="btn btn-ghost" onclick="openTemplates()">Questionnaire templates</button><button class="btn btn-neon" onclick="openCreate()">+ New wedding</button></div>
+    </div>
+    <p class="lead">Create a song plan, share the code with the couple, and they'll fill in their choices before the big day.</p>
+    ${archived.length?`<div style="display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;margin:6px 0 14px;width:fit-content">
+      <button class="seg-btn ${!djShowArchived?'on':''}" onclick="djShowArchived=false;renderDJHome()">Active (${active.length})</button>
+      <button class="seg-btn ${djShowArchived?'on':''}" onclick="djShowArchived=true;renderDJHome()">Archived (${archived.length})</button>
+    </div>`:''}
+    <div id="dj-list" style="margin-top:8px">
+      ${shown.length?shown.map(djCard).join(''):'<div class="panel"><p class="muted">'+(djShowArchived?'No archived weddings.':'No weddings yet. Create your first one.')+'</p></div>'}
+    </div>`;
+}
+function djCard(w){
+  const total=w.blockCount||0;
+  const dateStr=w.weddingDate?fmtWeddingDate(w.weddingDate):'No date set';
+  const archiveBtn=w.archived
+    ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();archiveWeddingDJ('${w.id}',false)">Restore</button>`
+    : `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();archiveWeddingDJ('${w.id}',true)">Archive</button>`;
+  return `<div class="wcard" onclick="openWedding('${w.id}')">
+    <div>
+      <b>${esc(w.name)}</b> ${w.coupleJoined?'<span class="pill done">Couple joined</span>':'<span class="pill">Awaiting couple</span>'}
+      <div class="muted">📅 ${dateStr} · ${esc(w.coupleNames||'')} · ${w.filledCount} songs · code <b>${esc(w.inviteCode)}</b></div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center" onclick="event.stopPropagation()">
+      ${archiveBtn}
+      <span class="btn btn-ghost btn-sm" onclick="openWedding('${w.id}')">Open ▸</span>
+    </div>
+  </div>`;
+}
+async function archiveWeddingDJ(id,archived){
+  try{
+    await api('/api/weddings/'+id+'/archive',{method:'POST',body:JSON.stringify({archived})});
+    toast(archived?'Wedding archived':'Wedding restored');
+    renderDJHome();
+  }catch(e){ toast(e.message); }
+}
+function fmtWeddingDate(ts){
+  try{ return new Date(ts).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}); }
+  catch(e){ return ''; }
+}
+
+/* ---------------- CREATE WEDDING (DJ) ---------------- */
+const DEFAULT_BLOCKS=[
+  {name:'First Dance',capacity:1},{name:'Cake Cutting',capacity:1},
+  {name:"Couple's Top 15",capacity:15},{name:'Play If Possible',capacity:30},
+  {name:'Last Dance',capacity:1},{name:'Do Not Play',capacity:5}
+];
+let draftBlocks=[];
+async function openCreate(){
+  draftBlocks=DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity}));
+  try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
+  try{ BLOCK_TEMPLATES=(await api('/api/block-templates')).templates||[]; }catch(e){ BLOCK_TEMPLATES=[]; }
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <h1 class="display" style="margin-top:36px">New wedding plan</h1>
+    <div class="panel" style="max-width:640px">
+      <div class="grid-2">
+        <div class="field"><span>Wedding name</span><input id="w-name" placeholder="Sarah & Tom's Wedding"></div>
+        <div class="field"><span>Couple's names</span><input id="w-couple" placeholder="Sarah & Tom"></div>
+      </div>
+      <div class="field"><span>Wedding date</span><input id="w-date" type="date"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 4px">
+        <h2 style="font-size:1.1rem">Song blocks</h2>
+        ${BLOCK_TEMPLATES.length?`<select onchange="loadBlockTemplate(this.value)" style="font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--paper-2);color:var(--ink);font-size:.85rem">
+          <option value="">Load a template…</option>
+          ${BLOCK_TEMPLATES.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}
+        </select>`:''}
+      </div>
+      <p class="muted" style="margin-bottom:12px">Customise the blocks and how many songs each can hold. The couple fills these in.</p>
+      <div id="blocks-edit"></div>
+      <button class="addbtn" onclick="addDraftBlock()">+ Add a block</button>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="saveBlocksAsTemplate()">💾 Save these blocks as a template</button>
+
+      <h2 style="font-size:1.1rem;margin:18px 0 4px">Questionnaire</h2>
+      <div class="field" style="margin-top:6px">
+        <span>Attach a questionnaire template (optional)</span>
+        <select id="w-template" style="width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)">
+          <option value="">None</option>
+          ${TEMPLATES.map(t=>`<option value="${t.id}">${esc(t.name)} (${(t.questions||[]).length} questions)</option>`).join('')}
+        </select>
+      </div>
+      ${TEMPLATES.length?'':'<p class="muted" style="font-size:.85rem;margin-top:-6px">No templates yet — you can <a href="#" onclick="openTemplates();return false">create one</a> first, or add it later.</p>'}
+
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn btn-neon" onclick="createWedding()">Create &amp; get code ▸</button>
+        <button class="btn btn-ghost" onclick="renderDJHome()">Cancel</button>
+      </div>
+      <div id="w-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+  renderDraftBlocks();
+}
+function loadBlockTemplate(id){
+  if(!id)return;
+  const t=BLOCK_TEMPLATES.find(x=>x.id===id);
+  if(!t)return;
+  draftBlocks=t.blocks.map(b=>({name:b.name,capacity:b.capacity}));
+  renderDraftBlocks();
+  toast('Loaded "'+t.name+'"');
+}
+async function saveBlocksAsTemplate(){
+  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1)}));
+  if(!blocks.length){toast('Add some blocks first');return;}
+  const name=prompt('Name this music template:','My Wedding Set');
+  if(!name||!name.trim())return;
+  try{
+    await api('/api/block-templates',{method:'POST',body:JSON.stringify({name:name.trim(),blocks})});
+    try{ BLOCK_TEMPLATES=(await api('/api/block-templates')).templates||[]; }catch(e){}
+    toast('Saved as template ✓');
+    openCreate();   // refresh so the new template appears in the dropdown
+  }catch(e){ toast(e.message); }
+}
+function renderDraftBlocks(){
+  const el=document.getElementById('blocks-edit');
+  el.innerHTML=draftBlocks.map((b,i)=>`
+    <div class="drag-row" draggable="true" data-i="${i}"
+      ondragstart="dragStart(event,${i},'draft')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'draft')" ondragend="dragEnd(event)">
+      <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'draft')">⠿</span>
+      <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="draftBlocks[${i}].name=this.value">
+      <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="draftBlocks[${i}].capacity=+this.value" title="Number of songs">
+      <button class="iconbtn" onclick="draftBlocks.splice(${i},1);renderDraftBlocks()">🗑</button>
+    </div>`).join('');
+}
+function addDraftBlock(){draftBlocks.push({name:'New block',capacity:5});renderDraftBlocks();}
+async function createWedding(){
+  const name=val('w-name'),coupleNames=val('w-couple');
+  const msg=document.getElementById('w-msg');msg.textContent='';
+  if(!name){msg.textContent='Please give the wedding a name.';return;}
+  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1)}));
+  if(!blocks.length){msg.textContent='Add at least one block.';return;}
+  try{
+    const templateId=val('w-template');
+    const dateStr=val('w-date');
+    const weddingDate=dateStr?new Date(dateStr).getTime():null;
+    const d=await api('/api/weddings',{method:'POST',body:JSON.stringify({name,coupleNames,blocks,weddingDate,templateId:templateId||undefined})});
+    openWedding(d.wedding.id);
+  }catch(e){ msg.textContent=e.message; if(/PRO feature/.test(e.message)){setTimeout(()=>location.href='/pricing.html',1500);} }
+}
+
+/* ---------------- DRAG-AND-DROP REORDER (blocks) ---------------- */
+let dragIndex=null, dragCtx=null;
+function dragStart(e,i,ctx){dragIndex=i;dragCtx=ctx;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(i));}catch(_){}}
+function dragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';const row=e.currentTarget;row.style.borderTop='2px solid var(--neon)';}
+function dragEnd(e){document.querySelectorAll('.drag-row').forEach(r=>{r.style.borderTop='';r.removeAttribute('draggable');});}
+function dropRow(e,toIndex,ctx){
+  e.preventDefault();
+  document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');
+  if(dragIndex===null||dragCtx!==ctx||dragIndex===toIndex)return;
+  if(ctx==='edit'){ moveItem(editBlocks,dragIndex,toIndex); renderEditBlocks(); }
+  else if(ctx==='music'){ moveItem(CURRENT.blocks,dragIndex,toIndex); renderBlocks(); saveBlockOrder(); }
+  else if(ctx==='draft'){ moveItem(draftBlocks,dragIndex,toIndex); renderDraftBlocks(); }
+  else if(ctx==='btpl'){ moveItem(editingBTpl.blocks,dragIndex,toIndex); renderBTplBlocks(); }
+  else if(ctx==='tplq'){ moveItem(editingTpl.questions,dragIndex,toIndex); renderTplQuestions(); }
+  dragIndex=null;dragCtx=null;
+}
+function moveItem(arr,from,to){const [it]=arr.splice(from,1);arr.splice(to,0,it);}
+
+// Only make a row draggable while its handle is held — keeps inner inputs usable.
+function enableRowDrag(handle){const row=handle.closest('.drag-row');if(row)row.setAttribute('draggable','true');}
+function disableRowDrag(handle){const row=handle.closest('.drag-row');if(row)row.removeAttribute('draggable');}
+
+// Touch fallback: native HTML5 drag doesn't fire on touchscreens, so we
+// implement a simple long-press-free drag using the handle on touch devices.
+let touchCtx=null,touchFrom=null;
+function initTouchDrag(){
+  document.addEventListener('touchmove',e=>{
+    if(touchFrom===null)return;
+    e.preventDefault();
+    const t=e.touches[0];
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    const row=el&&el.closest('.drag-row[data-i]');
+    document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');
+    if(row)row.style.borderTop='2px solid var(--neon)';
+  },{passive:false});
+  document.addEventListener('touchend',e=>{
+    if(touchFrom===null)return;
+    const t=e.changedTouches[0];
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    const row=el&&el.closest('.drag-row[data-i]');
+    document.querySelectorAll('.drag-row').forEach(r=>r.style.borderTop='');
+    if(row){
+      const to=parseInt(row.dataset.i,10);
+      if(!isNaN(to)&&to!==touchFrom){
+        if(touchCtx==='edit'){moveItem(editBlocks,touchFrom,to);renderEditBlocks();}
+        else if(touchCtx==='music'){moveItem(CURRENT.blocks,touchFrom,to);renderBlocks();saveBlockOrder();}
+        else if(touchCtx==='draft'){moveItem(draftBlocks,touchFrom,to);renderDraftBlocks();}
+        else if(touchCtx==='btpl'){moveItem(editingBTpl.blocks,touchFrom,to);renderBTplBlocks();}
+        else if(touchCtx==='tplq'){moveItem(editingTpl.questions,touchFrom,to);renderTplQuestions();}
+      }
+    }
+    touchFrom=null;touchCtx=null;
+  });
+}
+function handleTouchStart(e,i,ctx){touchFrom=i;touchCtx=ctx;}
+
+// Persist a new block order from the Music tab (preserves songs — sends ids).
+async function saveBlockOrder(){
+  try{
+    const blocks=CURRENT.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity}));
+    const d=await api('/api/weddings/'+CURRENT.id+'/update',{method:'POST',body:JSON.stringify({name:CURRENT.name,coupleNames:CURRENT.coupleNames,blocks})});
+    CURRENT=d.wedding;
+    toast('Order saved');
+  }catch(e){ toast(e.message); }
+}
+
+/* ---------------- EDIT WEDDING (DJ) ---------------- */
+let editBlocks=[];
+async function openEditWedding(){
+  const w=CURRENT;
+  // editable copy of blocks (keep ids so songs are preserved on save)
+  editBlocks=w.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,songCount:(b.songs||[]).length}));
+  try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
+  const curTplName=w.questionnaire?w.questionnaire.name:'';
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <h1 class="display" style="margin-top:36px">Edit wedding</h1>
+    <div class="panel" style="max-width:640px">
+      <div class="grid-2">
+        <div class="field"><span>Wedding name</span><input id="ew-name" value="${esc(w.name||'')}"></div>
+        <div class="field"><span>Couple's names</span><input id="ew-couple" value="${esc(w.coupleNames||'')}"></div>
+      </div>
+      <div class="field"><span>Wedding date</span><input id="ew-date" type="date" value="${w.weddingDate?new Date(w.weddingDate).toISOString().slice(0,10):''}"></div>
+      <h2 style="font-size:1.1rem;margin:10px 0 4px">Song blocks</h2>
+      <p class="muted" style="margin-bottom:12px">Rename or resize blocks. Existing song choices are kept. Removing a block deletes its songs.</p>
+      <div id="eblocks-edit"></div>
+      <button class="addbtn" onclick="addEditBlock()">+ Add a block</button>
+
+      <h2 style="font-size:1.1rem;margin:18px 0 4px">Questionnaire</h2>
+      <div class="field" style="margin-top:6px">
+        <span>Attached template${curTplName?` (currently: ${esc(curTplName)})`:''}</span>
+        <select id="ew-template" style="width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)">
+          <option value="__keep">Keep current${curTplName?` (${esc(curTplName)})`:' (none)'}</option>
+          <option value="">None / remove</option>
+          ${TEMPLATES.map(t=>`<option value="${t.id}">${esc(t.name)} (${(t.questions||[]).length} questions)</option>`).join('')}
+        </select>
+        <p class="muted" style="font-size:.82rem;margin-top:6px">Changing the template replaces the questions. Existing answers may no longer match.</p>
+      </div>
+
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn btn-neon" onclick="saveEditWedding()">Save changes</button>
+        <button class="btn btn-ghost" onclick="renderPlan()">Cancel</button>
+      </div>
+      <div id="ew-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+  renderEditBlocks();
+}
+function renderEditBlocks(){
+  const el=document.getElementById('eblocks-edit');
+  el.innerHTML=editBlocks.map((b,i)=>`
+    <div class="drag-row" draggable="true" data-i="${i}"
+      ondragstart="dragStart(event,${i},'edit')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'edit')" ondragend="dragEnd(event)">
+      <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'edit')">⠿</span>
+      <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editBlocks[${i}].name=this.value">
+      <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editBlocks[${i}].capacity=+this.value" title="Songs">
+      <button class="iconbtn" onclick="removeEditBlock(${i})" title="${b.songCount?('Has '+b.songCount+' song(s)'):'Remove'}">🗑</button>
+    </div>`).join('');
+}
+function addEditBlock(){editBlocks.push({name:'New block',capacity:5,songCount:0});renderEditBlocks();}
+function removeEditBlock(i){
+  const b=editBlocks[i];
+  if(b.songCount&&!confirm('This block has '+b.songCount+' song(s). Remove it and its songs?'))return;
+  editBlocks.splice(i,1);renderEditBlocks();
+}
+async function saveEditWedding(){
+  const name=val('ew-name'),coupleNames=val('ew-couple');
+  const msg=document.getElementById('ew-msg');msg.textContent='';
+  if(!name.trim()){msg.textContent='Please give the wedding a name.';return;}
+  const blocks=editBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({id:b.id,name:b.name,capacity:Math.max(1,b.capacity||1)}));
+  if(!blocks.length){msg.textContent='Add at least one block.';return;}
+  const body={name,coupleNames,blocks};
+  const dateStr=val('ew-date');
+  body.weddingDate=dateStr?new Date(dateStr).getTime():null;
+  const tpl=val('ew-template');
+  if(tpl!=='__keep')body.templateId=tpl;   // '' removes, an id switches; '__keep' omits
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/update',{method:'POST',body:JSON.stringify(body)});
+    CURRENT=d.wedding;
+    toast('Wedding updated');
+    renderPlan();
+  }catch(e){ msg.textContent=e.message; }
+}
+
+
+/* ---------------- MUSIC BLOCK TEMPLATES (DJ) ---------------- */
+let BLOCK_TEMPLATES=[], editingBTpl=null;
+async function openBlockTemplates(){
+  try{ BLOCK_TEMPLATES=(await api('/api/block-templates')).templates||[]; }catch(e){ BLOCK_TEMPLATES=[]; }
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
+      <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Music templates</h1></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← Back</button>
+        ${BLOCK_TEMPLATES.length<5?'<button class="btn btn-neon" onclick="editBlockTemplate(null)">+ New template</button>':''}
+      </div>
+    </div>
+    <p class="lead">Save your song block setups (up to 5) and load one when creating a wedding. (${BLOCK_TEMPLATES.length}/5)</p>
+    <div style="margin-top:8px">${BLOCK_TEMPLATES.length?BLOCK_TEMPLATES.map(bTplCard).join(''):'<div class="panel"><p class="muted">No music templates yet. Create your first one.</p></div>'}</div>`;
+}
+function bTplCard(t){
+  const total=(t.blocks||[]).reduce((s,b)=>s+b.capacity,0);
+  return `<div class="wcard">
+    <div><b>${esc(t.name)}</b><div class="muted">${(t.blocks||[]).length} blocks · ${total} songs total</div></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="editBlockTemplate('${t.id}')">Edit</button>
+      <button class="iconbtn" onclick="deleteBlockTemplate('${t.id}')">🗑</button>
+    </div>
+  </div>`;
+}
+async function deleteBlockTemplate(id){
+  if(!confirm('Delete this music template?'))return;
+  await fetch('/api/block-templates/'+id,{method:'DELETE'});
+  openBlockTemplates();
+}
+function editBlockTemplate(id){
+  editingBTpl=id?JSON.parse(JSON.stringify(BLOCK_TEMPLATES.find(t=>t.id===id))):{name:'',blocks:DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity}))};
+  if(!editingBTpl.blocks)editingBTpl.blocks=[];
+  renderBlockTemplateEditor();
+}
+function renderBlockTemplateEditor(){
+  const t=editingBTpl;
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <h1 class="display" style="margin-top:34px">${t.id?'Edit music template':'New music template'}</h1>
+    <div class="panel" style="max-width:680px">
+      <div class="field"><span>Template name</span><input id="btpl-name" value="${esc(t.name||'')}" placeholder="e.g. Standard Wedding Set"></div>
+      <h2 style="font-size:1.1rem;margin:10px 0 4px">Blocks</h2>
+      <p class="muted" style="margin-bottom:12px">Name each block and how many songs it holds.</p>
+      <div id="btpl-blocks"></div>
+      <button class="addbtn" onclick="editingBTpl.blocks.push({name:'New block',capacity:5});renderBTplBlocks()">+ Add a block</button>
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn btn-neon" onclick="saveBlockTemplate()">Save template</button>
+        <button class="btn btn-ghost" onclick="openBlockTemplates()">Cancel</button>
+      </div>
+      <div id="btpl-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+  renderBTplBlocks();
+}
+function renderBTplBlocks(){
+  const el=document.getElementById('btpl-blocks');
+  el.innerHTML=editingBTpl.blocks.map((b,i)=>`
+    <div class="drag-row" draggable="true" data-i="${i}"
+      ondragstart="dragStart(event,${i},'btpl')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'btpl')" ondragend="dragEnd(event)">
+      <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'btpl')">⠿</span>
+      <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editingBTpl.blocks[${i}].name=this.value">
+      <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editingBTpl.blocks[${i}].capacity=+this.value" title="Songs">
+      <button class="iconbtn" onclick="editingBTpl.blocks.splice(${i},1);renderBTplBlocks()">🗑</button>
+    </div>`).join('')||'<p class="muted" style="margin-bottom:8px">No blocks yet.</p>';
+}
+async function saveBlockTemplate(){
+  editingBTpl.name=val('btpl-name');
+  const msg=document.getElementById('btpl-msg');msg.textContent='';
+  if(!editingBTpl.name.trim()){msg.textContent='Give the template a name.';return;}
+  editingBTpl.blocks=editingBTpl.blocks.filter(b=>b.name&&b.name.trim());
+  if(!editingBTpl.blocks.length){msg.textContent='Add at least one block.';return;}
+  try{
+    await api('/api/block-templates',{method:'POST',body:JSON.stringify(editingBTpl)});
+    openBlockTemplates();
+  }catch(e){ msg.textContent=e.message; }
+}
+
+let TEMPLATES=[], editingTpl=null;
+async function openTemplates(){
+  try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
+      <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Questionnaire templates</h1></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← Back</button>
+        ${TEMPLATES.length<5?'<button class="btn btn-neon" onclick="editTemplate(null)">+ New template</button>':''}
+      </div>
+    </div>
+    <p class="lead">Build up to 5 questionnaire templates. Pick one when you create a wedding. (${TEMPLATES.length}/5)</p>
+    <div style="margin-top:8px">${TEMPLATES.length?TEMPLATES.map(tplCard).join(''):'<div class="panel"><p class="muted">No templates yet. Create your first one.</p></div>'}</div>`;
+}
+function tplCard(t){
+  return `<div class="wcard">
+    <div><b>${esc(t.name)}</b><div class="muted">${(t.questions||[]).length} question${(t.questions||[]).length===1?'':'s'}</div></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="editTemplate('${t.id}')">Edit</button>
+      <button class="iconbtn" onclick="deleteTemplate('${t.id}')">🗑</button>
+    </div>
+  </div>`;
+}
+async function deleteTemplate(id){
+  if(!confirm('Delete this template?'))return;
+  await fetch('/api/q-templates/'+id,{method:'DELETE'});
+  openTemplates();
+}
+function editTemplate(id){
+  editingTpl=id?JSON.parse(JSON.stringify(TEMPLATES.find(t=>t.id===id))):{name:'',questions:[]};
+  if(!editingTpl.questions)editingTpl.questions=[];
+  renderTemplateEditor();
+}
+function renderTemplateEditor(){
+  const t=editingTpl;
+  const root=document.getElementById('root');
+  root.innerHTML=`
+    <h1 class="display" style="margin-top:34px">${t.id?'Edit template':'New template'}</h1>
+    <div class="panel" style="max-width:680px">
+      <div class="field"><span>Template name</span><input id="tpl-name" value="${esc(t.name||'')}" placeholder="e.g. Standard Wedding"></div>
+      <h2 style="font-size:1.1rem;margin:10px 0 4px">Questions</h2>
+      <p class="muted" style="margin-bottom:12px">Each question can be a text answer, yes/no, or multiple choice.</p>
+      <div id="tpl-questions"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="addbtn" style="margin-top:0" onclick="addTplQuestion()">+ Add a question</button>
+        <button class="addbtn" style="margin-top:0;flex:0 0 auto;width:auto;padding:9px 16px" onclick="addTplHeader()">+ Add section header</button>
+      </div>
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn btn-neon" onclick="saveTemplate()">Save template</button>
+        <button class="btn btn-ghost" onclick="openTemplates()">Cancel</button>
+      </div>
+      <div id="tpl-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
+    </div>`;
+  renderTplQuestions();
+}
+function renderTplQuestions(){
+  const el=document.getElementById('tpl-questions');
+  el.innerHTML=editingTpl.questions.map((q,i)=>{
+    const dragAttrs=`data-i="${i}" ondragstart="dragStart(event,${i},'tplq')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'tplq')" ondragend="dragEnd(event)"`;
+    const handle=`<span class="drag-handle" title="Drag to reorder" onmousedown="enableRowDrag(this)" onmouseup="disableRowDrag(this)" ontouchstart="handleTouchStart(event,${i},'tplq')">⠿</span>`;
+    if(q.type==='header'){
+      return `<div class="drag-row" ${dragAttrs} style="background:rgba(91,140,255,.10);border:1px solid rgba(91,140,255,.35);border-radius:12px;padding:12px 14px;margin-bottom:10px;display:block">
+        <div style="display:flex;gap:8px;align-items:center">
+          ${handle}
+          <span class="muted" style="font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase">Section</span>
+          <input value="${esc(q.label||'')}" placeholder="Section heading (e.g. Ceremony)" oninput="editingTpl.questions[${i}].label=this.value"
+            style="flex:1;font:inherit;font-weight:700;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
+          <button class="iconbtn" onclick="editingTpl.questions.splice(${i},1);renderTplQuestions()">🗑</button>
+        </div>
+      </div>`;
+    }
+    return `<div class="drag-row" ${dragAttrs} style="background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;display:block">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        ${handle}
+        <input value="${esc(q.label||'')}" placeholder="Question text" oninput="editingTpl.questions[${i}].label=this.value"
+          style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
+        <button class="iconbtn" onclick="editingTpl.questions.splice(${i},1);renderTplQuestions()">🗑</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-left:26px">
+        <span class="muted" style="font-size:.82rem">Type:</span>
+        <select onchange="setQType(${i},this.value)" style="font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">
+          <option value="text" ${q.type==='text'?'selected':''}>Text answer</option>
+          <option value="yesno" ${q.type==='yesno'?'selected':''}>Yes / No</option>
+          <option value="choice" ${q.type==='choice'?'selected':''}>Multiple choice</option>
+        </select>
+        ${q.type==='choice'?`<input value="${esc((q.options||[]).join(', '))}" placeholder="Options, comma-separated" oninput="editingTpl.questions[${i}].options=this.value.split(',').map(s=>s.trim()).filter(Boolean)"
+          style="flex:1;min-width:200px;font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">`:''}
+      </div>
+    </div>`;
+  }).join('')||'<p class="muted" style="margin-bottom:8px">No questions yet.</p>';
+}
+function setQType(i,type){editingTpl.questions[i].type=type;if(type==='choice'&&!editingTpl.questions[i].options)editingTpl.questions[i].options=[];renderTplQuestions();}
+function addTplQuestion(){editingTpl.questions.push({type:'text',label:'',options:[]});renderTplQuestions();}
+function addTplHeader(){editingTpl.questions.push({type:'header',label:'',options:[]});renderTplQuestions();}
+async function saveTemplate(){
+  editingTpl.name=val('tpl-name');
+  const msg=document.getElementById('tpl-msg');msg.textContent='';
+  if(!editingTpl.name.trim()){msg.textContent='Give the template a name.';return;}
+  // keep only items that have a label; require at least one real (non-header) question
+  editingTpl.questions=editingTpl.questions.filter(q=>q.label&&q.label.trim());
+  const realQuestions=editingTpl.questions.filter(q=>q.type!=='header');
+  if(!realQuestions.length){msg.textContent='Add at least one question (headers alone are not enough).';return;}
+  try{
+    await api('/api/q-templates',{method:'POST',body:JSON.stringify(editingTpl)});
+    openTemplates();
+  }catch(e){ msg.textContent=e.message; }
+}
+
+
+async function openWedding(id){
+  try{ CURRENT=(await api('/api/weddings/'+id)).wedding; }
+  catch(e){ toast(e.message); return; }
+  renderPlan();
+}
+let currentTab='music';
+function renderPlan(){
+  const w=CURRENT, isDJ=ME.role!=='couple';
+  const root=document.getElementById('root');
+  const filled=w.blocks.reduce((s,b)=>s+b.songs.length,0);
+  const cap=w.blocks.reduce((s,b)=>s+b.capacity,0);
+  root.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
+      <div>
+        <p class="eyebrow">${isDJ?'Wedding plan':'Your wedding songs'}</p>
+        <h1 class="display" style="margin-top:6px">${esc(w.name)}</h1>
+        <p class="muted">${w.weddingDate?('📅 '+fmtWeddingDate(w.weddingDate)+' · '):''}${esc(w.coupleNames||'')} · ${filled} of ${cap} songs chosen</p>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportWeddingPDF()">⬇ PDF run-sheet</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
+      </div>
+    </div>
+    ${isDJ&&!DEMO&&w.inviteCode?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
+      <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button></div>
+    </div>`:''}
+
+    <div class="tabs">
+      <button class="tab" data-tab="music" onclick="switchTab('music')">🎵 Music</button>
+      <button class="tab" data-tab="timeline" onclick="switchTab('timeline')">🕐 Timeline</button>
+      <button class="tab" data-tab="questionnaire" onclick="switchTab('questionnaire')">📋 Questionnaire</button>
+    </div>
+
+    <section class="tab-pane" id="pane-music">
+      ${!isDJ?`<p class="lead" style="margin-top:18px">Search and add your songs to each section below. Your choices save automatically — you can come back any time.</p>`:''}
+      ${(isDJ&&!DEMO)?`<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost btn-sm" onclick="exportWeddingCSV()">⬇ Export CSV</button></div>`:''}
+      <div id="blocks" style="margin-top:14px"></div>
+    </section>
+
+    <section class="tab-pane" id="pane-timeline">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:22px">
+        <h2>Timeline of the day</h2>
+        ${DEMO?'':'<button class="btn btn-ghost btn-sm" onclick="addTimelineRow()">+ Add moment</button>'}
+      </div>
+      <p class="muted" style="margin:4px 0 12px">${DEMO?'The running order for the day, planned together by the couple and their DJ.':'The running order for the day — both you and your DJ can edit this.'}</p>
+      <div class="panel" id="timeline-panel" style="margin-top:0"></div>
+    </section>
+
+    <section class="tab-pane" id="pane-questionnaire">
+      <div id="questionnaire-content" style="margin-top:22px"></div>
+    </section>`;
+  renderBlocks();
+  renderTimeline();
+  renderQuestionnaire();
+  switchTab(currentTab);
+}
+function switchTab(tab){
+  currentTab=tab;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('show',p.id==='pane-'+tab));
+}
+function renderBlocks(){
+  const w=CURRENT, isDJ=ME.role!=='couple', canEdit=!DEMO;
+  document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
+    const full=b.songs.length>=b.capacity;
+    const dragAttrs=(isDJ&&canEdit)?`draggable="true" data-i="${i}" ondragstart="dragStart(event,${i},'music')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'music')" ondragend="dragEnd(event)"`:'';
+    return `<div class="block drag-row" ${dragAttrs}>
+      <div class="block-head">
+        <h3>${(isDJ&&canEdit)?`<span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'music')">⠿</span> `:''}${esc(b.name)}</h3>
+        <span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span>
+      </div>
+      <div>${b.songs.map((s,idx)=>songRow(b.id,s,idx,canEdit,isDJ)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
+      ${(full||!canEdit)?'':`<button class="addbtn" onclick="openSearch('${b.id}')">+ Add a song</button>`}
+    </div>`;
+  }).join('');
+}
+function songRow(blockId,s,i,canEdit,isDJ){
+  const played=!!s.played;
+  // DJ (not in demo) gets Copy + Mark-played controls for use on the day.
+  const djTools=(isDJ&&!DEMO)?`
+    <button class="mini-btn" title="Copy song & artist" onclick="copyWedSong('${blockId}','${esc(s.id)}')">Copy</button>
+    <button class="mini-btn ${played?'done':''}" onclick="toggleWedPlayed('${blockId}','${esc(s.id)}')">${played?'✓ Played':'Mark played'}</button>`:'';
+  return `<div class="song-row" style="${played?'opacity:.55':''}">
+    <img src="${esc(s.art||'')}" alt="" onerror="this.style.visibility='hidden'">
+    <div class="meta"><div class="t">${esc(s.title)}${played?' · <span style="color:var(--neon)">played</span>':''}</div><div class="a">${esc(s.artist)}</div></div>
+    ${djTools}
+    ${canEdit===false?'':`<button class="iconbtn" title="Remove" onclick="removeSong('${blockId}',${i})">×</button>`}
+  </div>`;
+}
+function copyWedSong(blockId,songId){
+  const b=CURRENT.blocks.find(x=>x.id===blockId);if(!b)return;
+  const s=(b.songs||[]).find(x=>x.id===songId);if(!s)return;
+  const text=s.title+' – '+s.artist;
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>toast('Copied: '+text),()=>wedFallbackCopy(text));
+  }else wedFallbackCopy(text);
+}
+function wedFallbackCopy(text){
+  const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast('Copied: '+text);}catch(e){toast('Copy failed');}
+  document.body.removeChild(ta);
+}
+async function toggleWedPlayed(blockId,songId){
+  const b=CURRENT.blocks.find(x=>x.id===blockId);if(!b)return;
+  const s=(b.songs||[]).find(x=>x.id===songId);if(!s)return;
+  const want=!s.played;
+  s.played=want?1:0;          // optimistic
+  renderBlocks();
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/played',{method:'POST',body:JSON.stringify({blockId,songId,played:want})});
+    CURRENT=d.wedding;renderBlocks();
+  }catch(e){ s.played=want?0:1;renderBlocks();toast(e.message); }
+}
+function copyInvite(code){
+  const link=location.origin+'/wedding.html?code='+encodeURIComponent(code);
+  navigator.clipboard?.writeText(link).then(()=>toast('Invite link copied'),()=>toast('Link: '+link));
+}
+
+/* ---------------- CSV EXPORT (DJ) ---------------- */
+function csvCell(s){
+  s=(s==null?'':String(s));
+  // Quote if it contains comma, quote, or newline; escape quotes by doubling.
+  if(/[",\n]/.test(s))return '"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function downloadCSV(filename,rows){
+  const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=filename;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function exportWeddingCSV(){
+  const w=CURRENT;
+  const rows=[['Block','Artist','Title','Played']];
+  (w.blocks||[]).forEach(b=>{
+    (b.songs||[]).forEach(s=>{
+      rows.push([b.name,s.artist,s.title,s.played?'Yes':'']);
+    });
+  });
+  if(rows.length===1){toast('No songs to export yet');return;}
+  downloadCSV((w.name||'wedding').replace(/\W+/g,'-')+'-songs.csv',rows);
+  toast('CSV downloaded ⬇');
+}
+
+/* ---------------- PDF RUN-SHEET EXPORT (DJ) ---------------- */
+async function loadImageData(url){
+  try{
+    const res=await fetch(url);const blob=await res.blob();
+    return await new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=reject;fr.readAsDataURL(blob);});
+  }catch(e){return null;}
+}
+async function exportWeddingPDF(){
+  if(!window.jspdf||!window.jspdf.jsPDF){toast('PDF tool could not load — try refreshing');return;}
+  const {jsPDF}=window.jspdf;const doc=new jsPDF();const w=CURRENT;
+  const PW=210, M=14;            // page width, margin
+  let y=0;
+  const NEON=[150,180,40], INK=[13,18,30], MUT=[110,120,140];
+  function clip(s,n){s=(s||'').toString();return s.length>n?s.slice(0,n-1)+'…':s;}
+  function need(h){ if(y+h>284){doc.addPage();y=18;} }
+
+  // Header band
+  doc.setFillColor(13,18,40);doc.rect(0,0,PW,34,'F');
+  doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(20);
+  doc.text(clip(w.name||'Wedding',40),M,16);
+  doc.setFont('helvetica','normal');doc.setFontSize(11);
+  let sub=[];if(w.coupleNames)sub.push(w.coupleNames);if(w.weddingDate)sub.push(fmtWeddingDate(w.weddingDate));
+  doc.text(sub.join('   ·   '),M,25);
+  y=44;
+
+  function sectionTitle(t){
+    need(16);
+    doc.setTextColor(NEON[0],NEON[1],NEON[2]);doc.setFont('helvetica','bold');doc.setFontSize(9);
+    doc.text(t.toUpperCase(),M,y);
+    doc.setDrawColor(220);doc.line(M,y+2,PW-M,y+2);
+    y+=10;doc.setTextColor(INK[0],INK[1],INK[2]);
+  }
+
+  // ---- Song blocks ----
+  sectionTitle('Song blocks');
+  (w.blocks||[]).forEach(b=>{
+    need(12);
+    doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(INK[0],INK[1],INK[2]);
+    doc.text(clip(b.name,50),M,y);
+    doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(MUT[0],MUT[1],MUT[2]);
+    doc.text(`${(b.songs||[]).length}/${b.capacity}`,PW-M,y,{align:'right'});
+    y+=6;
+    if(!(b.songs||[]).length){
+      doc.setFont('helvetica','italic');doc.setFontSize(10);doc.setTextColor(MUT[0],MUT[1],MUT[2]);
+      doc.text('—',M+4,y);y+=6;
+    }else{
+      b.songs.forEach((s,i)=>{
+        need(7);
+        doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(INK[0],INK[1],INK[2]);
+        const played=s.played?'  ✓ played':'';
+        doc.text(`${i+1}.  ${clip(s.title,46)} — ${clip(s.artist,34)}${played}`,M+4,y);
+        y+=6;
+      });
+    }
+    y+=4;
+  });
+
+  // ---- Timeline ----
+  if((w.timeline||[]).length){
+    y+=2;sectionTitle('Timeline of the day');
+    w.timeline.forEach(t=>{
+      need(7);
+      doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(INK[0],INK[1],INK[2]);
+      doc.text(clip(t.time||'',12),M+4,y);
+      doc.setFont('helvetica','normal');
+      doc.text(clip(t.label||'',70),M+34,y);
+      y+=7;
+    });
+  }
+
+  // ---- Questionnaire ----
+  const q=w.questionnaire;
+  if(q&&(q.questions||[]).length){
+    y+=2;sectionTitle('Questionnaire — '+clip(q.name||'',40));
+    const ans=w.answers||{};
+    q.questions.forEach(qq=>{
+      if(qq.type==='header'){
+        need(10);
+        doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(91,140,255);
+        doc.text(clip(qq.label,60).toUpperCase(),M,y);y+=7;
+        return;
+      }
+      need(13);
+      doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(INK[0],INK[1],INK[2]);
+      const qlines=doc.splitTextToSize(clip(qq.label,120),PW-2*M-4);
+      doc.text(qlines,M+4,y);y+=qlines.length*5;
+      doc.setFont('helvetica','normal');doc.setTextColor(70,80,100);
+      const a=ans[qq.id]?String(ans[qq.id]):'—';
+      const alines=doc.splitTextToSize(a,PW-2*M-8);
+      doc.text(alines,M+8,y);y+=alines.length*5+4;
+    });
+  }
+
+  // ---- Footer on every page ----
+  const markData=await loadImageData('/img/spinlist-mark.png');
+  const pages=doc.getNumberOfPages();
+  for(let p=1;p<=pages;p++){
+    doc.setPage(p);
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(150);
+    doc.text('Powered by',PW-M-30,291);
+    if(markData){try{doc.addImage(markData,'PNG',PW-M-12,285.5,7,7);}catch(e){}}
+    doc.setFont('helvetica','bold');doc.setTextColor(90);doc.text('spinlist',PW-M-4,291,{align:'right'});
+    doc.setFont('helvetica','normal');doc.setTextColor(180);doc.text('Page '+p+' of '+pages,M,291);
+  }
+  doc.save((w.name||'wedding').replace(/\W+/g,'-')+'-run-sheet.pdf');
+  toast('Run-sheet downloaded ⬇');
+}
+
+/* ---------------- TIMELINE (DJ + couple both edit) ---------------- */
+function renderTimeline(){
+  const w=CURRENT;
+  const tl=w.timeline||[];
+  const el=document.getElementById('timeline-panel');
+  if(!el)return;
+  if(!tl.length){
+    el.innerHTML='<p class="muted">No timeline yet. Add the first moment of the day above.</p>';
+    return;
+  }
+  if(DEMO){
+    el.innerHTML=tl.map(t=>`
+      <div style="display:flex;gap:14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)">
+        <span style="width:90px;font-weight:700;color:var(--neon)">${esc(t.time)}</span>
+        <span>${esc(t.label)}</span>
+      </div>`).join('');
+    return;
+  }
+  el.innerHTML=tl.map((t,i)=>`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <input value="${esc(t.time)}" placeholder="7:30pm" oninput="CURRENT.timeline[${i}].time=this.value;queueTimelineSave()"
+        style="width:110px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
+      <input value="${esc(t.label)}" placeholder="e.g. First dance" oninput="CURRENT.timeline[${i}].label=this.value;queueTimelineSave()"
+        style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
+      <button class="iconbtn" title="Remove" onclick="removeTimelineRow(${i})">🗑</button>
+    </div>`).join('');
+}
+function addTimelineRow(){
+  if(!CURRENT.timeline)CURRENT.timeline=[];
+  CURRENT.timeline.push({id:'tl'+Date.now(),time:'',label:''});
+  renderTimeline();
+  queueTimelineSave();
+}
+function removeTimelineRow(i){
+  CURRENT.timeline.splice(i,1);
+  renderTimeline();
+  saveTimeline();
+}
+let tlSaveT;
+function queueTimelineSave(){clearTimeout(tlSaveT);tlSaveT=setTimeout(saveTimeline,700);}
+async function saveTimeline(){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/timeline',{method:'POST',body:JSON.stringify({timeline:CURRENT.timeline})});
+    CURRENT=d.wedding;
+    toast('Timeline saved');
+  }catch(e){ toast(e.message); }
+}
+
+/* ---------------- QUESTIONNAIRE (couple answers / DJ views) ---------------- */
+function renderQuestionnaire(){
+  const w=CURRENT, isDJ=ME.role!=='couple';
+  const el=document.getElementById('questionnaire-content');
+  if(!el)return;
+  const q=w.questionnaire;
+  if(!q||!q.questions||!q.questions.length){
+    el.innerHTML=`<h2>Questionnaire</h2>
+      <div class="panel"><p class="muted">${isDJ?'No questionnaire attached yet. <a href="#" onclick="openTemplates();return false">Manage templates</a> to set one up.':'Your DJ has not added a questionnaire yet.'}</p></div>`;
+    return;
+  }
+  const answers=w.answers||{};
+  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><h2>${esc(q.name||'Questionnaire')}</h2>${isDJ?'<span class="muted" style="font-size:.85rem">Couple&#39;s answers</span>':''}</div>
+    ${!isDJ?'<p class="lead" style="margin-bottom:8px">Answer these for your DJ — saves automatically.</p>':''}
+    <div class="panel">${q.questions.map(qq=>questionField(qq,answers[qq.id],isDJ)).join('')}</div>`;
+}
+function questionField(q,val,isDJ){
+  if(q.type==='header'){
+    return `<div style="padding:18px 0 4px;border-top:2px solid var(--line);margin-top:6px">
+      <div style="font-size:.78rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--plum)">${esc(q.label)}</div>
+    </div>`;
+  }
+  val=val||'';
+  const lbl=`<div style="font-weight:700;margin-bottom:8px">${esc(q.label)}</div>`;
+  let input;
+  if(isDJ){
+    // DJ sees read-only answers
+    input=`<div class="muted" style="background:var(--paper-2);border-radius:8px;padding:10px 12px;min-height:20px">${val?esc(val):'<i>No answer yet</i>'}</div>`;
+  }else if(q.type==='yesno'){
+    input=`<div style="display:flex;gap:8px">
+      ${['Yes','No'].map(o=>`<button class="btn ${val===o?'btn-neon':'btn-ghost'} btn-sm" onclick="setAnswer('${q.id}','${o}')">${o}</button>`).join('')}</div>`;
+  }else if(q.type==='choice'){
+    input=`<div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${(q.options||[]).map(o=>`<button class="btn ${val===o?'btn-neon':'btn-ghost'} btn-sm" onclick="setAnswer('${q.id}','${esc(o).replace(/'/g,"&#39;")}')">${esc(o)}</button>`).join('')}</div>`;
+  }else{
+    input=`<input value="${esc(val)}" placeholder="Type your answer…" oninput="CURRENT.answers=CURRENT.answers||{};CURRENT.answers['${q.id}']=this.value;queueAnswerSave()"
+      style="width:100%;font:inherit;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">`;
+  }
+  return `<div style="padding:14px 0;border-top:1px solid var(--line)">${lbl}${input}</div>`;
+}
+function setAnswer(qid,val){
+  CURRENT.answers=CURRENT.answers||{};
+  CURRENT.answers[qid]=val;
+  renderQuestionnaire();
+  saveAnswers();
+}
+let ansT;
+function queueAnswerSave(){clearTimeout(ansT);ansT=setTimeout(saveAnswers,700);}
+async function saveAnswers(){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/answers',{method:'POST',body:JSON.stringify({answers:CURRENT.answers})});
+    CURRENT=d.wedding;
+    toast('Saved');
+  }catch(e){ toast(e.message); }
+}
+
+
+/* ---------------- SONG SEARCH + SAVE ---------------- */
+function openSearch(blockId){
+  activeBlockId=blockId;
+  const b=CURRENT.blocks.find(x=>x.id===blockId);
+  document.getElementById('search-title').textContent='Add to “'+b.name+'”';
+  document.getElementById('search-sub').textContent=b.songs.length+' of '+b.capacity+' added';
+  document.getElementById('search-input').value='';
+  document.getElementById('search-results').innerHTML='';
+  document.getElementById('search-modal').classList.add('show');
+  setTimeout(()=>document.getElementById('search-input').focus(),50);
+}
+function closeSearch(){document.getElementById('search-modal').classList.remove('show');}
+let searchT;
+function debouncedSearch(){clearTimeout(searchT);searchT=setTimeout(runSearch,300);}
+async function runSearch(){
+  const q=val('search-input');const box=document.getElementById('search-results');
+  if(!q){box.innerHTML='';return;}
+  try{
+    const d=await api('/api/search?q='+encodeURIComponent(q)+'&limit=8');
+    box.innerHTML=(d.tracks||[]).map(t=>`
+      <div class="result" onclick='addSong(${JSON.stringify(t).replace(/'/g,"&#39;")})'>
+        <img src="${esc(t.art||'')}" onerror="this.style.visibility='hidden'">
+        <div class="meta" style="flex:1;min-width:0"><div class="t" style="font-weight:600">${esc(t.title)}</div><div class="a muted">${esc(t.artist)}</div></div>
+        <span class="btn btn-neon btn-sm">Add</span>
+      </div>`).join('')||'<p class="muted" style="padding:8px">No results.</p>';
+  }catch(e){ box.innerHTML='<p class="muted" style="padding:8px">Search failed — try again.</p>'; }
+}
+async function addSong(t){
+  const b=CURRENT.blocks.find(x=>x.id===activeBlockId);
+  if(b.songs.length>=b.capacity){toast('That block is full');return;}
+  if(b.songs.some(s=>s.id===t.id)){toast('Already added');return;}
+  b.songs.push({id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art});
+  await saveBlock(b);
+  document.getElementById('search-sub').textContent=b.songs.length+' of '+b.capacity+' added';
+  if(b.songs.length>=b.capacity)closeSearch();
+}
+async function removeSong(blockId,i){
+  const b=CURRENT.blocks.find(x=>x.id===blockId);
+  b.songs.splice(i,1);
+  await saveBlock(b);
+}
+async function saveBlock(b){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/block/'+b.id,{method:'POST',body:JSON.stringify({songs:b.songs})});
+    CURRENT=d.wedding;
+    renderBlocks();
+    toast('Saved');
+  }catch(e){ toast(e.message); }
+}
+
+function val(id){return (document.getElementById(id)||{}).value||'';}
+window.addEventListener('load',boot);
+</script>
+</body>
+</html>
