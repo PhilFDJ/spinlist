@@ -835,11 +835,21 @@ function renderBlocks(){
 function liveEventControls(){
   const w=CURRENT;
   if(!w.liveEventId){
-    return `<button class="btn btn-neon btn-sm" onclick="createLiveEvent()">▸ Open guest requests</button>`;
+    return `<div style="background:var(--paper-2);border-radius:10px;padding:14px">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <label class="field" style="margin:0"><span style="font-size:.8rem">Votes per guest</span>
+          <select id="live-votes" style="font:inherit;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">
+            <option value="1">1 vote</option><option value="3">3 votes</option><option value="5" selected>5 votes</option><option value="10">10 votes</option><option value="999">Unlimited</option>
+          </select>
+        </label>
+        <label class="switch-row" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="live-askname"><span>Ask guests their name</span></label>
+      </div>
+      <button class="btn btn-neon btn-sm" onclick="createLiveEvent()">▸ Open guest requests</button>
+    </div>`;
   }
   const link=location.origin+'/#vote/'+w.liveEventCode;
   return `<div style="background:var(--paper-2);border-radius:10px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-    <div><b>Guest requests are open</b><div class="muted" style="font-size:.84rem">Share this so guests can request &amp; vote.</div></div>
+    <div><b>Guest requests are open</b><div class="muted" style="font-size:.84rem">${w.liveVotesPer>=999?'Unlimited votes':((w.liveVotesPer||5)+' votes')} per guest${w.liveAskName?' · asks for names':''}. Share so guests can request &amp; vote.</div></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="code">${esc(w.liveEventCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyLiveLink('${esc(link)}')">Copy link</button><button class="btn btn-ghost btn-sm" onclick="downloadLiveQR()">⬇ QR code</button></div>
   </div>`;
 }
@@ -852,8 +862,12 @@ async function toggleLiveBlock(blockId){
   }catch(e){ toast(e.message); }
 }
 async function createLiveEvent(){
+  const votesEl=document.getElementById('live-votes');
+  const askEl=document.getElementById('live-askname');
+  const votesPer=votesEl?parseInt(votesEl.value,10)||5:5;
+  const askName=askEl?askEl.checked:false;
   try{
-    const d=await api('/api/weddings/'+CURRENT.id+'/live-event',{method:'POST',body:JSON.stringify({})});
+    const d=await api('/api/weddings/'+CURRENT.id+'/live-event',{method:'POST',body:JSON.stringify({votesPer,askName})});
     CURRENT=d.wedding;renderBlocks();
     toast('Guest requests opened ✓');
   }catch(e){ toast(e.message); }

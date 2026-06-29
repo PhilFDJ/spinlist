@@ -546,6 +546,7 @@ function publicWedding(w, viewerId) {
   if (!w) return null;
   const isHost = viewerId && viewerId === w.host_id;
   const isCouple = viewerId && viewerId === w.couple_id;
+  const liveEv = w.live_event_id ? db.getEvent(w.live_event_id) : null;
   return {
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
     inviteCode: (isHost ? w.invite_code : undefined),   // only the DJ sees the code
@@ -557,6 +558,8 @@ function publicWedding(w, viewerId) {
     liveBlockId: w.live_block_id || null,
     liveEventId: w.live_event_id || null,
     liveEventCode: w.live_event_id || null,   // event id doubles as the join code
+    liveVotesPer: liveEv ? liveEv.votes_per : 5,
+    liveAskName: liveEv ? !!liveEv.ask_name : false,
     canEdit: !!(isHost || isCouple),
     createdAt: w.created_at,
   };
@@ -663,17 +666,18 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
     d.setHours(23, 59, 59, 999);
     liveDeadline = d.getTime();
   }
+  const bb = req.body || {};
   db.createEvent({
     id,
     host_id: req.user.id,
     name: (w.name || 'Wedding') + ' — Live Requests',
     type: 'Wedding',
     host: req.user.name || 'Your DJ',
-    votes_per: 5,
+    votes_per: Math.max(1, Math.min(parseInt(bb.votesPer, 10) || 5, 999)),
     deadline: liveDeadline,
     event_date: w.wedding_date || null,
     locked: false,
-    ask_name: false,
+    ask_name: !!bb.askName,
     ask_nationality: false,
     created_at: Date.now(),
   });
