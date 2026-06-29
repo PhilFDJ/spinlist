@@ -119,14 +119,17 @@ function renderList(){
   if(!DJS.length){el.innerHTML='<p class="empty">No DJs yet. Add your first one above.</p>';return;}
   el.innerHTML=DJS.map(dj=>{
     if(editingId===dj.id){
-      // Inline edit form. Owner's own profile has no password field.
+      // Inline edit form. Owner's own profile + linked DJs have no password field.
+      const noPass=dj.isMe||dj.linked;
+      const hint=dj.linked?'<p class="sub" style="margin:-4px 0 12px">This sets how they appear <b>in your team</b> only — it won\'t change their own account.</p>':'';
       return `<div class="dj-card">
-        <label class="field"><span>DJ name</span><input id="e-name-${dj.id}" value="${esc(dj.name||'')}" maxlength="80"></label>
+        ${hint}
+        <label class="field"><span>DJ name${dj.linked?' (as shown in your team)':''}</span><input id="e-name-${dj.id}" value="${esc(dj.name||'')}" maxlength="80"></label>
         <label class="field"><span>Profile / bio</span><textarea id="e-profile-${dj.id}">${esc(dj.profile||'')}</textarea></label>
-        ${dj.isMe?'':`<label class="field"><span>New password <span style="font-weight:400">(leave blank to keep current)</span></span><input id="e-pass-${dj.id}" type="text" placeholder="Set a new temporary password" minlength="6"></label>`}
+        ${noPass?'':`<label class="field"><span>New password <span style="font-weight:400">(leave blank to keep current)</span></span><input id="e-pass-${dj.id}" type="text" placeholder="Set a new temporary password" minlength="6"></label>`}
         <div class="err" id="e-err-${dj.id}"></div>
         <div class="dj-actions">
-          <button class="btn btn-neon btn-sm" onclick="saveDj('${dj.id}',${!!dj.isMe})">Save</button>
+          <button class="btn btn-neon btn-sm" onclick="saveDj('${dj.id}',${noPass})">Save</button>
           <button class="btn btn-ghost btn-sm" onclick="cancelEdit()">Cancel</button>
         </div>
       </div>`;
@@ -134,12 +137,13 @@ function renderList(){
     const badge=dj.isMe
       ? '<span style="font-size:.7rem;font-weight:800;background:var(--neon);color:#0a1228;padding:3px 9px;border-radius:100px;vertical-align:middle">YOU</span>'
       : (dj.linked?'<span style="font-size:.7rem;font-weight:800;background:var(--plum);color:#fff;padding:3px 9px;border-radius:100px;vertical-align:middle">LINKED</span>':'');
+    const overrideNote=(dj.linked&&dj.hasOverride)?' <span class="muted" style="font-size:.74rem">(custom team profile)</span>':'';
     return `<div class="dj-card">
       <h3>${esc(dj.name||'(no name)')} ${badge}</h3>
-      <div class="dj-meta">${esc(dj.email)}${dj.isMe?' · account owner':(dj.linked?' · their own account':'')}</div>
+      <div class="dj-meta">${esc(dj.email)}${dj.isMe?' · account owner':(dj.linked?' · their own account'+overrideNote:'')}</div>
       ${dj.profile?`<div class="dj-profile">${esc(dj.profile)}</div>`:(dj.isMe?'<div class="dj-profile" style="color:var(--muted);font-style:italic">No profile yet — add one so it shows alongside your team.</div>':'')}
       <div class="dj-actions">
-        ${(dj.isMe||!dj.linked)?`<button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit</button>`:''}
+        <button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit${dj.linked?' team profile':''}</button>
         ${dj.isMe?'':`<button class="btn btn-danger btn-sm" onclick="removeDj('${dj.id}','${esc(dj.name||dj.email)}',${dj.linked})">${dj.linked?'Unlink':'Remove'}</button>`}
       </div>
     </div>`;

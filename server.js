@@ -1066,10 +1066,18 @@ function requireMultiOp(req, res, next) {
   next();
 }
 function publicSubDj(u, ownerId) {
+  const linked = u.role !== 'subdj' && u.id !== ownerId;
+  // For linked DJs, the owner may set a team-specific display name/bio that
+  // overrides the DJ's own account values (without changing their account).
+  const ov = linked ? db.getTeamOverride(ownerId, u.id) : null;
   return {
-    id: u.id, email: u.email, name: u.name || '', profile: u.profile || '',
-    linked: u.role !== 'subdj' && u.id !== ownerId,   // true = their own account, linked in
-    isMe: u.id === ownerId,                            // the owner themselves
+    id: u.id, email: u.email,
+    name: (ov && ov.name) || u.name || '',
+    profile: (ov && ov.profile) || u.profile || '',
+    ownName: u.name || '',                    // their account's own name (for reference)
+    hasOverride: !!ov,
+    linked,
+    isMe: u.id === ownerId,                    // the owner themselves
     createdAt: u.created_at,
   };
 }
@@ -1127,18 +1135,32 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
     return res.json({ dj: publicSubDj(db.getUserById(req.user.id), req.user.id) });
   }
   const dj = db.getUserById(req.params.id);
-  if (!dj || dj.role !== 'subdj' || dj.parent_id !== req.user.id) {
-    return res.status(404).json({ error: 'That is a linked account — you can only manage sub-accounts you created.' });
+  if (!dj) return res.status(404).json({ error: 'DJ not found.' });
+
+  // Managed sub-account created by this owner: edit their account directly.
+  if (dj.role === 'subdj' && dj.parent_id === req.user.id) {
+    const fields = {};
+    if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+    if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+    if (b.password) {
+      if (b.password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+      fields.password_hash = auth.hashPassword(b.password);
+    }
+    db.updateSubDj(dj.id, fields);
+    return res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
   }
-  const fields = {};
-  if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
-  if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
-  if (b.password) {
-    if (b.password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-    fields.password_hash = auth.hashPassword(b.password);
+
+  // Linked independent account: store a team-specific display override only
+  // (their own account name/bio and password are untouched).
+  if (db.isOnTeam(req.user.id, dj.id)) {
+    const fields = {};
+    if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+    if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+    db.setTeamOverride(req.user.id, dj.id, fields);
+    return res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
   }
-  db.updateSubDj(dj.id, fields);
-  res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
+
+  return res.status(404).json({ error: 'DJ not found.' });
 });
 
 // Owner: delete a sub-DJ
