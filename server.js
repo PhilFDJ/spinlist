@@ -418,7 +418,12 @@ app.post('/api/weddings/:id/archive', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
   if (w.host_id !== req.user.id) return res.status(403).json({ error: 'Not your wedding.' });
-  db.setWeddingArchived(w.id, !!(req.body || {}).archived);
+  const archived = !!(req.body || {}).archived;
+  db.setWeddingArchived(w.id, archived);
+  // Keep the linked live-requests event in sync so it doesn't linger on My Events.
+  if (w.live_event_id && db.getEvent(w.live_event_id)) {
+    db.setArchived(w.live_event_id, archived);
+  }
   res.json({ ok: true });
 });
 
