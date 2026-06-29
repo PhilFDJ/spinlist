@@ -379,7 +379,15 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
 
 // --- list my events (host dashboard) ---
 app.get('/api/my-events', auth.requireAuth, (req, res) => {
-  const events = db.listEventsByHost(req.user.id).map(summaryEvent);
+  // Exclude live-requests events that belong to a wedding — those live in the planner.
+  const liveIds = new Set(
+    db.listWeddingsByHost(req.user.id)
+      .map(w => w.live_event_id)
+      .filter(Boolean)
+  );
+  const events = db.listEventsByHost(req.user.id)
+    .filter(e => !liveIds.has(e.id))
+    .map(summaryEvent);
   res.json({ events });
 });
 
