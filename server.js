@@ -713,10 +713,17 @@ app.get('/api/weddings/:id/live-leaderboard', auth.requireAuth, (req, res) => {
   if (!w.live_event_id) return res.json({ songs: [], eventId: null });
   const ev = db.getEvent(w.live_event_id);
   if (!ev) return res.json({ songs: [], eventId: null });
+  const isHost = req.user.id === w.host_id;   // only the DJ sees who requested
   const songs = Object.values(ev.tracks || {})
     .sort((a, b) => b.votes - a.votes)
     .slice(0, 50)
-    .map(t => ({ id: t.id, title: t.title, artist: t.artist, art: t.art || '', votes: t.votes, played: t.played ? 1 : 0 }));
+    .map(t => {
+      const s = { id: t.id, title: t.title, artist: t.artist, art: t.art || '', votes: t.votes, played: t.played ? 1 : 0 };
+      if (isHost) {
+        s.requesters = (t.requesters || []).map(r => r.name).filter(Boolean);
+      }
+      return s;
+    });
   res.json({ songs, eventId: w.live_event_id });
 });
 

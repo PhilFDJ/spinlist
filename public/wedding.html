@@ -940,13 +940,16 @@ async function refreshLiveBoard(){
   try{ songs=(await api('/api/weddings/'+w.id+'/live-leaderboard')).songs||[]; }catch(e){return;}
   const isDJ=ME.role!=='couple';
   if(!songs.length){el.innerHTML='<p class="muted" style="font-size:.85rem">No requests yet — they will appear here as guests vote.</p>';return;}
-  el.innerHTML=songs.map((s,idx)=>`
+  el.innerHTML=songs.map((s,idx)=>{
+    const reqs=(s.requesters&&s.requesters.length)?`<div class="muted" style="font-size:.78rem;margin-top:2px">Requested by ${s.requesters.map(esc).join(', ')}</div>`:'';
+    return `
     <div class="song-row" style="${s.played?'opacity:.55':''}">
       <span style="font-weight:800;color:var(--neon);min-width:24px">${idx+1}</span>
-      <div class="meta"><div class="t">${esc(s.title)}${s.played?' · <span style="color:var(--neon)">played</span>':''}</div><div class="a">${esc(s.artist)} · ${s.votes} vote${s.votes===1?'':'s'}</div></div>
+      <div class="meta"><div class="t">${esc(s.title)}${s.played?' · <span style="color:var(--neon)">played</span>':''}</div><div class="a">${esc(s.artist)} · ${s.votes} vote${s.votes===1?'':'s'}</div>${reqs}</div>
       ${(isDJ&&!DEMO)?`<button class="mini-btn" onclick="copyLiveSong('${esc(s.title).replace(/'/g,"&#39;")}','${esc(s.artist).replace(/'/g,"&#39;")}')">Copy</button>
       <button class="mini-btn ${s.played?'done':''}" onclick="toggleLivePlayed('${esc(s.id)}',${s.played?0:1})">${s.played?'✓ Played':'Mark played'}</button>`:''}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 async function toggleLivePlayed(trackId,want){
   const w=CURRENT;
