@@ -319,6 +319,10 @@ function planFromPrice(sub) {
    EVENT CREATION — gated by plan (server-side enforcement)
    ========================================================= */
 app.post('/api/events', auth.requireAuth, (req, res) => {
+  // Sub-DJs can only run assigned jobs, not create their own.
+  if (req.user.role === 'subdj') {
+    return res.status(403).json({ error: 'Your account can run assigned events but not create new ones.' });
+  }
   // drop expired comp access first
   if (db.expireCompIfNeeded(req.user)) req.user = db.getUserById(req.user.id);
 
@@ -379,16 +383,23 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
 
 // --- list my events (host dashboard) ---
 app.get('/api/my-events', auth.requireAuth, (req, res) => {
-  // Exclude live-requests events that belong to a wedding — those live in the planner.
+  // Sub-DJs (managed accounts) see only the events assigned to them.
+  if (req.user.role === 'subdj') {
+    const events = db.listEventsAssignedTo(req.user.id).map(e => Object.assign(summaryEvent(e), { assignedToMe: true }));
+    return res.json({ events });
+  }
+  // Regular hosts: their own events (minus wedding live-events), PLUS any events
+  // assigned to them by a multi-op owner (read-only, marked assignedToMe).
   const liveIds = new Set(
-    db.listWeddingsByHost(req.user.id)
-      .map(w => w.live_event_id)
-      .filter(Boolean)
+    db.listWeddingsByHost(req.user.id).map(w => w.live_event_id).filter(Boolean)
   );
-  const events = db.listEventsByHost(req.user.id)
+  const own = db.listEventsByHost(req.user.id)
     .filter(e => !liveIds.has(e.id))
     .map(summaryEvent);
-  res.json({ events });
+  const assigned = db.listEventsAssignedTo(req.user.id)
+    .filter(e => e.host_id !== req.user.id)   // not my own (avoid dupes)
+    .map(e => Object.assign(summaryEvent(e), { assignedToMe: true }));
+  res.json({ events: [...own, ...assigned] });
 });
 
 // --- get one event (PUBLIC — guests load this by id) ---
@@ -399,8 +410,8 @@ app.get('/api/events/:id', (req, res) => {
   let branding = null;
   const host = db.getUserById(e.host_id);
   if (host && planHasBranding(host)) branding = db.getBranding(host.id);
-  // The host sees requester names; guests do not.
-  const isHost = req.user && req.user.id === e.host_id;
+  // The host (or assigned sub-DJ) sees requester names; guests do not.
+  const isHost = req.user && canAccessEvent(req.user, e);
   res.json({ event: publicEvent(e, isHost), branding });
 });
 
@@ -463,11 +474,11 @@ app.delete('/api/events/:id', auth.requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// --- mark a song played / unplayed (host only) ---
+// --- mark a song played / unplayed (host or assigned sub-DJ) ---
 app.post('/api/events/:id/played', auth.requireAuth, (req, res) => {
   const e = db.getEvent(req.params.id);
   if (!e) return res.status(404).json({ error: 'Event not found.' });
-  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  if (!canAccessEvent(req.user, e)) return res.status(403).json({ error: 'Not your event.' });
   const b = req.body || {};
   if (!b.trackId) return res.status(400).json({ error: 'trackId required.' });
   const updated = db.setPlayed(e.id, b.trackId, !!b.played);
@@ -532,6 +543,7 @@ function summaryEvent(e) {
     songCount: tracks.length,
     voteCount: tracks.reduce((s, t) => s + t.votes, 0),
     eventDate: e.event_date || null,
+    assignedDj: e.assigned_dj || null,
     createdAt: e.created_at,
   };
 }
@@ -553,6 +565,32 @@ const DEFAULT_WEDDING_BLOCKS = [
 function planHasWeddingPlanner(user) {
   const p = PLANS[user.plan];
   return !!(p && p.weddingPlanner);   // PRO WEDDING tier (and free trial)
+}
+function planIsMultiOp(user) {
+  const p = PLANS[user.plan];
+  return !!(p && p.multiOp);          // PRO WEDDING MULTI-OP
+}
+// True if the user owns this event, or it's assigned to them (sub-DJ or linked DJ).
+function canAccessEvent(user, e) {
+  if (!e) return false;
+  if (e.host_id === user.id) return true;
+  if (e.assigned_dj === user.id) return true;
+  return false;
+}
+// True if the user owns this wedding, the linked couple, or it's assigned to them.
+function canAccessWedding(user, w) {
+  if (!w) return false;
+  if (w.host_id === user.id || w.couple_id === user.id) return true;
+  if (w.assigned_dj === user.id) return true;
+  return false;
+}
+// Sub-DJ inherits planner access from their parent owner (so they can open weddings).
+function userHasPlannerAccess(user) {
+  if (user.role === 'subdj' && user.parent_id) {
+    const parent = db.getUserById(user.parent_id);
+    return !!(parent && planHasWeddingPlanner(parent));
+  }
+  return planHasWeddingPlanner(user);
 }
 
 function publicWedding(w, viewerId) {
@@ -611,12 +649,23 @@ app.post('/api/weddings', auth.requireAuth, (req, res) => {
 
 // DJ: list my weddings
 app.get('/api/weddings', auth.requireAuth, (req, res) => {
-  const list = db.listWeddingsByHost(req.user.id).map(w => ({
+  let source;
+  if (req.user.role === 'subdj') {
+    source = db.listWeddingsAssignedTo(req.user.id);
+  } else {
+    // Own weddings + any assigned to me by a multi-op owner.
+    const own = db.listWeddingsByHost(req.user.id);
+    const assigned = db.listWeddingsAssignedTo(req.user.id).filter(w => w.host_id !== req.user.id);
+    source = [...own, ...assigned];
+  }
+  const list = source.map(w => ({
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
     inviteCode: w.invite_code, coupleJoined: !!w.couple_id,
     blockCount: (w.blocks || []).length,
     filledCount: (w.blocks || []).reduce((s, b) => s + ((b.songs || []).length), 0),
     archived: !!w.archived,
+    assignedDj: w.assigned_dj || null,
+    assignedToMe: w.assigned_dj === req.user.id && w.host_id !== req.user.id,
     createdAt: w.created_at,
   }));
   res.json({ weddings: list });
@@ -628,11 +677,11 @@ app.get('/api/my-weddings', auth.requireAuth, (req, res) => {
   res.json({ weddings: list });
 });
 
-// Get one wedding (DJ or its couple only)
+// Get one wedding (DJ, its couple, or the assigned sub-DJ)
 app.get('/api/weddings/:id', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+  if (!canAccessWedding(req.user, w)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   res.json({ wedding: publicWedding(w, req.user.id) });
@@ -650,27 +699,33 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
-// Mark a song played/unplayed (DJ only — used on the day)
+// Mark a song played/unplayed (DJ or assigned sub-DJ — used on the day)
 app.post('/api/weddings/:id/played', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Only the DJ can mark songs played.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can mark songs played.' });
+  }
   const b = req.body || {};
   const updated = db.setWeddingSongPlayed(w.id, b.blockId, b.songId, !!b.played);
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
-// DJ: create (or return existing) a live-requests event linked to this wedding.
+// DJ (or assigned sub-DJ): create (or return existing) a live-requests event linked to this wedding.
 app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Only the DJ can do this.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can do this.' });
+  }
   // If one already exists and is still valid, just return it.
   if (w.live_event_id && db.getEvent(w.live_event_id)) {
     return res.json({ wedding: publicWedding(w, req.user.id), eventId: w.live_event_id });
   }
   const id = auth.newId().slice(0, 6).toUpperCase();
-  db.recordEvent(id, req.user.id);
+  // The live event is always owned by the wedding's host (the account owner),
+  // so it stays linked correctly even when a sub-DJ opens it.
+  db.recordEvent(id, w.host_id);
   // Keep requests open through the wedding day: deadline = end of the wedding date
   // (23:59). If no date is set, leave it open indefinitely (null).
   let liveDeadline = null;
@@ -682,7 +737,7 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
   const bb = req.body || {};
   db.createEvent({
     id,
-    host_id: req.user.id,
+    host_id: w.host_id,
     name: (w.name || 'Wedding') + ' — Live Requests',
     type: 'Wedding',
     host: req.user.name || 'Your DJ',
@@ -694,6 +749,8 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
     ask_nationality: false,
     created_at: Date.now(),
   });
+  // Assign the live event to whoever is running the wedding, so it shows for them too.
+  if (w.assigned_dj) db.assignEventDj(id, w.assigned_dj);
   db.setWeddingLiveEvent(w.id, id);
   res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id), eventId: id });
 });
@@ -720,19 +777,20 @@ app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
 app.get('/api/weddings/:id/live-leaderboard', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+  if (!canAccessWedding(req.user, w)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   if (!w.live_event_id) return res.json({ songs: [], eventId: null });
   const ev = db.getEvent(w.live_event_id);
   if (!ev) return res.json({ songs: [], eventId: null });
-  const isHost = req.user.id === w.host_id;   // only the DJ sees who requested
+  // The DJ (host) and the assigned sub-DJ see who requested; the couple does not.
+  const seesNames = req.user.id === w.host_id || w.assigned_dj === req.user.id;
   const songs = Object.values(ev.tracks || {})
     .sort((a, b) => b.votes - a.votes)
     .slice(0, 50)
     .map(t => {
       const s = { id: t.id, title: t.title, artist: t.artist, art: t.art || '', votes: t.votes, played: t.played ? 1 : 0 };
-      if (isHost) {
+      if (seesNames) {
         s.requesters = (t.requesters || []).map(r => r.name).filter(Boolean);
       }
       return s;
@@ -906,8 +964,8 @@ app.post('/api/admin/codes', requireAdmin, async (req, res) => {
 
   try {
     if (kind === 'comp') {
-      const plan = ['pro', 'studio', 'prowedding'].includes(body.plan) ? body.plan : null;
-      if (!plan) return res.status(400).json({ error: 'Choose a plan (pro, studio or prowedding) for a comp code.' });
+      const plan = ['pro', 'studio', 'prowedding', 'proweddingmulti'].includes(body.plan) ? body.plan : null;
+      if (!plan) return res.status(400).json({ error: 'Choose a plan for a comp code.' });
       base.plan = plan;
       base.months = body.months ? parseInt(body.months, 10) : null; // null = forever
     } else {
@@ -991,6 +1049,116 @@ app.post('/api/admin/codes/:code/toggle', requireAdmin, (req, res) => {
   if (!c) return res.status(404).json({ error: 'No such code.' });
   db.setCodeActive(c.code, !c.active);
   res.json({ code: db.getCode(c.code) });
+});
+
+// =========================================================
+//   MULTI-OP: sub-DJ accounts (owner manages their team)
+// =========================================================
+function requireMultiOp(req, res, next) {
+  if (!planIsMultiOp(req.user)) return res.status(403).json({ error: 'This is a PRO WEDDING MULTI-OP feature.' });
+  next();
+}
+function publicSubDj(u, ownerId) {
+  return {
+    id: u.id, email: u.email, name: u.name || '', profile: u.profile || '',
+    linked: u.role !== 'subdj',           // true = their own account, linked in
+    createdAt: u.created_at,
+  };
+}
+
+// Owner: list my team (created sub-DJs + linked existing accounts)
+app.get('/api/team', auth.requireAuth, requireMultiOp, (req, res) => {
+  res.json({ djs: db.listTeam(req.user.id).map(u => publicSubDj(u, req.user.id)) });
+});
+
+// Owner: add a DJ — links an existing account by email, or creates a new sub-account.
+app.post('/api/team', auth.requireAuth, requireMultiOp, (req, res) => {
+  const b = req.body || {};
+  const email = (b.email || '').trim().toLowerCase();
+  if (!email || !/.+@.+\..+/.test(email)) return res.status(400).json({ error: 'Enter a valid email.' });
+
+  const existing = db.getUserByEmail(email);
+  if (existing) {
+    // Linking an existing account into the team.
+    if (existing.id === req.user.id) return res.status(400).json({ error: "That's your own account." });
+    if (existing.role === 'couple') return res.status(400).json({ error: 'That email belongs to a wedding-couple login.' });
+    if (existing.role === 'subdj') return res.status(409).json({ error: 'That DJ is already a managed sub-account.' });
+    if (db.isOnTeam(req.user.id, existing.id)) return res.status(409).json({ error: 'That DJ is already on your team.' });
+    db.linkTeamMember(req.user.id, existing.id);
+    return res.json({ dj: publicSubDj(existing, req.user.id), linked: true });
+  }
+
+  // No existing account → create a managed sub-account (needs a temp password).
+  const password = (b.password || '').toString();
+  if (password.length < 6) return res.status(400).json({ error: 'No account exists for that email — set a temporary password (min 6 characters) to create one.' });
+  const dj = db.createUser({
+    id: auth.newId(),
+    email,
+    password_hash: auth.hashPassword(password),
+    name: (b.name || '').slice(0, 80),
+    role: 'subdj',
+    parent_id: req.user.id,
+    profile: (b.profile || '').slice(0, 500),
+    created_at: Date.now(),
+  });
+  res.json({ dj: publicSubDj(dj, req.user.id), linked: false });
+});
+
+// Owner: update a managed sub-DJ (name, profile, optional new password).
+// Linked independent accounts can't be edited by the owner — only unlinked.
+app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
+  const dj = db.getUserById(req.params.id);
+  if (!dj || dj.role !== 'subdj' || dj.parent_id !== req.user.id) {
+    return res.status(404).json({ error: 'That is a linked account — you can only manage sub-accounts you created.' });
+  }
+  const b = req.body || {};
+  const fields = {};
+  if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+  if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+  if (b.password) {
+    if (b.password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    fields.password_hash = auth.hashPassword(b.password);
+  }
+  db.updateSubDj(dj.id, fields);
+  res.json({ dj: publicSubDj(db.getUserById(dj.id)) });
+});
+
+// Owner: delete a sub-DJ
+// Owner: remove a DJ — deletes a managed sub-account, or unlinks a linked account.
+app.delete('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
+  const dj = db.getUserById(req.params.id);
+  if (!dj) return res.status(404).json({ error: 'DJ not found.' });
+  if (dj.role === 'subdj' && dj.parent_id === req.user.id) {
+    db.deleteSubDj(dj.id);   // also unassigns their jobs
+    return res.json({ ok: true, removed: 'deleted' });
+  }
+  if (db.isOnTeam(req.user.id, dj.id)) {
+    // Linked account: unlink and unassign their jobs (but keep their account).
+    db.unlinkTeamMember(req.user.id, dj.id);
+    db.unassignAllFrom(dj.id, req.user.id);
+    return res.json({ ok: true, removed: 'unlinked' });
+  }
+  return res.status(404).json({ error: 'DJ not found.' });
+});
+
+// Owner: assign (or unassign) an event to one of my team DJs
+app.post('/api/events/:id/assign', auth.requireAuth, requireMultiOp, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e || e.host_id !== req.user.id) return res.status(404).json({ error: 'Event not found.' });
+  const djId = (req.body || {}).djId || null;
+  if (djId && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
+  db.assignEventDj(e.id, djId);
+  res.json({ ok: true, assignedDj: djId });
+});
+
+// Owner: assign (or unassign) a wedding to one of my team DJs
+app.post('/api/weddings/:id/assign', auth.requireAuth, requireMultiOp, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w || w.host_id !== req.user.id) return res.status(404).json({ error: 'Wedding not found.' });
+  const djId = (req.body || {}).djId || null;
+  if (djId && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
+  db.assignWeddingDj(w.id, djId);
+  res.json({ ok: true, assignedDj: djId });
 });
 
 // --- user: redeem a code ---
@@ -1305,7 +1473,7 @@ function shapeResults(json) {
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
   const p = PLANS[u.plan];
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: !!(p && p.weddingPlanner) };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj' };
 }
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public')));

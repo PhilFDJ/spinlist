@@ -209,7 +209,7 @@
   <div class="wrap">
     <div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px">
       <div><h2>My Events</h2><p style="color:var(--muted)">All your events — grab a link, open the leaderboard, or lock voting.</p></div>
-      <button class="btn btn-neon" onclick="go('create')" style="padding:10px 20px">+ New event</button>
+      <button class="btn btn-neon" id="new-event-btn" onclick="go('create')" style="padding:10px 20px">+ New event</button>
     </div>
     <div id="events-list"></div>
   </div>
@@ -487,13 +487,19 @@ function setEventsView(v){eventsView=v;renderEvents();}
 async function renderEvents(){
   const el=document.getElementById('events-list');
   if(!ME){el.innerHTML='<div class="empty"><p>Please <a href="/pricing.html" style="color:var(--plum);font-weight:700">sign in</a> to see your events.</p></div>';return;}
+  const isSub=!!ME.isSubDj, isOwner=!!ME.multiOp;
+  // Hide the create button + adjust header for sub-DJs.
+  const newBtn=document.getElementById('new-event-btn');if(newBtn)newBtn.style.display=isSub?'none':'';
   el.innerHTML='<div class="empty">Loading your events…</div>';
   try{
     const r=await fetch('/api/my-events');const d=await r.json();
     const all=d.events||[];
-    // Also pull in wedding plans (if the DJ has the planner). Harmless if none.
     let weddings=[];
     try{ const wr=await fetch('/api/weddings'); if(wr.ok){ weddings=(await wr.json()).weddings||[]; } }catch(e){}
+    // Owners load their team to populate assignment dropdowns.
+    let team=[];
+    if(isOwner){ try{ const tr=await fetch('/api/team'); if(tr.ok)team=(await tr.json()).djs||[]; }catch(e){} }
+    window.__team=team;
 
     const active=all.filter(e=>!e.archived);
     const archived=all.filter(e=>e.archived);
@@ -507,49 +513,66 @@ async function renderEvents(){
       <button class="seg-btn ${eventsView==='archived'?'on':''}" onclick="setEventsView('archived')">Archived (${archived.length+archivedWeddings.length})</button>
     </div>`;
 
-    if(!all.length&&!weddings.length){el.innerHTML='<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';return;}
+    if(!all.length&&!weddings.length){
+      el.innerHTML=isSub
+        ? '<div class="empty"><div class="big">🎧</div><p>No events assigned to you yet. Your manager will assign your jobs here.</p></div>'
+        : '<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';
+      return;
+    }
 
     const fmtD=ts=>new Date(ts).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+    // Build an assignment dropdown for an event/wedding (owners only).
+    function assignSelect(kind,id,current){
+      if(!isOwner||!team.length)return '';
+      const opts=['<option value="">— Unassigned —</option>'].concat(
+        team.map(dj=>`<option value="${dj.id}" ${current===dj.id?'selected':''}>${esc(dj.name||dj.email)}</option>`)
+      ).join('');
+      return `<select onchange="assign('${kind}','${id}',this.value)" style="font:inherit;font-size:.8rem;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--paper-2);color:var(--ink)">${opts}</select>`;
+    }
 
-    // Build unified card objects so events + weddings sort together by date.
     const cards=[];
     list.forEach(e=>cards.push({kind:'event',date:e.eventDate||null,createdAt:e.createdAt||0,html:(()=>{
       const status=e.closed?'<span class="pill-tag" style="background:var(--coral);color:#fff">Locked</span>':'<span class="pill-tag">Open</span>';
+      const readOnly=isSub||e.assignedToMe;   // sub-DJ, or an assigned job in a host's own tab
+      const assignedTag=e.assignedToMe?' <span class="pill-tag" style="background:var(--plum);color:#fff">Assigned to you</span>':'';
       const archiveBtn=e.archived
         ? `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveEvent('${e.id}',false)">Restore</button>`
         : `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveEvent('${e.id}',true)">Archive</button>`;
+      const actions=readOnly
+        ? `<button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>`
+        : `<button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>
+           <button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="openEditModal('${e.id}')">Edit</button>
+           ${archiveBtn}`;
       return `<div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
         <div>
-          <div style="font-weight:800;font-size:1.1rem">${esc(e.name)} ${status}</div>
+          <div style="font-weight:800;font-size:1.1rem">${esc(e.name)} ${status}${assignedTag}</div>
           <div style="color:var(--muted);font-size:.88rem;margin-top:4px">${e.eventDate?('📅 '+fmtD(e.eventDate)+' · '):''}${esc(e.type)} · ${e.voteCount} votes · ${e.songCount} songs</div>
+          ${(isOwner&&team.length&&!e.assignedToMe)?`<div style="margin-top:8px">${assignSelect('event',e.id,e.assignedDj)}</div>`:''}
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>
-          <button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="openEditModal('${e.id}')">Edit</button>
-          ${archiveBtn}
-        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${actions}</div>
       </div>`;
     })()}));
 
-    // Weddings respect the active/archived toggle, same as events.
     wlist.forEach(w=>{
+      const readOnly=isSub||w.assignedToMe;
+      const assignedTag=w.assignedToMe?' <span class="pill-tag" style="background:var(--plum);color:#fff">Assigned to you</span>':'';
       const wArchiveBtn=w.archived
         ? `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveWedding('${w.id}',false)">Restore</button>`
         : `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveWedding('${w.id}',true)">Archive</button>`;
+      const wActions=readOnly
+        ? `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>`
+        : `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>${wArchiveBtn}`;
       cards.push({kind:'wedding',date:w.weddingDate||null,createdAt:w.createdAt||0,html:`
         <div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
           <div>
-            <div style="font-weight:800;font-size:1.1rem">${esc(w.name)} <span class="pill-tag" style="background:var(--plum);color:#fff">Wedding</span></div>
+            <div style="font-weight:800;font-size:1.1rem">${esc(w.name)} <span class="pill-tag" style="background:var(--plum);color:#fff">Wedding</span>${assignedTag}</div>
             <div style="color:var(--muted);font-size:.88rem;margin-top:4px">📅 ${w.weddingDate?fmtD(w.weddingDate):'No date set'}${w.coupleNames?(' · '+esc(w.coupleNames)):''} · ${w.filledCount} songs · ${w.coupleJoined?'couple joined':'awaiting couple'}</div>
+            ${(isOwner&&team.length&&!w.assignedToMe)?`<div style="margin-top:8px">${assignSelect('wedding',w.id,w.assignedDj)}</div>`:''}
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>
-            ${wArchiveBtn}
-          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">${wActions}</div>
         </div>`});
     });
 
-    // Sort: dated soonest-first, undated last (newest created first among undated).
     cards.sort((a,b)=>{
       if(a.date&&b.date)return a.date-b.date;
       if(a.date&&!b.date)return -1;
@@ -560,6 +583,15 @@ async function renderEvents(){
     const body=cards.length?cards.map(c=>c.html).join(''):`<div class="empty">No ${eventsView} events.</div>`;
     el.innerHTML=toggle+body;
   }catch(err){ el.innerHTML='<div class="empty">Could not load events.</div>'; }
+}
+async function assign(kind,id,djId){
+  const path=kind==='wedding'?('/api/weddings/'+id+'/assign'):('/api/events/'+id+'/assign');
+  try{
+    const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({djId:djId||null})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not assign');return;}
+    toast(djId?'Assigned ✓':'Unassigned');
+  }catch(e){ toast('Network error'); }
 }
 
 // Load one of my events into the host dashboard.
@@ -1153,7 +1185,8 @@ function renderAcctNav(){
   const el=document.getElementById('acct-nav');if(!el)return;
   const contact='<a href="/contact.html" style="color:var(--ink);text-decoration:none">Contact</a>';
   const wed=(ME&&ME.weddingPlanner)?'<a href="/wedding.html" style="color:var(--ink);text-decoration:none">Wedding Planner</a> ':'';
-  if(ME){el.innerHTML=`${wed}${contact} <a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(ME.planName||planLabel(ME.plan))}</a>`;}
+  const team=(ME&&ME.multiOp)?'<a href="/team.html" style="color:var(--ink);text-decoration:none">My DJs</a> ':'';
+  if(ME){el.innerHTML=`${team}${wed}${contact} <a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(ME.planName||planLabel(ME.plan))}</a>`;}
   else{el.innerHTML=`${contact} <a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
 }
 
@@ -1162,6 +1195,11 @@ window.addEventListener('load',async ()=>{
   // Wedding-couple accounts belong in the wedding planner, not the DJ app.
   if(ME&&ME.role==='couple'&&!location.hash.startsWith('#vote/')){
     location.href='/wedding.html';return;
+  }
+  // Sub-DJs can't create events — hide the Create tab and send them to My Events.
+  if(ME&&ME.isSubDj){
+    const cb=document.querySelector('#main-nav button[data-v="create"]');if(cb)cb.style.display='none';
+    if(!location.hash.startsWith('#vote/')){ go('events'); }
   }
   if(location.hash.startsWith('#vote/')){
     guestMode=true;
