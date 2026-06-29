@@ -184,10 +184,14 @@
         </label>
       </div>
       <div class="grid-2">
+        <label class="field"><span>Event date</span><input id="f-date" type="date"></label>
         <label class="field"><span>Vote deadline</span><input id="f-deadline" type="datetime-local"></label>
+      </div>
+      <div class="grid-2">
         <label class="field"><span>Votes per guest</span>
           <select id="f-votes"><option value="1">1 vote</option><option value="3">3 votes</option><option value="5" selected>5 votes</option><option value="10">10 votes</option><option value="999">Unlimited</option></select>
         </label>
+        <div></div>
       </div>
       <label class="field"><span>Hosted by</span><input id="f-host" placeholder="DJ Marco / The happy couple"></label>
       <div style="margin:6px 0 18px">
@@ -347,6 +351,10 @@
       <label class="field"><span>Hosted by</span><input id="ed-host" maxlength="80"></label>
       <label class="field"><span>Vote deadline</span><input id="ed-deadline" type="datetime-local"></label>
     </div>
+    <div class="grid-2">
+      <label class="field"><span>Event date</span><input id="ed-date" type="date"></label>
+      <div></div>
+    </div>
     <div style="margin:14px 0 18px">
       <label class="switch-row"><input type="checkbox" id="ed-ask-name"><span>Ask guests their <b>name</b></span></label>
       <label class="switch-row"><input type="checkbox" id="ed-ask-nat"><span>Ask guests their <b>nationality</b></span></label>
@@ -432,10 +440,12 @@ async function createSpinlistEvent(){
   if(!deadline){const d=new Date(Date.now()+1000*60*60*3);deadline=d.toISOString().slice(0,16);}
   const askName=document.getElementById('f-ask-name').checked;
   const askNationality=document.getElementById('f-ask-nat').checked;
+  const dateStr=document.getElementById('f-date').value;
+  const eventDate=dateStr?new Date(dateStr).getTime():null;
 
   // Server checks the plan limit and issues the event id.
   let res;
-  try{ res=await fetch('/api/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type,host,votesPer:votes,deadline:new Date(deadline).getTime(),askName,askNationality})}); }
+  try{ res=await fetch('/api/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type,host,votesPer:votes,deadline:new Date(deadline).getTime(),eventDate,askName,askNationality})}); }
   catch(e){ toast('Network error — try again'); return; }
   const data=await res.json();
   if(!res.ok){
@@ -496,7 +506,11 @@ async function renderEvents(){
 
     if(!all.length&&!weddings.length){el.innerHTML='<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';return;}
 
-    const rows=list.length?list.map(e=>{
+    const fmtD=ts=>new Date(ts).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+
+    // Build unified card objects so events + weddings sort together by date.
+    const cards=[];
+    list.forEach(e=>cards.push({kind:'event',date:e.eventDate||null,createdAt:e.createdAt||0,html:(()=>{
       const status=e.closed?'<span class="pill-tag" style="background:var(--coral);color:#fff">Locked</span>':'<span class="pill-tag">Open</span>';
       const archiveBtn=e.archived
         ? `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveEvent('${e.id}',false)">Restore</button>`
@@ -504,7 +518,7 @@ async function renderEvents(){
       return `<div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
         <div>
           <div style="font-weight:800;font-size:1.1rem">${esc(e.name)} ${status}</div>
-          <div style="color:var(--muted);font-size:.88rem;margin-top:4px">${esc(e.type)} · ${e.voteCount} votes · ${e.songCount} songs</div>
+          <div style="color:var(--muted);font-size:.88rem;margin-top:4px">${e.eventDate?('📅 '+fmtD(e.eventDate)+' · '):''}${esc(e.type)} · ${e.voteCount} votes · ${e.songCount} songs</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>
@@ -512,23 +526,32 @@ async function renderEvents(){
           ${archiveBtn}
         </div>
       </div>`;
-    }).join(''):(weddings.length&&eventsView==='active'?'':`<div class="empty">No ${eventsView} events.</div>`);
+    })()}));
 
-    // Wedding plans only show in the 'active' view (they aren't archivable here).
-    const weddingRows=(eventsView==='active'&&weddings.length)?weddings.map(w=>{
-      const dateStr=w.weddingDate?new Date(w.weddingDate).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'No date set';
-      return `<div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
-        <div>
-          <div style="font-weight:800;font-size:1.1rem">${esc(w.name)} <span class="pill-tag" style="background:var(--plum);color:#fff">Wedding</span></div>
-          <div style="color:var(--muted);font-size:.88rem;margin-top:4px">📅 ${dateStr}${w.coupleNames?(' · '+esc(w.coupleNames)):''} · ${w.filledCount} songs · ${w.coupleJoined?'couple joined':'awaiting couple'}</div>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>
-        </div>
-      </div>`;
-    }).join(''):'';
+    // Weddings only appear in the 'active' view (managed/archived in the planner).
+    if(eventsView==='active'){
+      weddings.forEach(w=>cards.push({kind:'wedding',date:w.weddingDate||null,createdAt:w.createdAt||0,html:`
+        <div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:800;font-size:1.1rem">${esc(w.name)} <span class="pill-tag" style="background:var(--plum);color:#fff">Wedding</span></div>
+            <div style="color:var(--muted);font-size:.88rem;margin-top:4px">📅 ${w.weddingDate?fmtD(w.weddingDate):'No date set'}${w.coupleNames?(' · '+esc(w.coupleNames)):''} · ${w.filledCount} songs · ${w.coupleJoined?'couple joined':'awaiting couple'}</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>
+          </div>
+        </div>`}));
+    }
 
-    el.innerHTML=toggle+rows+weddingRows;
+    // Sort: dated soonest-first, undated last (newest created first among undated).
+    cards.sort((a,b)=>{
+      if(a.date&&b.date)return a.date-b.date;
+      if(a.date&&!b.date)return -1;
+      if(!a.date&&b.date)return 1;
+      return (b.createdAt||0)-(a.createdAt||0);
+    });
+
+    const body=cards.length?cards.map(c=>c.html).join(''):`<div class="empty">No ${eventsView} events.</div>`;
+    el.innerHTML=toggle+body;
   }catch(err){ el.innerHTML='<div class="empty">Could not load events.</div>'; }
 }
 
@@ -574,6 +597,7 @@ async function openEditModal(id){
     if(ev.deadline){const d=new Date(ev.deadline);const pad=n=>String(n).padStart(2,'0');
       document.getElementById('ed-deadline').value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;}
     else document.getElementById('ed-deadline').value='';
+    document.getElementById('ed-date').value=ev.eventDate?new Date(ev.eventDate).toISOString().slice(0,10):'';
     document.getElementById('ed-ask-name').checked=!!ev.askName;
     document.getElementById('ed-ask-nat').checked=!!ev.askNationality;
     document.getElementById('edit-modal').style.display='flex';
@@ -589,6 +613,7 @@ async function saveEventEdits(){
     host:document.getElementById('ed-host').value.trim()||'Your host',
     votesPer:+document.getElementById('ed-votes').value,
     deadline:dl?new Date(dl).getTime():null,
+    eventDate:(()=>{const v=document.getElementById('ed-date').value;return v?new Date(v).getTime():null;})(),
     askName:document.getElementById('ed-ask-name').checked,
     askNationality:document.getElementById('ed-ask-nat').checked,
   };
