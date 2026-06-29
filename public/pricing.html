@@ -118,7 +118,7 @@ function renderNav(){
   else{el.innerHTML=`<a href="#" onclick="openAuth('login');return false">Log in</a> <a class="btn btn-primary" style="padding:8px 16px" href="#" onclick="openAuth('signup');return false">Sign up</a>`;}
 }
 function renderPlans(){
-  const order=['pro','studio'];   // free tier removed; these are the only purchasable plans
+  const order=['pro','studio','prowedding'];   // purchasable plans, cheapest first
   document.getElementById('plan-grid').innerHTML=order.map(id=>{
     const p=PLANS[id];if(!p)return '';const current=ME&&ME.plan===id;
     const cta = current?'Current plan':'Choose '+p.name;

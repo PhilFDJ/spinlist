@@ -552,7 +552,7 @@ const DEFAULT_WEDDING_BLOCKS = [
 // Which plans can create wedding plans. (Available to PRO for now.)
 function planHasWeddingPlanner(user) {
   const p = PLANS[user.plan];
-  return !!(p && (p.spotifyExport || p.id === 'studio'));   // PRO tier
+  return !!(p && p.weddingPlanner);   // PRO WEDDING tier (and free trial)
 }
 
 function publicWedding(w, viewerId) {
@@ -1303,7 +1303,8 @@ function shapeResults(json) {
 
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, sub_status: u.sub_status, role: u.role || 'host' };
+  const p = PLANS[u.plan];
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: !!(p && p.weddingPlanner) };
 }
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public')));
