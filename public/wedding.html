@@ -250,30 +250,51 @@ async function renderCoupleHome(){
 }
 
 /* ---------------- DJ HOME ---------------- */
+let djShowArchived=false;
 async function renderDJHome(){
   const root=document.getElementById('root');
   let weddings=[];
   try{ weddings=(await api('/api/weddings')).weddings; }catch(e){}
+  const active=weddings.filter(w=>!w.archived);
+  const archived=weddings.filter(w=>w.archived);
+  const shown=djShowArchived?archived:active;
   root.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:36px;flex-wrap:wrap;gap:12px">
       <div><p class="eyebrow">Wedding planner</p><h1 class="display" style="margin-top:6px">Your weddings</h1></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost" onclick="openBlockTemplates()">Music templates</button><button class="btn btn-ghost" onclick="openTemplates()">Questionnaire templates</button><button class="btn btn-neon" onclick="openCreate()">+ New wedding</button></div>
     </div>
     <p class="lead">Create a song plan, share the code with the couple, and they'll fill in their choices before the big day.</p>
+    ${archived.length?`<div style="display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;margin:6px 0 14px;width:fit-content">
+      <button class="seg-btn ${!djShowArchived?'on':''}" onclick="djShowArchived=false;renderDJHome()">Active (${active.length})</button>
+      <button class="seg-btn ${djShowArchived?'on':''}" onclick="djShowArchived=true;renderDJHome()">Archived (${archived.length})</button>
+    </div>`:''}
     <div id="dj-list" style="margin-top:8px">
-      ${weddings.length?weddings.map(djCard).join(''):'<div class="panel"><p class="muted">No weddings yet. Create your first one.</p></div>'}
+      ${shown.length?shown.map(djCard).join(''):'<div class="panel"><p class="muted">'+(djShowArchived?'No archived weddings.':'No weddings yet. Create your first one.')+'</p></div>'}
     </div>`;
 }
 function djCard(w){
   const total=w.blockCount||0;
   const dateStr=w.weddingDate?fmtWeddingDate(w.weddingDate):'No date set';
+  const archiveBtn=w.archived
+    ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();archiveWeddingDJ('${w.id}',false)">Restore</button>`
+    : `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();archiveWeddingDJ('${w.id}',true)">Archive</button>`;
   return `<div class="wcard" onclick="openWedding('${w.id}')">
     <div>
       <b>${esc(w.name)}</b> ${w.coupleJoined?'<span class="pill done">Couple joined</span>':'<span class="pill">Awaiting couple</span>'}
       <div class="muted">📅 ${dateStr} · ${esc(w.coupleNames||'')} · ${w.filledCount} songs · code <b>${esc(w.inviteCode)}</b></div>
     </div>
-    <span class="btn btn-ghost btn-sm">Open ▸</span>
+    <div style="display:flex;gap:8px;align-items:center" onclick="event.stopPropagation()">
+      ${archiveBtn}
+      <span class="btn btn-ghost btn-sm" onclick="openWedding('${w.id}')">Open ▸</span>
+    </div>
   </div>`;
+}
+async function archiveWeddingDJ(id,archived){
+  try{
+    await api('/api/weddings/'+id+'/archive',{method:'POST',body:JSON.stringify({archived})});
+    toast(archived?'Wedding archived':'Wedding restored');
+    renderDJHome();
+  }catch(e){ toast(e.message); }
 }
 function fmtWeddingDate(ts){
   try{ return new Date(ts).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}); }
