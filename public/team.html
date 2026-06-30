@@ -58,7 +58,10 @@ let ME=null, DJS=[];
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function api(path,opts){
-  const r=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opts));
+  opts=opts||{};
+  const isForm=opts.body instanceof FormData;
+  const headers=isForm?{}:{'Content-Type':'application/json'};
+  const r=await fetch(path,Object.assign({headers},opts));
   const d=await r.json().catch(()=>({}));
   if(!r.ok) throw new Error(d.error||'Something went wrong');
   return d;
@@ -126,6 +129,8 @@ function renderList(){
         ${hint}
         <label class="field"><span>DJ name${dj.linked?' (as shown in your team)':''}</span><input id="e-name-${dj.id}" value="${esc(dj.name||'')}" maxlength="80"></label>
         <label class="field"><span>Profile / bio</span><textarea id="e-profile-${dj.id}">${esc(dj.profile||'')}</textarea></label>
+        <label class="field"><span>Website link (optional)</span><input id="e-web-${dj.id}" value="${esc(dj.website||'')}" placeholder="https://…" maxlength="200"></label>
+        <label class="field"><span>Photo (optional)</span>${dj.photo?`<div style="margin-bottom:8px"><img src="${esc(dj.photo)}" alt="" style="width:64px;height:64px;border-radius:12px;object-fit:cover"></div>`:''}<input id="e-photo-${dj.id}" type="file" accept="image/*" style="font-size:.85rem"></label>
         ${noPass?'':`<label class="field"><span>New password <span style="font-weight:400">(leave blank to keep current)</span></span><input id="e-pass-${dj.id}" type="text" placeholder="Set a new temporary password" minlength="6"></label>`}
         <div class="err" id="e-err-${dj.id}"></div>
         <div class="dj-actions">
@@ -139,9 +144,15 @@ function renderList(){
       : (dj.linked?'<span style="font-size:.7rem;font-weight:800;background:var(--plum);color:#fff;padding:3px 9px;border-radius:100px;vertical-align:middle">LINKED</span>':'');
     const overrideNote=(dj.linked&&dj.hasOverride)?' <span class="muted" style="font-size:.74rem">(custom team profile)</span>':'';
     return `<div class="dj-card">
-      <h3>${esc(dj.name||'(no name)')} ${badge}</h3>
-      <div class="dj-meta">${esc(dj.email)}${dj.isMe?' · account owner':(dj.linked?' · their own account'+overrideNote:'')}</div>
-      ${dj.profile?`<div class="dj-profile">${esc(dj.profile)}</div>`:(dj.isMe?'<div class="dj-profile" style="color:var(--muted);font-style:italic">No profile yet — add one so it shows alongside your team.</div>':'')}
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        ${dj.photo?`<img src="${esc(dj.photo)}" alt="" style="width:60px;height:60px;border-radius:12px;object-fit:cover;flex-shrink:0">`:''}
+        <div style="flex:1">
+          <h3>${esc(dj.name||'(no name)')} ${badge}</h3>
+          <div class="dj-meta">${esc(dj.email)}${dj.isMe?' · account owner':(dj.linked?' · their own account'+overrideNote:'')}</div>
+          ${dj.profile?`<div class="dj-profile">${esc(dj.profile)}</div>`:(dj.isMe?'<div class="dj-profile" style="color:var(--muted);font-style:italic">No profile yet — add one so it shows alongside your team.</div>':'')}
+          ${dj.website?`<div style="margin-top:6px"><a href="${esc(dj.website)}" target="_blank" rel="noopener" style="color:var(--plum);font-size:.86rem">${esc(dj.website)}</a></div>`:''}
+        </div>
+      </div>
       <div class="dj-actions">
         <button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit${dj.linked?' team profile':''}</button>
         ${dj.isMe?'':`<button class="btn btn-danger btn-sm" onclick="removeDj('${dj.id}','${esc(dj.name||dj.email)}',${dj.linked})">${dj.linked?'Unlink':'Remove'}</button>`}
@@ -155,14 +166,19 @@ function cancelEdit(){ editingId=null; renderList(); }
 async function saveDj(id,isMe){
   const name=document.getElementById('e-name-'+id).value.trim();
   const profile=document.getElementById('e-profile-'+id).value.trim();
+  const website=document.getElementById('e-web-'+id).value.trim();
+  const photoEl=document.getElementById('e-photo-'+id);
   const passEl=document.getElementById('e-pass-'+id);
   const password=passEl?passEl.value:'';
   const err=document.getElementById('e-err-'+id);err.textContent='';
   if(password&&password.length<6){err.textContent='Password must be at least 6 characters (or leave blank).';return;}
-  const body={name,profile};
-  if(password)body.password=password;
+  if(website&&!/^https?:\/\//i.test(website)){err.textContent='Website must start with http:// or https://';return;}
+  const fd=new FormData();
+  fd.append('name',name);fd.append('profile',profile);fd.append('website',website);
+  if(password)fd.append('password',password);
+  if(photoEl&&photoEl.files&&photoEl.files[0])fd.append('photo',photoEl.files[0]);
   try{
-    await api('/api/team/'+id,{method:'POST',body:JSON.stringify(body)});
+    await api('/api/team/'+id,{method:'POST',body:fd});
     toast(password?'Saved · password updated ✓':'Saved ✓');
     editingId=null;
     loadTeam();

@@ -524,6 +524,7 @@ function publicEvent(e, hostView) {
     id: e.id, name: e.name, type: e.type, host: e.host,
     votesPer: e.votes_per, deadline: e.deadline, eventDate: e.event_date || null,
     locked: !!e.locked, hostId: e.host_id,
+    dj: e.assigned_dj ? db.djProfileFor(e.host_id, e.assigned_dj) : null,
     askName: !!e.ask_name, askNationality: !!e.ask_nationality,
     tracks: Object.values(e.tracks || {})
       .map(t => {
@@ -618,6 +619,7 @@ function publicWedding(w, viewerId) {
     liveVotesPer: liveEv ? liveEv.votes_per : 5,
     liveAskName: liveEv ? !!liveEv.ask_name : false,
     assignedDj: w.assigned_dj || null,
+    dj: db.djProfileFor(w.host_id, w.assigned_dj),
     canEdit: !!(isHost || isCouple),
     createdAt: w.created_at,
   };
@@ -1074,6 +1076,8 @@ function publicSubDj(u, ownerId) {
     id: u.id, email: u.email,
     name: (ov && ov.name) || u.name || '',
     profile: (ov && ov.profile) || u.profile || '',
+    photo: (ov && ov.dj_photo) || u.dj_photo || null,
+    website: (ov && ov.dj_website) || u.dj_website || '',
     ownName: u.name || '',                    // their account's own name (for reference)
     hasOverride: !!ov,
     linked,
@@ -1122,45 +1126,60 @@ app.post('/api/team', auth.requireAuth, requireMultiOp, (req, res) => {
   res.json({ dj: publicSubDj(dj, req.user.id), linked: false });
 });
 
-// Owner: update a managed sub-DJ (name, profile, optional new password),
-// or the owner's own DJ profile (name + bio).
+// Owner: update a DJ profile (sub-account, own profile, or linked-DJ team override).
+// Accepts an optional photo upload + website link.
 app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
-  const b = req.body || {};
-  // Owner editing their own profile.
-  if (req.params.id === req.user.id) {
-    const fields = {};
-    if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
-    if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
-    db.updateUserProfile(req.user.id, fields);
-    return res.json({ dj: publicSubDj(db.getUserById(req.user.id), req.user.id) });
-  }
-  const dj = db.getUserById(req.params.id);
-  if (!dj) return res.status(404).json({ error: 'DJ not found.' });
+  upload.single('photo')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    const b = req.body || {};
+    const website = (b.website || '').trim().slice(0, 200);
+    const photoPath = req.file ? '/uploads/' + req.file.filename : undefined;
 
-  // Managed sub-account created by this owner: edit their account directly.
-  if (dj.role === 'subdj' && dj.parent_id === req.user.id) {
-    const fields = {};
-    if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
-    if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
-    if (b.password) {
-      if (b.password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-      fields.password_hash = auth.hashPassword(b.password);
+    // Owner editing their own profile.
+    if (req.params.id === req.user.id) {
+      const fields = {};
+      if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+      if (b.website !== undefined) fields.dj_website = website;
+      if (photoPath) { if (req.user.dj_photo) safeUnlink(req.user.dj_photo); fields.dj_photo = photoPath; }
+      db.updateUserProfile(req.user.id, fields);
+      return res.json({ dj: publicSubDj(db.getUserById(req.user.id), req.user.id) });
     }
-    db.updateSubDj(dj.id, fields);
-    return res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
-  }
+    const dj = db.getUserById(req.params.id);
+    if (!dj) return res.status(404).json({ error: 'DJ not found.' });
 
-  // Linked independent account: store a team-specific display override only
-  // (their own account name/bio and password are untouched).
-  if (db.isOnTeam(req.user.id, dj.id)) {
-    const fields = {};
-    if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
-    if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
-    db.setTeamOverride(req.user.id, dj.id, fields);
-    return res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
-  }
+    // Managed sub-account created by this owner: edit their account directly.
+    if (dj.role === 'subdj' && dj.parent_id === req.user.id) {
+      const fields = {};
+      if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+      if (b.website !== undefined) fields.dj_website = website;
+      if (photoPath) { if (dj.dj_photo) safeUnlink(dj.dj_photo); fields.dj_photo = photoPath; }
+      if (b.password) {
+        if (b.password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+        fields.password_hash = auth.hashPassword(b.password);
+      }
+      db.updateSubDj(dj.id, fields);
+      return res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
+    }
 
-  return res.status(404).json({ error: 'DJ not found.' });
+    // Linked independent account: store a team-specific display override only.
+    if (db.isOnTeam(req.user.id, dj.id)) {
+      const fields = {};
+      if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+      if (b.website !== undefined) fields.dj_website = website;
+      if (photoPath) {
+        const prev = db.getTeamOverride(req.user.id, dj.id);
+        if (prev && prev.dj_photo) safeUnlink(prev.dj_photo);
+        fields.dj_photo = photoPath;
+      }
+      db.setTeamOverride(req.user.id, dj.id, fields);
+      return res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
+    }
+
+    return res.status(404).json({ error: 'DJ not found.' });
+  });
 });
 
 // Owner: delete a sub-DJ

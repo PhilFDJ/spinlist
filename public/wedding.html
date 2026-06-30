@@ -767,6 +767,15 @@ function renderPlan(){
       <div><b>Assign a DJ</b><div class="muted">Give one of your team this wedding to run. They'll see it in their events.</div></div>
       <div id="assign-control" class="muted" style="font-size:.9rem">Loading team…</div>
     </div>`:''}
+    ${w.dj&&(w.dj.name||w.dj.profile||w.dj.photo)?`<div class="panel" style="display:flex;gap:16px;align-items:flex-start">
+      ${w.dj.photo?`<img src="${esc(w.dj.photo)}" alt="" style="width:72px;height:72px;border-radius:14px;object-fit:cover;flex-shrink:0">`:''}
+      <div style="flex:1">
+        <div class="muted" style="font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;font-weight:700">Your DJ</div>
+        <div style="font-weight:800;font-size:1.15rem;margin-top:2px">${esc(w.dj.name||'')}</div>
+        ${w.dj.profile?`<div style="color:var(--ink-2);margin-top:6px;white-space:pre-wrap">${esc(w.dj.profile)}</div>`:''}
+        ${w.dj.website?`<div style="margin-top:8px"><a href="${esc(w.dj.website)}" target="_blank" rel="noopener" style="color:var(--neon);font-weight:700;font-size:.9rem">Visit website →</a></div>`:''}
+      </div>
+    </div>`:''}
 
     <div class="tabs">
       <button class="tab" data-tab="music" onclick="switchTab('music')">🎵 Music</button>

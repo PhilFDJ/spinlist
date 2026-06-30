@@ -272,6 +272,7 @@
     <div id="guest-content" style="display:none">
       <div id="brand-banner" style="display:none;align-items:center;gap:14px;padding:14px 18px;border:1px solid var(--line);border-radius:14px;margin-bottom:8px;background:var(--surface)"></div>
       <div class="section-head"><p class="eyebrow" id="g-type">Wedding</p><h2 id="g-name">Event</h2><p style="color:var(--muted)" id="g-host"></p></div>
+      <div id="g-dj" style="display:none"></div>
       <div id="g-closed" class="closed-banner" style="display:none">🔒 Voting has closed — thanks for picking the tunes!</div>
       <div class="api-warn" id="api-warn">⚠ Couldn't reach the Spotify search service. Make sure the backend is running (<code>npm start</code>) and your credentials are set.</div>
       <div class="role-note" id="g-quota">You have <b id="g-left">5</b> votes left.</div>
@@ -1074,6 +1075,24 @@ function renderGuest(){
   document.getElementById('g-name').textContent=EVENT.name;
   document.getElementById('g-type').textContent=EVENT.type;
   document.getElementById('g-host').textContent='Hosted by '+EVENT.host;
+  // "Your DJ" card (only when the event has an assigned DJ with a profile).
+  const djEl=document.getElementById('g-dj');
+  if(djEl){
+    const dj=EVENT.dj;
+    if(dj&&(dj.name||dj.profile||dj.photo)){
+      djEl.style.display='block';
+      djEl.style.cssText='display:block;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;background:var(--surface)';
+      djEl.innerHTML=`<div style="display:flex;gap:14px;align-items:flex-start">
+        ${dj.photo?`<img src="${esc(dj.photo)}" alt="" style="width:64px;height:64px;border-radius:12px;object-fit:cover;flex-shrink:0">`:''}
+        <div style="flex:1">
+          <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;font-weight:700;color:var(--muted)">Your DJ</div>
+          <div style="font-weight:800;font-size:1.08rem;margin-top:2px">${esc(dj.name||'')}</div>
+          ${dj.profile?`<div style="color:var(--muted);margin-top:5px;font-size:.9rem;white-space:pre-wrap">${esc(dj.profile)}</div>`:''}
+          ${dj.website?`<div style="margin-top:7px"><a href="${esc(dj.website)}" target="_blank" rel="noopener" style="color:var(--plum);font-weight:700;font-size:.86rem">Visit website →</a></div>`:''}
+        </div>
+      </div>`;
+    } else { djEl.style.display='none'; }
+  }
   renderBranding();
   const closed=EVENT.closed||EVENT.locked||(EVENT.deadline&&Date.now()>EVENT.deadline);
   document.getElementById('g-closed').style.display=closed?'flex':'none';
@@ -1296,6 +1315,7 @@ async function loadGuestEvent(eventId){
       votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
       askName:ev.askName,askNationality:ev.askNationality,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),
+      dj:ev.dj||null,
       tracks:{},branding:d.branding||null};
     (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
   }catch(e){ EVENT=null; }
