@@ -468,7 +468,7 @@ async function createSpinlistEvent(){
   EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
     votesPer:ev.votesPer,deadline:ev.deadline,closed:ev.locked,locked:ev.locked,
     tracks:{},maxGuests:data.maxGuests,
-    branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
+    branding:(ME&&ME.branding&&window.__myBranding)?window.__myBranding:null};
   myVotes={};toast('Event created 🎉');go('dashboard');
  }catch(err){
   toast('Error: '+(err&&err.message?err.message:err));
@@ -606,7 +606,7 @@ async function openEvent(id){
     EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
       votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),tracks:{},
-      branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
+      branding:(ME&&ME.branding&&window.__myBranding)?window.__myBranding:null};
     (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
     myVotes={};go('dashboard');
   }catch(e){ toast('Network error'); }
