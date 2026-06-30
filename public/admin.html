@@ -87,6 +87,7 @@ async function boot(){
           <div class="field"><label>Plan granted</label><select id="c-plan"><option value="pro">BASIC</option><option value="studio">PRO</option><option value="prowedding">PRO WEDDING</option><option value="proweddingmulti">PRO WEDDING MULTI-OP</option></select></div>
           <div class="field"><label>Duration (months)</label><input id="c-months" type="number" min="1" placeholder="blank = forever"></div>
         </div>
+        <div class="field" style="margin-top:8px"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="c-spotify"> Also grant Spotify export (permanent)</label></div>
       </div>
 
       <div id="discount-fields" style="display:none">
@@ -144,6 +145,7 @@ async function createCode(){
   if(KIND==='comp'){
     body.plan=document.getElementById('c-plan').value;
     body.months=document.getElementById('c-months').value||null;
+    body.grantsSpotify=document.getElementById('c-spotify').checked;
   }else{
     body.discountKind=document.getElementById('d-kind').value;
     body.discountVal=document.getElementById('d-val').value;
@@ -164,7 +166,7 @@ async function loadCodes(){
   el.innerHTML=`<table><thead><tr><th>Code</th><th>Type</th><th>Grants</th><th>Uses</th><th>Expires</th><th>Note</th><th></th></tr></thead><tbody>${
     d.codes.map(c=>{
       const grants=c.kind==='comp'
-        ? (planLabel(c.plan)+(c.months?(' · '+c.months+'mo'):' · forever'))
+        ? (planLabel(c.plan)+(c.months?(' · '+c.months+'mo'):' · forever')+(c.grants_spotify?' · +Spotify':''))
         : (c.discount_kind==='percent'?(c.discount_val+'% off'):('£'+(c.discount_val/100).toFixed(2)+' off'));
       const uses=c.uses+(c.max_uses?('/'+c.max_uses):'');
       const exp=c.expires_at?new Date(c.expires_at).toLocaleDateString():'never';

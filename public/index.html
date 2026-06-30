@@ -745,8 +745,8 @@ function renderDashboard(){
   document.getElementById('dash-type').textContent=EVENT.type;
   document.getElementById('dash-host').textContent='Hosted by '+EVENT.host;
   // Spotify export is Studio-only
-  const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.plan==='studio')?'inline-flex':'none';
-  const pb=document.getElementById('playlist-btn');if(pb)pb.style.display=(ME&&ME.plan==='studio')?'inline-flex':'none';
+  const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
+  const pb=document.getElementById('playlist-btn');if(pb)pb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
   const closed=EVENT.closed||EVENT.locked||(EVENT.deadline&&Date.now()>EVENT.deadline);
   const st=document.getElementById('dash-status');
   st.textContent=closed?'Voting closed':'Voting open';
@@ -1001,7 +1001,7 @@ function buildSongList(){
   return ranked().map(t=>`${t.title} - ${t.artist}`).join('\n');
 }
 function openExportModal(){
-  if(!ME||ME.plan!=='studio'){toast('Playlist export is a PRO feature.');return;}
+  if(!ME||!ME.spotifyExport){toast('Playlist export is not enabled on your account.');return;}
   if(!ranked().length){toast('No songs yet — nothing to export');return;}
   document.getElementById('export-modal').style.display='flex';
 }
@@ -1043,7 +1043,7 @@ function copySongList(){
 }
 
 async function exportSpotify(){
-  if(!ME||ME.plan!=='studio'){toast('Spotify export is a PRO feature. Upgrade to enable it.');return;}
+  if(!ME||!ME.spotifyExport){toast('Spotify export is not enabled on your account.');return;}
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
   toast('Exporting to Spotify…');

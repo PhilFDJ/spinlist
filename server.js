@@ -969,7 +969,8 @@ app.post('/api/admin/codes', requireAdmin, async (req, res) => {
   const expires_at = body.expiresInDays ? Date.now() + parseInt(body.expiresInDays, 10) * 864e5 : null;
   const note = (body.note || '').slice(0, 120);
   const base = { code, kind, plan: null, months: null, discount_kind: null, discount_val: null,
-                 stripe_promo: null, max_uses, expires_at, note, created_at: Date.now() };
+                 stripe_promo: null, max_uses, expires_at, note, created_at: Date.now(),
+                 grants_spotify: !!body.grantsSpotify };
 
   try {
     if (kind === 'comp') {
@@ -1243,6 +1244,7 @@ app.post('/api/redeem', auth.requireAuth, (req, res) => {
   if (c.kind === 'comp') {
     const compUntil = c.months ? Date.now() + c.months * 30 * 864e5 : null; // null = forever
     db.grantComp(req.user.id, { plan: c.plan, comp_until: compUntil, comp_code: c.code });
+    if (c.grants_spotify) db.grantSpotifyExport(req.user.id);   // permanent perk
     db.incrementCodeUses(c.code);
     db.recordRedemption({ id: auth.newId(), code: c.code, user_id: req.user.id, redeemed_at: Date.now() });
     const planLabel = (PLANS[c.plan] && PLANS[c.plan].name) || c.plan.toUpperCase();
@@ -1250,7 +1252,7 @@ app.post('/api/redeem', auth.requireAuth, (req, res) => {
       type: 'comp',
       plan: c.plan,
       until: compUntil,
-      message: `Complimentary ${planLabel} access unlocked${c.months ? ` for ${c.months} month(s)` : ' — no expiry'}.`,
+      message: `Complimentary ${planLabel} access unlocked${c.months ? ` for ${c.months} month(s)` : ' — no expiry'}${c.grants_spotify ? ' · Spotify export enabled' : ''}.`,
     });
   }
 
@@ -1434,7 +1436,8 @@ app.post('/api/events/:id/export-spotify', auth.requireAuth, async (req, res) =>
   if (!e) return res.status(404).json({ error: 'Event not found.' });
   if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
   const plan = PLANS[req.user.plan];
-  if (!plan || !plan.spotifyExport) return res.status(403).json({ error: 'Spotify export is a PRO feature.' });
+  const hasSpotify = (plan && plan.spotifyExport) || req.user.spotify_export;
+  if (!hasSpotify) return res.status(403).json({ error: 'Spotify export is not enabled on your account.' });
 
   const token = await getUserSpotifyToken(req.user.id);
   if (!token) return res.status(401).json({ error: 'Connect your Spotify account first.', needsAuth: true });
@@ -1544,7 +1547,7 @@ function shapeResults(json) {
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
   const p = PLANS[u.plan];
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj' };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio' };
 }
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public')));
