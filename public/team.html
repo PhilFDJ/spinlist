@@ -101,6 +101,16 @@ function render(){
       <label class="field"><span>Profile / bio (optional)</span><textarea id="n-profile" placeholder="A short note about this DJ — their style, experience, etc."></textarea></label>
       <div class="err" id="n-err"></div>
       <button class="btn btn-neon" onclick="createDj()">+ Add DJ</button>
+      <div id="n-created" style="display:none;margin-top:16px;border:1.5px solid var(--neon);border-radius:12px;padding:14px;background:rgba(193,255,47,.06)">
+        <div style="font-weight:800;margin-bottom:8px">✓ Account created — login details</div>
+        <div style="font-family:ui-monospace,monospace;font-size:.9rem;line-height:1.7" id="n-created-text"></div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn btn-neon btn-sm" onclick="copyLoginDetails()">Copy login details</button>
+          <button class="btn btn-ghost btn-sm" onclick="emailLoginDetails()">Email these</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('n-created').style.display='none'">Dismiss</button>
+        </div>
+        <p class="sub" style="margin-top:10px">Copy these now — the password isn't stored in readable form and can't be shown again (you can always reset it later).</p>
+      </div>
     </div>
 
     <h2 style="font-size:1.3rem;margin-top:34px">Your DJs (<span id="dj-count">0</span>)</h2>
@@ -194,11 +204,42 @@ async function createDj(){
   if(!email){err.textContent='Enter a login email.';return;}
   try{
     const d=await api('/api/team',{method:'POST',body:JSON.stringify({name,email,password,profile})});
-    toast(d.linked?'Existing DJ linked ✓':'DJ account created ✓');
+    if(d.linked){
+      toast('Existing DJ linked ✓');
+      document.getElementById('n-created').style.display='none';
+    }else{
+      toast('DJ account created ✓');
+      // Stash + show the login details so the host can pass them on.
+      LAST_LOGIN={name:name||email,email,password:password||'(the password you set)',url:location.origin};
+      document.getElementById('n-created-text').innerHTML=
+        'Login page: '+esc(LAST_LOGIN.url)+'<br>Email: '+esc(email)+'<br>Password: '+esc(LAST_LOGIN.password);
+      document.getElementById('n-created').style.display='block';
+    }
     document.getElementById('n-name').value='';document.getElementById('n-email').value='';
     document.getElementById('n-pass').value='';document.getElementById('n-profile').value='';
     loadTeam();
   }catch(e){ err.textContent=e.message; }
+}
+let LAST_LOGIN=null;
+function loginDetailsText(){
+  if(!LAST_LOGIN)return '';
+  return `Here are your Spinlist login details:\n\nLogin page: ${LAST_LOGIN.url}\nEmail: ${LAST_LOGIN.email}\nPassword: ${LAST_LOGIN.password}\n\nSign in there to see the events and weddings assigned to you.`;
+}
+async function copyLoginDetails(){
+  const txt=loginDetailsText();if(!txt)return;
+  try{ await navigator.clipboard.writeText(txt); toast('Login details copied ✓'); }
+  catch(e){
+    // Fallback: select a temporary textarea.
+    const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');toast('Login details copied ✓');}catch(_){toast('Could not copy — select the text manually');}
+    document.body.removeChild(ta);
+  }
+}
+function emailLoginDetails(){
+  if(!LAST_LOGIN)return;
+  const subject=encodeURIComponent('Your Spinlist DJ login');
+  const body=encodeURIComponent(loginDetailsText());
+  window.location.href=`mailto:${encodeURIComponent(LAST_LOGIN.email)}?subject=${subject}&body=${body}`;
 }
 function removeDj(id,label,linked){
   const verb=linked?'Unlink':'Remove';
