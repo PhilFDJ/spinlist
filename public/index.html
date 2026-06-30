@@ -604,9 +604,9 @@ async function openEvent(id){
     if(!r.ok){toast('Could not open event');return;}
     const d=await r.json();const ev=d.event;
     EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
-      votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
+      votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,eventDate:ev.eventDate||null,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),tracks:{},
-      branding:(ME&&ME.branding&&window.__myBranding)?window.__myBranding:null};
+      branding:d.branding||null};   // event owner's branding — consistent for any DJ running it
     (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
     myVotes={};go('dashboard');
   }catch(e){ toast('Network error'); }
@@ -967,7 +967,9 @@ async function exportPDF(){
   doc.text(EVENT.name+'  ·  '+EVENT.type,14,25);
 
   doc.setTextColor(13,11,20);doc.setFontSize(10);
-  doc.text('Hosted by '+EVENT.host+'   |   '+totalVotes()+' total votes   |   '+list.length+' songs',14,44);
+  const evDate=EVENT.eventDate?new Date(EVENT.eventDate).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'}):null;
+  if(evDate){doc.setFont('helvetica','bold');doc.text(evDate,14,38);doc.setFont('helvetica','normal');}
+  doc.text('Hosted by '+EVENT.host+'   |   '+totalVotes()+' total votes   |   '+list.length+' songs',14,evDate?44:40);
   doc.setDrawColor(accent[0],accent[1],accent[2]);doc.line(14,48,196,48);
   let y=58;doc.setFont('helvetica','bold');doc.setFontSize(11);
   doc.text('#',14,y);doc.text('TITLE',24,y);doc.text('ARTIST',110,y);doc.text('VOTES',180,y);
