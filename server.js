@@ -1124,6 +1124,8 @@ function publicSubDj(u, ownerId) {
     profile: (ov && ov.profile) || u.profile || '',
     photo: (ov && ov.dj_photo) || u.dj_photo || null,
     website: (ov && ov.dj_website) || u.dj_website || '',
+    website2: (ov && ov.dj_website2) || u.dj_website2 || '',
+    youtube: (ov && ov.dj_youtube) || u.dj_youtube || '',
     ownName: u.name || '',                    // their account's own name (for reference)
     hasOverride: !!ov,
     linked,
@@ -1179,6 +1181,8 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
     if (err) return res.status(400).json({ error: err.message });
     const b = req.body || {};
     const website = (b.website || '').trim().slice(0, 200);
+    const website2 = (b.website2 || '').trim().slice(0, 200);
+    const youtube = (b.youtube || '').trim().slice(0, 200);
     const photoPath = req.file ? '/uploads/' + req.file.filename : undefined;
 
     // Owner editing their own profile.
@@ -1187,6 +1191,8 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
       if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
       if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
       if (b.website !== undefined) fields.dj_website = website;
+      if (b.website2 !== undefined) fields.dj_website2 = website2;
+      if (b.youtube !== undefined) fields.dj_youtube = youtube;
       if (photoPath) { if (req.user.dj_photo) safeUnlink(req.user.dj_photo); fields.dj_photo = photoPath; }
       db.updateUserProfile(req.user.id, fields);
       return res.json({ dj: publicSubDj(db.getUserById(req.user.id), req.user.id) });
@@ -1200,6 +1206,8 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
       if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
       if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
       if (b.website !== undefined) fields.dj_website = website;
+      if (b.website2 !== undefined) fields.dj_website2 = website2;
+      if (b.youtube !== undefined) fields.dj_youtube = youtube;
       if (photoPath) { if (dj.dj_photo) safeUnlink(dj.dj_photo); fields.dj_photo = photoPath; }
       if (b.password) {
         if (b.password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
@@ -1215,6 +1223,8 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
       if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
       if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
       if (b.website !== undefined) fields.dj_website = website;
+      if (b.website2 !== undefined) fields.dj_website2 = website2;
+      if (b.youtube !== undefined) fields.dj_youtube = youtube;
       if (photoPath) {
         const prev = db.getTeamOverride(req.user.id, dj.id);
         if (prev && prev.dj_photo) safeUnlink(prev.dj_photo);
