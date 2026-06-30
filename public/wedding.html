@@ -780,6 +780,8 @@ function renderPlan(){
         <div style="font-weight:800;font-size:1.15rem;margin-top:2px">${esc(w.dj.name||'')}</div>
         ${w.dj.profile?`<div style="color:var(--ink-2);margin-top:6px;white-space:pre-wrap">${esc(w.dj.profile)}</div>`:''}
         ${w.dj.website?`<div style="margin-top:8px"><a href="${esc(w.dj.website)}" target="_blank" rel="noopener" style="color:var(--neon);font-weight:700;font-size:.9rem">Visit website →</a></div>`:''}
+        ${w.dj.website2?`<div style="margin-top:4px"><a href="${esc(w.dj.website2)}" target="_blank" rel="noopener" style="color:var(--neon);font-weight:700;font-size:.9rem">Visit website →</a></div>`:''}
+        ${w.dj.youtube?`<div style="margin-top:4px"><a href="${esc(w.dj.youtube)}" target="_blank" rel="noopener" style="color:var(--neon);font-weight:700;font-size:.9rem">▶ Watch on YouTube →</a></div>`:''}
       </div>
     </div>`:''}
 

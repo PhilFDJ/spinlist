@@ -1092,6 +1092,8 @@ function renderGuest(){
           <div style="font-weight:800;font-size:1.08rem;margin-top:2px">${esc(dj.name||'')}</div>
           ${dj.profile?`<div style="color:var(--muted);margin-top:5px;font-size:.9rem;white-space:pre-wrap">${esc(dj.profile)}</div>`:''}
           ${dj.website?`<div style="margin-top:7px"><a href="${esc(dj.website)}" target="_blank" rel="noopener" style="color:var(--plum);font-weight:700;font-size:.86rem">Visit website →</a></div>`:''}
+          ${dj.website2?`<div style="margin-top:4px"><a href="${esc(dj.website2)}" target="_blank" rel="noopener" style="color:var(--plum);font-weight:700;font-size:.86rem">Visit website →</a></div>`:''}
+          ${dj.youtube?`<div style="margin-top:4px"><a href="${esc(dj.youtube)}" target="_blank" rel="noopener" style="color:var(--plum);font-weight:700;font-size:.86rem">▶ Watch on YouTube →</a></div>`:''}
         </div>
       </div>`;
     } else { djEl.style.display='none'; }
