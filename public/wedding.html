@@ -837,6 +837,23 @@ function switchTab(tab){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('show',p.id==='pane-'+tab));
 }
+// Export one wedding block to its own Spotify playlist.
+async function exportBlockSpotify(blockId,btn){
+  const orig=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='Exporting…';}
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/blocks/'+blockId+'/export-spotify',{method:'POST',body:JSON.stringify({})});
+    toast('Playlist created on Spotify ✓ ('+d.count+' songs)');
+    if(d.url)window.open(d.url,'_blank','noopener');
+  }catch(e){
+    if(/connect|reconnect|session/i.test(e.message)){
+      toast('Connect your Spotify account first');
+      location.href='/api/spotify/connect';
+      return;
+    }
+    toast(e.message);
+  }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
+}
 function renderBlocks(){
   const w=CURRENT, isDJ=ME.role!=='couple', canEdit=!DEMO;
   document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
@@ -860,7 +877,7 @@ function renderBlocks(){
     return `<div class="block drag-row" ${dragAttrs}>
       <div class="block-head">
         <h3>${(isDJ&&canEdit)?`<span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'music')">⠿</span> `:''}${esc(b.name)}</h3>
-        <div style="display:flex;gap:8px;align-items:center">${liveToggle}<span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${(isDJ&&!DEMO&&w.canExportSpotify&&b.songs.length)?`<button class="mini-btn" onclick="exportBlockSpotify('${b.id}',this)">🎵 Export to Spotify</button>`:''}${liveToggle}<span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span></div>
       </div>
       <div>${b.songs.map((s,idx)=>songRow(b.id,s,idx,canEdit,isDJ)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
       ${(full||!canEdit)?'':`<button class="addbtn" onclick="openSearch('${b.id}')">+ Add a song</button>`}

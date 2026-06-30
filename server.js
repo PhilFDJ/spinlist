@@ -620,6 +620,17 @@ function publicWedding(w, viewerId) {
     liveAskName: liveEv ? !!liveEv.ask_name : false,
     assignedDj: w.assigned_dj || null,
     dj: db.djProfileFor(w.host_id, w.assigned_dj),
+    canExportSpotify: (() => {
+      // DJ (host or assigned) can export if they — or the wedding owner — have Spotify.
+      const viewer = db.getUserById(viewerId);
+      if (!viewer) return false;
+      if (viewer.id !== w.host_id && w.assigned_dj !== viewer.id) return false;
+      const vp = PLANS[viewer.plan];
+      if ((vp && vp.spotifyExport) || viewer.spotify_export) return true;
+      const owner = db.getUserById(w.host_id);
+      const op = owner && PLANS[owner.plan];
+      return !!((op && op.spotifyExport) || (owner && owner.spotify_export));
+    })(),
     canEdit: !!(isHost || isCouple),
     createdAt: w.created_at,
   };
@@ -1486,6 +1497,74 @@ app.post('/api/events/:id/export-spotify', auth.requireAuth, async (req, res) =>
     res.json({ ok: true, url: playlist.external_urls?.spotify, count: uris.length });
   } catch (err) {
     console.error('export-spotify error:', err.message);
+    res.status(500).json({ error: 'Spotify export failed.' });
+  }
+});
+
+// Export a single wedding block to its own Spotify playlist.
+app.post('/api/weddings/:id/blocks/:blockId/export-spotify', auth.requireAuth, async (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  // The DJ host or the assigned DJ can export (not the couple).
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can export to Spotify.' });
+  }
+  // Spotify access: the exporter's plan/perk, OR the wedding owner's (so an
+  // assigned DJ inherits the owner's Spotify entitlement).
+  const plan = PLANS[req.user.plan];
+  let hasSpotify = (plan && plan.spotifyExport) || req.user.spotify_export;
+  if (!hasSpotify) {
+    const owner = db.getUserById(w.host_id);
+    const op = owner && PLANS[owner.plan];
+    hasSpotify = (op && op.spotifyExport) || (owner && owner.spotify_export);
+  }
+  if (!hasSpotify) return res.status(403).json({ error: 'Spotify export is not enabled on your account.' });
+
+  const block = (w.blocks || []).find(b => b.id === req.params.blockId);
+  if (!block) return res.status(404).json({ error: 'Block not found.' });
+
+  const uris = (block.songs || [])
+    .map(s => s.uri)
+    .filter(u => typeof u === 'string' && u.startsWith('spotify:track:'));
+  if (!uris.length) return res.status(400).json({ error: 'No Spotify tracks in this block yet.' });
+
+  const token = await getUserSpotifyToken(req.user.id);
+  if (!token) return res.status(401).json({ error: 'Connect your Spotify account first.', needsAuth: true });
+
+  try {
+    const makeP = await fetch('https://api.spotify.com/v1/me/playlists', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `${w.name || 'Wedding'} — ${block.name}`,
+        description: `${block.name} for ${w.name || 'the wedding'}, built with Spinlist.`,
+        public: false,
+      }),
+    });
+    if (!makeP.ok) {
+      const errTxt = await makeP.text();
+      console.error('Spotify create playlist failed:', makeP.status, errTxt);
+      if (makeP.status === 401) return res.status(401).json({ error: 'Spotify session expired — reconnect.', needsAuth: true });
+      return res.status(502).json({ error: 'Could not create the playlist on Spotify.' });
+    }
+    const playlist = await makeP.json();
+
+    for (let i = 0; i < uris.length; i += 100) {
+      const batch = uris.slice(i, i + 100);
+      const add = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uris: batch }),
+      });
+      if (!add.ok) {
+        const errTxt = await add.text();
+        console.error('Spotify add tracks failed:', add.status, errTxt);
+        return res.status(502).json({ error: 'Playlist created, but adding some tracks failed.', url: playlist.external_urls?.spotify });
+      }
+    }
+    res.json({ ok: true, url: playlist.external_urls?.spotify, count: uris.length, block: block.name });
+  } catch (err) {
+    console.error('wedding block export-spotify error:', err.message);
     res.status(500).json({ error: 'Spotify export failed.' });
   }
 });
