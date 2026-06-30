@@ -1042,6 +1042,7 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
     }
     const planName = (PLANS[u.plan] && PLANS[u.plan].name) || 'None';
     return {
+      id: u.id,
       email: u.email,
       name: u.name || '',
       plan: u.plan || 'none',
@@ -1062,6 +1063,27 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
     free: users.filter(u => u.status === 'free' || u.status === 'active' || u.status === 'trial-ended').length,
   };
   res.json({ users, summary });
+});
+
+// --- admin: reset a user's password ---
+app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
+  const u = db.getUserById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  const pw = (req.body || {}).password || '';
+  if (pw.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  db.setUserPassword(u.id, auth.hashPassword(pw));
+  res.json({ ok: true });
+});
+
+// --- admin: delete a user ---
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const u = db.getUserById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  if (ADMIN_EMAILS.includes(u.email.toLowerCase())) {
+    return res.status(400).json({ error: 'Admin accounts cannot be deleted here.' });
+  }
+  db.deleteUser(u.id);
+  res.json({ ok: true });
 });
 
 // --- admin: enable/disable a code ---

@@ -207,10 +207,11 @@ async function loadUsers(){
       const [label,cls]=map[st]||['Free','free'];
       return `<span class="badge ${cls}">${label}</span>`;
     };
-    list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th>Events</th><th>Joined</th></tr></thead><tbody>${
+    list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th>Events</th><th>Joined</th><th></th></tr></thead><tbody>${
       d.users.map(u=>{
         const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
         const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';
+        const actions=u.isAdmin?'<span class="muted" style="font-size:.8rem">—</span>':`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="resetUserPass('${u.id}','${esc(u.email)}')">Reset password</button> <button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteUser('${u.id}','${esc(u.email)}')">Delete</button>`;
         return `<tr>
           <td><code>${esc(u.email)}</code>${adminTag}</td>
           <td>${esc(u.name||'—')}</td>
@@ -218,10 +219,26 @@ async function loadUsers(){
           <td>${badge(u.status)}</td>
           <td>${u.eventsCreated}</td>
           <td>${joined}</td>
+          <td style="white-space:nowrap">${actions}</td>
         </tr>`;
       }).join('')
     }</tbody></table>`;
   }catch(e){ list.innerHTML='<p style="color:var(--muted);font-size:.9rem">Could not load hosts.</p>'; }
+}
+async function resetUserPass(id,email){
+  const pw=prompt('New password for '+email+' (min 6 chars):');
+  if(pw===null)return;
+  if(pw.length<6){alert('Password must be at least 6 characters.');return;}
+  const r=await fetch('/api/admin/users/'+encodeURIComponent(id)+'/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not reset.');return;}
+  alert('Password reset for '+email);
+}
+async function deleteUser(id,email){
+  if(!confirm('Permanently delete '+email+'? This removes their account, events and weddings. This cannot be undone.'))return;
+  if(!confirm('Are you absolutely sure? This is permanent.'))return;
+  const r=await fetch('/api/admin/users/'+encodeURIComponent(id),{method:'DELETE'});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not delete.');return;}
+  loadUsers();
 }
 
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}
