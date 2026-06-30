@@ -1060,6 +1060,15 @@ app.post('/api/admin/codes/:code/toggle', requireAdmin, (req, res) => {
   res.json({ code: db.getCode(c.code) });
 });
 
+// Admin: permanently delete a code (only when it's disabled, to avoid accidents).
+app.delete('/api/admin/codes/:code', requireAdmin, (req, res) => {
+  const c = db.getCode(req.params.code);
+  if (!c) return res.status(404).json({ error: 'No such code.' });
+  if (c.active) return res.status(400).json({ error: 'Disable the code before deleting it.' });
+  db.deleteCode(c.code);
+  res.json({ ok: true });
+});
+
 // =========================================================
 //   MULTI-OP: sub-DJ accounts (owner manages their team)
 // =========================================================
@@ -1120,7 +1129,7 @@ app.post('/api/team', auth.requireAuth, requireMultiOp, (req, res) => {
     name: (b.name || '').slice(0, 80),
     role: 'subdj',
     parent_id: req.user.id,
-    profile: (b.profile || '').slice(0, 500),
+    profile: (b.profile || '').slice(0, 2000),
     created_at: Date.now(),
   });
   res.json({ dj: publicSubDj(dj, req.user.id), linked: false });
@@ -1139,7 +1148,7 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
     if (req.params.id === req.user.id) {
       const fields = {};
       if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
-      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
       if (b.website !== undefined) fields.dj_website = website;
       if (photoPath) { if (req.user.dj_photo) safeUnlink(req.user.dj_photo); fields.dj_photo = photoPath; }
       db.updateUserProfile(req.user.id, fields);
@@ -1152,7 +1161,7 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
     if (dj.role === 'subdj' && dj.parent_id === req.user.id) {
       const fields = {};
       if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
-      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
       if (b.website !== undefined) fields.dj_website = website;
       if (photoPath) { if (dj.dj_photo) safeUnlink(dj.dj_photo); fields.dj_photo = photoPath; }
       if (b.password) {
@@ -1167,7 +1176,7 @@ app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
     if (db.isOnTeam(req.user.id, dj.id)) {
       const fields = {};
       if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
-      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 500);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
       if (b.website !== undefined) fields.dj_website = website;
       if (photoPath) {
         const prev = db.getTeamOverride(req.user.id, dj.id);

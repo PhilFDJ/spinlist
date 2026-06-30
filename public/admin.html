@@ -175,7 +175,7 @@ async function loadCodes(){
         <td>${uses}</td>
         <td>${exp}</td>
         <td>${esc(c.note||'')}</td>
-        <td><button class="btn btn-ghost" onclick="toggleCode('${esc(c.code)}')">${c.active?'Disable':'Enable'}</button></td>
+        <td><button class="btn btn-ghost" onclick="toggleCode('${esc(c.code)}')">${c.active?'Disable':'Enable'}</button>${c.active?'':`<button class="btn btn-ghost" style="margin-left:6px;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteCode('${esc(c.code)}')">Delete</button>`}</td>
       </tr>`;
     }).join('')
   }</tbody></table>`;
@@ -183,6 +183,12 @@ async function loadCodes(){
 
 async function toggleCode(code){
   await fetch('/api/admin/codes/'+encodeURIComponent(code)+'/toggle',{method:'POST'});
+  loadCodes();
+}
+async function deleteCode(code){
+  if(!confirm('Permanently delete code '+code+'? This cannot be undone.'))return;
+  const r=await fetch('/api/admin/codes/'+encodeURIComponent(code),{method:'DELETE'});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not delete');return;}
   loadCodes();
 }
 

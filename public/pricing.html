@@ -123,7 +123,7 @@ function renderPlans(){
     const p=PLANS[id];if(!p)return '';const current=ME&&ME.plan===id;
     const cta = current?'Current plan':'Choose '+p.name;
     return `<div class="card ${p.popular?'pop':''}">
-      ${p.popular?'<div class="tag">Most popular</div>':''}
+      ${p.popular?'<div class="tag">PRO WEDDING TIER</div>':''}
       <h2>${p.name}</h2>
       <div class="blurb">${p.blurb}</div>
       <div class="price">${p.priceLabel}</div>

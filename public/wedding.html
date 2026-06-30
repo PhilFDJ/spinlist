@@ -82,7 +82,7 @@
 <body>
 <header class="bar"><div class="wrap">
   <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
-  <nav><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+  <nav id="wed-nav"><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
 </div></header>
 
 <div class="wrap" id="root">
@@ -136,7 +136,12 @@ async function boot(){
     renderSignup(code);
     return;
   }
-  if(ME.role==='couple'){ renderCoupleHome(); return; }
+  if(ME.role==='couple'){
+    // Couples get a minimal page — only Log out in the nav.
+    const nav=document.getElementById('wed-nav');
+    if(nav)nav.innerHTML='<a href="#" onclick="logout();return false">Log out</a>';
+    renderCoupleHome(); return;
+  }
   renderDJHome();
 }
 
@@ -709,15 +714,16 @@ function renderTplQuestions(){
         <select onchange="setQType(${i},this.value)" style="font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">
           <option value="text" ${q.type==='text'?'selected':''}>Text answer</option>
           <option value="yesno" ${q.type==='yesno'?'selected':''}>Yes / No</option>
-          <option value="choice" ${q.type==='choice'?'selected':''}>Multiple choice</option>
+          <option value="choice" ${q.type==='choice'?'selected':''}>Multiple choice (pick one)</option>
+          <option value="multiselect" ${q.type==='multiselect'?'selected':''}>Checklist (pick several)</option>
         </select>
-        ${q.type==='choice'?`<input value="${esc((q.options||[]).join(', '))}" placeholder="Options, comma-separated" oninput="editingTpl.questions[${i}].options=this.value.split(',').map(s=>s.trim()).filter(Boolean)"
+        ${(q.type==='choice'||q.type==='multiselect')?`<input value="${esc((q.options||[]).join(', '))}" placeholder="Options, comma-separated" oninput="editingTpl.questions[${i}].options=this.value.split(',').map(s=>s.trim()).filter(Boolean)"
           style="flex:1;min-width:200px;font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">`:''}
       </div>
     </div>`;
   }).join('')||'<p class="muted" style="margin-bottom:8px">No questions yet.</p>';
 }
-function setQType(i,type){editingTpl.questions[i].type=type;if(type==='choice'&&!editingTpl.questions[i].options)editingTpl.questions[i].options=[];renderTplQuestions();}
+function setQType(i,type){editingTpl.questions[i].type=type;if((type==='choice'||type==='multiselect')&&!editingTpl.questions[i].options)editingTpl.questions[i].options=[];renderTplQuestions();}
 function addTplQuestion(){editingTpl.questions.push({type:'text',label:'',options:[]});renderTplQuestions();}
 function addTplHeader(){editingTpl.questions.push({type:'header',label:'',options:[]});renderTplQuestions();}
 async function saveTemplate(){
@@ -1256,6 +1262,11 @@ function questionField(q,val,isDJ){
   }else if(q.type==='choice'){
     input=`<div style="display:flex;gap:8px;flex-wrap:wrap">
       ${(q.options||[]).map(o=>`<button class="btn ${val===o?'btn-neon':'btn-ghost'} btn-sm" onclick="setAnswer('${q.id}','${esc(o).replace(/'/g,"&#39;")}')">${esc(o)}</button>`).join('')}</div>`;
+  }else if(q.type==='multiselect'){
+    // Answer stored as a comma-separated list; couples can pick several.
+    const chosen=(val||'').split(',').map(s=>s.trim()).filter(Boolean);
+    input=`<div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${(q.options||[]).map(o=>`<button class="btn ${chosen.includes(o)?'btn-neon':'btn-ghost'} btn-sm" onclick="toggleMultiAnswer('${q.id}','${esc(o).replace(/'/g,"&#39;")}')">${chosen.includes(o)?'✓ ':''}${esc(o)}</button>`).join('')}</div>`;
   }else{
     input=`<input value="${esc(val)}" placeholder="Type your answer…" oninput="CURRENT.answers=CURRENT.answers||{};CURRENT.answers['${q.id}']=this.value;queueAnswerSave()"
       style="width:100%;font:inherit;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">`;
@@ -1265,6 +1276,16 @@ function questionField(q,val,isDJ){
 function setAnswer(qid,val){
   CURRENT.answers=CURRENT.answers||{};
   CURRENT.answers[qid]=val;
+  renderQuestionnaire();
+  saveAnswers();
+}
+// Toggle one option in a multi-select answer (stored comma-separated).
+function toggleMultiAnswer(qid,opt){
+  CURRENT.answers=CURRENT.answers||{};
+  const chosen=(CURRENT.answers[qid]||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const i=chosen.indexOf(opt);
+  if(i===-1)chosen.push(opt); else chosen.splice(i,1);
+  CURRENT.answers[qid]=chosen.join(', ');
   renderQuestionnaire();
   saveAnswers();
 }
