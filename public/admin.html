@@ -80,6 +80,7 @@ async function boot(){
       <div class="seg">
         <button id="seg-comp" class="on" onclick="setKind('comp')">Complimentary</button>
         <button id="seg-discount" onclick="setKind('discount')">Discount</button>
+        <button id="seg-addon" onclick="setKind('addon')">Spotify add-on</button>
       </div>
 
       <div id="comp-fields">
@@ -88,6 +89,10 @@ async function boot(){
           <div class="field"><label>Duration (months)</label><input id="c-months" type="number" min="1" placeholder="blank = forever"></div>
         </div>
         <div class="field" style="margin-top:8px"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="c-spotify"> Also grant Spotify export (permanent)</label></div>
+      </div>
+
+      <div id="addon-fields" style="display:none">
+        <p class="hint">Grants permanent Spotify export only — no plan change. Use this to gift the add-on to a paying subscriber; they keep their current plan.</p>
       </div>
 
       <div id="discount-fields" style="display:none">
@@ -131,8 +136,10 @@ function setKind(k){
   KIND=k;
   document.getElementById('seg-comp').classList.toggle('on',k==='comp');
   document.getElementById('seg-discount').classList.toggle('on',k==='discount');
+  document.getElementById('seg-addon').classList.toggle('on',k==='addon');
   document.getElementById('comp-fields').style.display=k==='comp'?'block':'none';
   document.getElementById('discount-fields').style.display=k==='discount'?'block':'none';
+  document.getElementById('addon-fields').style.display=k==='addon'?'block':'none';
 }
 
 async function createCode(){
@@ -146,10 +153,11 @@ async function createCode(){
     body.plan=document.getElementById('c-plan').value;
     body.months=document.getElementById('c-months').value||null;
     body.grantsSpotify=document.getElementById('c-spotify').checked;
-  }else{
+  }else if(KIND==='discount'){
     body.discountKind=document.getElementById('d-kind').value;
     body.discountVal=document.getElementById('d-val').value;
   }
+  // addon: no extra fields — backend grants Spotify only.
   msg.style.color='var(--muted)';msg.textContent='Creating…';
   const r=await fetch('/api/admin/codes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
@@ -167,6 +175,8 @@ async function loadCodes(){
     d.codes.map(c=>{
       const grants=c.kind==='comp'
         ? (planLabel(c.plan)+(c.months?(' · '+c.months+'mo'):' · forever')+(c.grants_spotify?' · +Spotify':''))
+        : c.kind==='addon'
+        ? 'Spotify export'
         : (c.discount_kind==='percent'?(c.discount_val+'% off'):('£'+(c.discount_val/100).toFixed(2)+' off'));
       const uses=c.uses+(c.max_uses?('/'+c.max_uses):'');
       const exp=c.expires_at?new Date(c.expires_at).toLocaleDateString():'never';

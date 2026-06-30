@@ -179,7 +179,7 @@ async function redeem(){
   const r=await fetch('/api/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
   const d=await r.json();
   if(!r.ok){msg.style.color='var(--coral)';msg.textContent=d.error||'Could not redeem.';return;}
-  if(d.type==='comp'){
+  if(d.type==='comp'||d.type==='addon'){
     msg.style.color='var(--neon-dim)';msg.textContent=d.message+' Redirecting…';
     setTimeout(()=>location.href='/',1200);
   }else{

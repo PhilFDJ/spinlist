@@ -236,7 +236,7 @@ async function redeemCode(){
   const d=await r.json();
   if(!r.ok){msg.style.color='var(--coral)';msg.textContent=d.error||'Could not redeem.';return;}
   msg.style.color='var(--neon-dim)';msg.textContent=d.message;
-  if(d.type==='comp')setTimeout(boot,1200);   // refresh to show new plan
+  if(d.type==='comp'||d.type==='addon')setTimeout(boot,1200);   // refresh to show new plan/perk
 }
 async function portal(){
   const r=await fetch('/api/billing/portal',{method:'POST'});const d=await r.json();

@@ -972,7 +972,7 @@ function genCode(len = 8) {
 // --- admin: create a code ---
 app.post('/api/admin/codes', requireAdmin, async (req, res) => {
   const body = req.body || {};
-  const kind = body.kind === 'discount' ? 'discount' : 'comp';
+  const kind = ['discount', 'addon'].includes(body.kind) ? body.kind : 'comp';
   const code = (body.code && String(body.code).toUpperCase().replace(/[^A-Z0-9]/g, '')) || genCode();
   if (db.getCode(code)) return res.status(409).json({ error: 'That code already exists. Try another.' });
 
@@ -989,6 +989,9 @@ app.post('/api/admin/codes', requireAdmin, async (req, res) => {
       if (!plan) return res.status(400).json({ error: 'Choose a plan for a comp code.' });
       base.plan = plan;
       base.months = body.months ? parseInt(body.months, 10) : null; // null = forever
+    } else if (kind === 'addon') {
+      // Spotify add-on only — no plan change. The subscriber keeps their paid plan.
+      base.grants_spotify = true;
     } else {
       // discount: build a Stripe coupon + promotion code
       if (!stripe) return res.status(503).json({ error: 'Discount codes need Stripe configured.' });
@@ -1286,6 +1289,17 @@ app.post('/api/redeem', auth.requireAuth, (req, res) => {
       plan: c.plan,
       until: compUntil,
       message: `Complimentary ${planLabel} access unlocked${c.months ? ` for ${c.months} month(s)` : ' — no expiry'}${c.grants_spotify ? ' · Spotify export enabled' : ''}.`,
+    });
+  }
+
+  // Spotify add-on only — grant the perk, no plan change.
+  if (c.kind === 'addon') {
+    db.grantSpotifyExport(req.user.id);
+    db.incrementCodeUses(c.code);
+    db.recordRedemption({ id: auth.newId(), code: c.code, user_id: req.user.id, redeemed_at: Date.now() });
+    return res.json({
+      type: 'addon',
+      message: 'Spotify export has been added to your account.',
     });
   }
 
