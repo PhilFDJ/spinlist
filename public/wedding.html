@@ -107,6 +107,12 @@
 <script>
 let ME=null, CURRENT=null;     // CURRENT = the wedding being edited
 let activeBlockId=null;
+let PREVIEW_COUPLE=false;       // DJ previewing the couple's view
+
+// True when the current viewer should see the DJ view (false = couple view).
+// The account holder can preview the couple view via PREVIEW_COUPLE.
+function isDjView(){ return ME && ME.role!=='couple' && !PREVIEW_COUPLE; }
+function toggleCouplePreview(){ PREVIEW_COUPLE=!PREVIEW_COUPLE; renderPlan(); window.scrollTo(0,0); }
 
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2400);}
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -260,6 +266,7 @@ async function renderCoupleHome(){
 /* ---------------- DJ HOME ---------------- */
 let djShowArchived=false;
 async function renderDJHome(){
+  PREVIEW_COUPLE=false;
   stopLivePolling();
   const root=document.getElementById('root');
   let weddings=[];
@@ -748,11 +755,15 @@ async function openWedding(id){
 }
 let currentTab='music';
 function renderPlan(){
-  const w=CURRENT, isDJ=ME.role!=='couple';
+  const w=CURRENT, isDJ=isDjView();
   const root=document.getElementById('root');
   const filled=w.blocks.reduce((s,b)=>s+b.songs.length,0);
   const cap=w.blocks.reduce((s,b)=>s+b.capacity,0);
   root.innerHTML=`
+    ${PREVIEW_COUPLE?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-color:var(--neon);background:rgba(193,255,47,.08);margin-top:20px">
+      <div><b>👁 Previewing the couple's view</b><div class="muted">This is exactly what the couple sees. Editing is disabled while previewing.</div></div>
+      <button class="btn btn-neon btn-sm" onclick="toggleCouplePreview()">← Back to DJ view</button>
+    </div>`:''}
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
       <div>
         <p class="eyebrow">${isDJ?'Wedding plan':'Your wedding songs'}</p>
@@ -762,6 +773,7 @@ function renderPlan(){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
         <button class="btn btn-ghost btn-sm" onclick="exportWeddingPDF()">⬇ PDF run-sheet</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleCouplePreview()">👁 Preview couple's view</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
     </div>
@@ -870,7 +882,7 @@ async function exportBlockSpotify(blockId,btn){
   }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
 }
 function renderBlocks(){
-  const w=CURRENT, isDJ=ME.role!=='couple', canEdit=!DEMO&&(CURRENT.canEdit!==false);
+  const w=CURRENT, isDJ=isDjView(), canEdit=!DEMO&&(CURRENT.canEdit!==false)&&!PREVIEW_COUPLE;
   document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
     const isLive=w.liveBlockId===b.id;
     const full=b.songs.length>=b.capacity;
@@ -1009,7 +1021,7 @@ async function refreshLiveBoard(){
   if(!w.liveEventId){el.innerHTML='<p class="muted" style="font-size:.85rem">No guest requests yet.</p>';return;}
   let songs=[];
   try{ songs=(await api('/api/weddings/'+w.id+'/live-leaderboard')).songs||[]; }catch(e){return;}
-  const isDJ=ME.role!=='couple';
+  const isDJ=isDjView();
   if(!songs.length){el.innerHTML='<p class="muted" style="font-size:.85rem">No requests yet — they will appear here as guests vote.</p>';return;}
   el.innerHTML=songs.map((s,idx)=>{
     const reqs=(s.requesters&&s.requesters.length)?`<div class="muted" style="font-size:.78rem;margin-top:2px">Requested by ${s.requesters.map(esc).join(', ')}</div>`:'';
@@ -1292,7 +1304,7 @@ async function saveTimeline(){
 
 /* ---------------- QUESTIONNAIRE (couple answers / DJ views) ---------------- */
 function renderQuestionnaire(){
-  const w=CURRENT, isDJ=ME.role!=='couple';
+  const w=CURRENT, isDJ=isDjView();
   const el=document.getElementById('questionnaire-content');
   if(!el)return;
   const q=w.questionnaire;
