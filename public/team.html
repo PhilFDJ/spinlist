@@ -256,18 +256,11 @@ function inviteText(email){
 }
 async function inviteDj(id,label,email){
   const txt=inviteText(email);
-  // Try clipboard first; offer to open email too.
-  let copied=false;
-  try{ await navigator.clipboard.writeText(txt); copied=true; }catch(e){
+  try{ await navigator.clipboard.writeText(txt); toast('Invite for '+label+' copied ✓'); }
+  catch(e){
     const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();
-    try{document.execCommand('copy');copied=true;}catch(_){}
+    try{document.execCommand('copy');toast('Invite for '+label+' copied ✓');}catch(_){toast('Could not copy — select the text manually');}
     document.body.removeChild(ta);
-  }
-  toast(copied?('Invite for '+label+' copied ✓'):'Could not copy — opening email');
-  // Also offer to open a pre-filled email.
-  if(confirm('Invite details copied.\n\nOpen a pre-filled email to '+email+' now?')){
-    const subject=encodeURIComponent('Your Spinlist DJ login');
-    window.location.href=`mailto:${encodeURIComponent(email)}?subject=${subject}&body=${encodeURIComponent(txt)}`;
   }
 }
 function removeDj(id,label,linked){
