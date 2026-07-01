@@ -794,7 +794,7 @@ function renderPlan(){
         ? '<b>🔒 Your song choices are locked</b><div class="muted">The deadline set by your DJ has passed. Contact your DJ if you need to make a change.</div>'
         : '<b>⏰ Please finish by '+fmtWeddingDate(w.lockDate)+'</b><div class="muted">After this date your choices lock so your DJ can prepare. You can keep editing until then.</div>'}
     </div>`:''}
-    ${(ME.multiOp&&!DEMO&&w.id!=='DEMO')?`<div class="panel" id="assign-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+    ${(isDJ&&ME.multiOp&&!DEMO&&w.id!=='DEMO')?`<div class="panel" id="assign-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><b>Assign a DJ</b><div class="muted">Give one of your team this wedding to run. They'll see it in their events.</div></div>
       <div id="assign-control" class="muted" style="font-size:.9rem">Loading team…</div>
     </div>`:''}
@@ -838,7 +838,7 @@ function renderPlan(){
   renderTimeline();
   renderQuestionnaire();
   switchTab(currentTab);
-  if(ME.multiOp&&!DEMO&&CURRENT.id!=='DEMO')loadAssignControl();
+  if(isDjView()&&ME.multiOp&&!DEMO&&CURRENT.id!=='DEMO')loadAssignControl();
 }
 // Owner: populate the "Assign a DJ" dropdown on this wedding.
 async function loadAssignControl(){
