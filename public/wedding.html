@@ -1114,6 +1114,14 @@ async function exportWeddingPDF(){
   doc.setFont('helvetica','normal');doc.setFontSize(11);
   let sub=[];if(w.coupleNames)sub.push(w.coupleNames);if(w.weddingDate)sub.push(fmtWeddingDate(w.weddingDate));
   doc.text(sub.join('   ·   '),M,25);
+  // Optional host logo, right-aligned in the band.
+  if(w.branding&&w.branding.logo){
+    try{
+      const logoData=await loadImageData(w.branding.logo);
+      if(logoData){const fmt=/\.png|image\/png/i.test(w.branding.logo)?'PNG':(/\.svg|svg\+xml/i.test(w.branding.logo)?'PNG':'JPEG');
+        doc.addImage(logoData,fmt,PW-M-28,3,28,28);}
+    }catch(e){/* skip unsupported */}
+  }
   y=44;
 
   function sectionTitle(t){

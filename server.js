@@ -620,6 +620,11 @@ function publicWedding(w, viewerId) {
     liveAskName: liveEv ? !!liveEv.ask_name : false,
     assignedDj: w.assigned_dj || null,
     dj: db.djProfileFor(w.host_id, w.assigned_dj),
+    branding: (() => {
+      // The wedding owner's branding (logo/colour/tagline) — for the run-sheet PDF.
+      const owner = db.getUserById(w.host_id);
+      return (owner && planHasBranding(owner)) ? db.getBranding(owner.id) : null;
+    })(),
     canExportSpotify: (() => {
       // DJ (host or assigned) can export if they — or the wedding owner — have Spotify.
       const viewer = db.getUserById(viewerId);

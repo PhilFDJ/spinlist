@@ -145,9 +145,12 @@ function renderList(){
         <label class="field"><span>Photo (optional)</span>${dj.photo?`<div style="margin-bottom:8px"><img src="${esc(dj.photo)}" alt="" style="width:64px;height:64px;border-radius:12px;object-fit:cover"></div>`:''}<input id="e-photo-${dj.id}" type="file" accept="image/*" style="font-size:.85rem"></label>
         ${noPass?'':`<label class="field"><span>New password <span style="font-weight:400">(leave blank to keep current)</span></span><input id="e-pass-${dj.id}" type="text" placeholder="Set a new temporary password" minlength="6"></label>`}
         <div class="err" id="e-err-${dj.id}"></div>
-        <div class="dj-actions">
-          <button class="btn btn-neon btn-sm" onclick="saveDj('${dj.id}',${noPass})">Save</button>
-          <button class="btn btn-ghost btn-sm" onclick="cancelEdit()">Cancel</button>
+        <div class="dj-actions" style="justify-content:space-between">
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-neon btn-sm" onclick="saveDj('${dj.id}',${noPass})">Save</button>
+            <button class="btn btn-ghost btn-sm" onclick="cancelEdit()">Cancel</button>
+          </div>
+          ${dj.isMe?'':`<button class="btn btn-danger btn-sm" onclick="removeDj('${dj.id}','${esc(dj.name||dj.email)}',${dj.linked})">${dj.linked?'Unlink':'Remove'}</button>`}
         </div>
       </div>`;
     }
@@ -170,7 +173,6 @@ function renderList(){
       <div class="dj-actions">
         ${(dj.isMe||dj.linked)?'':`<button class="btn btn-ghost btn-sm" onclick="inviteDj('${dj.id}','${esc(dj.name||dj.email)}','${esc(dj.email)}')">Invite</button>`}
         <button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit${dj.linked?' team profile':''}</button>
-        ${dj.isMe?'':`<button class="btn btn-danger btn-sm" onclick="removeDj('${dj.id}','${esc(dj.name||dj.email)}',${dj.linked})">${dj.linked?'Unlink':'Remove'}</button>`}
       </div>
     </div>`;
   }).join('');
