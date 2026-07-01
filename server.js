@@ -28,6 +28,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
+// Escape user-supplied text before putting it into an HTML email.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+
 /* ---------- logo uploads ---------- */
 // Stored on disk and served statically. On hosts with an ephemeral filesystem
 // (e.g. Render's free/standard instances), uploads must live on the SAME
@@ -1336,6 +1342,138 @@ app.post('/api/weddings/:id/lock-date', auth.requireAuth, (req, res) => {
 });
 
 
+/* =========================================================
+   RESEND EMAIL (subscriber connects their own Resend key)
+   ========================================================= */
+// Send an email through a user's own Resend account. Returns {ok} or {error}.
+async function sendViaResend(cfg, { to, subject, html, replyTo }) {
+  const from = cfg.fromName ? `${cfg.fromName} <${cfg.from}>` : cfg.from;
+  const body = { from, to: [to], subject, html };
+  if (replyTo) body.reply_to = replyTo;
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    let msg = 'Resend rejected the email.';
+    try { const e = await r.json(); if (e && e.message) msg = e.message; } catch (_) {}
+    if (r.status === 401 || r.status === 403) msg = 'Resend key rejected — check the key and that your domain is verified.';
+    return { ok: false, error: msg };
+  }
+  return { ok: true };
+}
+// Only wedding-tier subscribers (and their sub-DJs) can use email invites.
+function requireEmailTier(req, res, next) {
+  if (!userHasPlannerAccess(req.user)) {
+    return res.status(403).json({ error: 'Email invites are available on the PRO WEDDING tiers.' });
+  }
+  next();
+}
+
+// Status of the caller's Resend connection (never returns the key itself).
+app.get('/api/resend/status', auth.requireAuth, (req, res) => {
+  const u = req.user;
+  const key = u.resend_api_key || '';
+  res.json({
+    connected: !!(u.resend_api_key && u.resend_from),
+    from: u.resend_from || '',
+    fromName: u.resend_from_name || '',
+    hint: key ? ('re_••••' + key.slice(-4)) : '',
+    inherited: !u.resend_api_key && !!db.resendConfigFor(u.id),   // using parent's setup
+  });
+});
+
+// Save/update the caller's Resend config.
+app.post('/api/resend/config', auth.requireAuth, requireEmailTier, (req, res) => {
+  const b = req.body || {};
+  const from = (b.from || '').trim().slice(0, 160);
+  const fromName = (b.fromName || '').trim().slice(0, 80);
+  const apiKey = (b.apiKey || '').trim();
+  if (from && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(from)) {
+    return res.status(400).json({ error: 'Enter a valid from-address (e.g. invites@yourdomain.com).' });
+  }
+  // Only overwrite the key if a new one was supplied (so they can edit from-name without re-pasting).
+  const patch = { from, fromName };
+  if (apiKey) {
+    if (!/^re_/.test(apiKey)) return res.status(400).json({ error: 'That does not look like a Resend key (should start with re_).' });
+    patch.apiKey = apiKey;
+  }
+  db.setResendConfig(req.user.id, patch);
+  res.json({ ok: true });
+});
+
+// Disconnect Resend.
+app.delete('/api/resend/config', auth.requireAuth, (req, res) => {
+  db.clearResendConfig(req.user.id);
+  res.json({ ok: true });
+});
+
+// Send a test email to the caller's own login email.
+app.post('/api/resend/test', auth.requireAuth, requireEmailTier, async (req, res) => {
+  const cfg = db.resendConfigFor(req.user.id);
+  if (!cfg) return res.status(400).json({ error: 'Connect Resend first (key + verified from-address).' });
+  const out = await sendViaResend(cfg, {
+    to: req.user.email,
+    subject: 'Spinlist test email ✓',
+    html: '<p>This is a test from Spinlist. Your Resend email is set up correctly.</p>',
+  });
+  if (!out.ok) return res.status(502).json({ error: out.error });
+  res.json({ ok: true });
+});
+
+// Email a wedding invite to the couple, via the DJ's Resend account.
+app.post('/api/weddings/:id/email-invite', auth.requireAuth, requireEmailTier, async (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can send this invite.' });
+  }
+  const to = (req.body || {}).to && String(req.body.to).trim();
+  if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'Enter the couple’s email address.' });
+  const cfg = db.resendConfigFor(req.user.id);
+  if (!cfg) return res.status(400).json({ error: 'Connect Resend first.', needsSetup: true });
+
+  const link = `${BASE_URL}/wedding.html?code=${encodeURIComponent(w.invite_code)}`;
+  const djName = escapeHtml(req.user.name || cfg.fromName || 'Your DJ');
+  const lockLine = w.lock_date === 0 ? '' : (() => {
+    const lock = (typeof w.lock_date === 'number') ? w.lock_date : (w.wedding_date ? w.wedding_date - 14 * 864e5 : null);
+    return lock ? `<p>Please finish your choices by <b>${new Date(lock).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</b> so we can prepare your music.</p>` : '';
+  })();
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">
+      <h2>You're invited to plan your wedding music 🎵</h2>
+      <p>${djName} has invited you to choose your songs on Spinlist.</p>
+      <p><a href="${link}" style="display:inline-block;background:#1b2440;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Open your wedding planner →</a></p>
+      <p style="color:#555;font-size:14px">Or go to spinlist.co.uk/wedding.html and enter code <b>${escapeHtml(w.invite_code)}</b>.</p>
+      ${lockLine}
+    </div>`;
+  const out = await sendViaResend(cfg, { to, subject: 'Plan your wedding music with ' + (req.user.name || 'your DJ'), html, replyTo: req.user.email });
+  if (!out.ok) return res.status(502).json({ error: out.error });
+  res.json({ ok: true });
+});
+
+// Email a sub-DJ their login invite, via the owner's Resend account.
+app.post('/api/team/:id/email-invite', auth.requireAuth, requireEmailTier, async (req, res) => {
+  const dj = db.getUserById(req.params.id);
+  if (!dj || dj.role !== 'subdj' || dj.parent_id !== req.user.id) {
+    return res.status(404).json({ error: 'DJ not found.' });
+  }
+  const cfg = db.resendConfigFor(req.user.id);
+  if (!cfg) return res.status(400).json({ error: 'Connect Resend first.', needsSetup: true });
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">
+      <h2>You've been added as a DJ on Spinlist</h2>
+      <p>Sign in to see the events and weddings assigned to you.</p>
+      <p><b>Login page:</b> <a href="${BASE_URL}">${BASE_URL}</a><br><b>Email:</b> ${escapeHtml(dj.email)}</p>
+      <p style="color:#555;font-size:14px">Use the password you were given when your account was set up. If you don't have it, ask ${escapeHtml(req.user.name || 'your organiser')} for a reset.</p>
+    </div>`;
+  const out = await sendViaResend(cfg, { to: dj.email, subject: 'Your Spinlist DJ login', html, replyTo: req.user.email });
+  if (!out.ok) return res.status(502).json({ error: out.error });
+  res.json({ ok: true });
+});
+
+
 app.post('/api/redeem', auth.requireAuth, (req, res) => {
   const c = db.getCode((req.body || {}).code);
   if (!c || !c.active) return res.status(404).json({ error: 'That code is not valid.' });
@@ -1728,7 +1866,7 @@ function shapeResults(json) {
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
   const p = PLANS[u.plan];
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u) };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u) };
 }
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public')));

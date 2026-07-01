@@ -171,7 +171,8 @@ function renderList(){
         </div>
       </div>
       <div class="dj-actions">
-        ${(dj.isMe||dj.linked)?'':`<button class="btn btn-ghost btn-sm" onclick="inviteDj('${dj.id}','${esc(dj.name||dj.email)}','${esc(dj.email)}')">Invite</button>`}
+        ${(dj.isMe||dj.linked)?'':`<button class="btn btn-ghost btn-sm" onclick="inviteDj('${dj.id}','${esc(dj.name||dj.email)}','${esc(dj.email)}')">Copy invite</button>
+        ${ME.emailInvites?`<button class="btn btn-ghost btn-sm" onclick="emailInviteDj('${dj.id}','${esc(dj.email)}')">✉ Email invite</button>`:''}`}
         <button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit${dj.linked?' team profile':''}</button>
       </div>
     </div>`;
@@ -263,6 +264,19 @@ async function inviteDj(id,label,email){
     const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();
     try{document.execCommand('copy');toast('Invite for '+label+' copied ✓');}catch(_){toast('Could not copy — select the text manually');}
     document.body.removeChild(ta);
+  }
+}
+// Email a sub-DJ their login. Uses the owner's Resend account if connected,
+// otherwise falls back to the owner's own email app.
+async function emailInviteDj(id,email){
+  try{
+    await api('/api/team/'+id+'/email-invite',{method:'POST',body:JSON.stringify({})});
+    toast('Login emailed to '+email+' ✓');
+  }catch(e){
+    if(/connect resend|set up/i.test(e.message)){
+      toast('Opening your email app (connect Resend in Account to send directly)');
+      window.location.href='mailto:'+encodeURIComponent(email)+'?subject='+encodeURIComponent('Your Spinlist DJ login')+'&body='+encodeURIComponent(inviteText(email));
+    }else{ toast(e.message); }
   }
 }
 function removeDj(id,label,linked){

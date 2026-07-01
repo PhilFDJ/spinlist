@@ -779,7 +779,7 @@ function renderPlan(){
     </div>
     ${isDJ&&!DEMO&&w.inviteCode?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
-      <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button><button class="btn btn-ghost btn-sm" onclick="emailWeddingInvite()">✉ Email invite</button></div>
     </div>`:''}
     ${isDJ&&!DEMO?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><b>Song choice deadline</b><div class="muted">After this date the couple can't edit their choices — giving you time to prep. You can still edit anytime.${w.lockIsDefault?' <span style="color:var(--plum)">Defaulting to 14 days before the wedding — set your own below to change it.</span>':''}</div></div>
@@ -1090,6 +1090,25 @@ function copyInvite(code){
     msg+='\n\n⏰ Please finish your song choices by '+fmtWeddingDate(CURRENT.lockDate)+'. After that date your choices lock so we can prepare your music.';
   }
   navigator.clipboard?.writeText(msg).then(()=>toast('Invite copied — includes the deadline'),()=>toast('Copied: '+link));
+}
+// Email the couple their invite. Uses the DJ's Resend account if connected;
+// otherwise falls back to opening the DJ's own email app.
+async function emailWeddingInvite(){
+  const to=prompt("Couple's email address:");
+  if(!to)return;
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim())){toast('That does not look like an email address');return;}
+  try{
+    await api('/api/weddings/'+CURRENT.id+'/email-invite',{method:'POST',body:JSON.stringify({to:to.trim()})});
+    toast('Invite emailed to '+to.trim()+' ✓');
+  }catch(e){
+    // No Resend set up (or send failed) → fall back to the DJ's own email app.
+    const link=location.origin+'/wedding.html?code='+encodeURIComponent(CURRENT.inviteCode);
+    let body='Plan your wedding music with us on Spinlist:\n\n'+link+'\n(or go to spinlist.co.uk/wedding.html and enter code '+CURRENT.inviteCode+')';
+    if(CURRENT.lockDate)body+='\n\nPlease finish your song choices by '+fmtWeddingDate(CURRENT.lockDate)+'.';
+    if(/connect resend|set up/i.test(e.message)){toast('Opening your email app (connect Resend in Account to send directly)');}
+    else{toast(e.message);}
+    window.location.href='mailto:'+encodeURIComponent(to.trim())+'?subject='+encodeURIComponent('Plan your wedding music')+'&body='+encodeURIComponent(body);
+  }
 }
 async function saveLockDate(){
   const v=document.getElementById('lock-date-input').value;
