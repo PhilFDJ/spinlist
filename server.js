@@ -591,6 +591,25 @@ function canAccessWedding(user, w) {
   if (w.assigned_dj === user.id) return true;
   return false;
 }
+// Resolve the effective couple lock date for a wedding:
+//   - a positive timestamp  → explicit date the DJ set
+//   - 0                     → DJ explicitly cleared it (no lock)
+//   - null/undefined        → default to 14 days before the wedding date (if any)
+const LOCK_DEFAULT_DAYS = 14;
+function effectiveLockDate(w) {
+  if (!w) return null;
+  if (typeof w.lock_date === 'number') return w.lock_date === 0 ? null : w.lock_date;
+  if (w.wedding_date) return w.wedding_date - LOCK_DEFAULT_DAYS * 864e5;
+  return null;
+}
+// True if the couple's editing is locked (the effective lock date has passed). The
+// DJ/host is never locked out — they can still adjust after the couple's deadline.
+function coupleEditLocked(w, userId) {
+  const lock = effectiveLockDate(w);
+  if (!lock) return false;
+  if (userId === w.host_id || userId === w.assigned_dj) return false;  // DJ always edits
+  return Date.now() > lock;
+}
 // Sub-DJ inherits planner access from their parent owner (so they can open weddings).
 function userHasPlannerAccess(user) {
   if (user.role === 'subdj' && user.parent_id) {
@@ -636,7 +655,10 @@ function publicWedding(w, viewerId) {
       const op = owner && PLANS[owner.plan];
       return !!((op && op.spotifyExport) || (owner && owner.spotify_export));
     })(),
-    canEdit: !!(isHost || isCouple),
+    lockDate: effectiveLockDate(w),
+    lockIsDefault: (typeof w.lock_date !== 'number') && !!w.wedding_date,  // showing the 14-day default
+    coupleLocked: coupleEditLocked(w, viewerId),   // true only for a locked-out couple
+    canEdit: !!((isHost || isCouple) && !coupleEditLocked(w, viewerId)),
     createdAt: w.created_at,
   };
 }
@@ -718,6 +740,9 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
   if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  if (coupleEditLocked(w, req.user.id)) {
+    return res.status(423).json({ error: 'Song choices are locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
   }
   const songs = Array.isArray((req.body || {}).songs) ? req.body.songs : [];
   const updated = db.setWeddingBlockSongs(w.id, req.params.blockId, songs);
@@ -875,6 +900,9 @@ app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
   if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
+  if (coupleEditLocked(w, req.user.id)) {
+    return res.status(423).json({ error: 'Editing is locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
+  }
   const timeline = Array.isArray((req.body || {}).timeline) ? req.body.timeline : [];
   const updated = db.setWeddingTimeline(w.id, timeline);
   res.json({ wedding: publicWedding(updated, req.user.id) });
@@ -943,6 +971,9 @@ app.post('/api/weddings/:id/answers', auth.requireAuth, (req, res) => {
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
   if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  if (coupleEditLocked(w, req.user.id)) {
+    return res.status(423).json({ error: 'Editing is locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
   }
   const answers = (req.body || {}).answers || {};
   const updated = db.setWeddingAnswers(w.id, answers);
@@ -1284,7 +1315,27 @@ app.post('/api/weddings/:id/assign', auth.requireAuth, requireMultiOp, (req, res
   res.json({ ok: true, assignedDj: djId });
 });
 
-// --- user: redeem a code ---
+// DJ/host or assigned DJ: set (or clear) the couple's edit lock date.
+app.post('/api/weddings/:id/lock-date', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can set the lock date.' });
+  }
+  const raw = (req.body || {}).lockDate;
+  let lock;
+  if (raw === null || raw === '' || raw === undefined) {
+    lock = 0;                 // explicitly cleared — overrides the 14-day default
+  } else {
+    const ts = new Date(raw).getTime();
+    if (isNaN(ts)) return res.status(400).json({ error: 'Invalid date.' });
+    lock = ts;
+  }
+  db.setWeddingLockDate(w.id, lock);
+  res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id) });
+});
+
+
 app.post('/api/redeem', auth.requireAuth, (req, res) => {
   const c = db.getCode((req.body || {}).code);
   if (!c || !c.active) return res.status(404).json({ error: 'That code is not valid.' });

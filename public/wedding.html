@@ -769,6 +769,19 @@ function renderPlan(){
       <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
       <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button></div>
     </div>`:''}
+    ${isDJ&&!DEMO?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><b>Song choice deadline</b><div class="muted">After this date the couple can't edit their choices — giving you time to prep. You can still edit anytime.${w.lockIsDefault?' <span style="color:var(--plum)">Defaulting to 14 days before the wedding — set your own below to change it.</span>':''}</div></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="date" id="lock-date-input" value="${w.lockDate?new Date(w.lockDate).toISOString().slice(0,10):''}" style="font:inherit;font-size:.88rem;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
+        <button class="btn btn-neon btn-sm" onclick="saveLockDate()">Set</button>
+        ${w.lockDate?'<button class="btn btn-ghost btn-sm" onclick="clearLockDate()">Clear</button>':''}
+      </div>
+    </div>`:''}
+    ${(!isDJ&&w.lockDate)?`<div class="panel" style="border-color:${w.coupleLocked?'var(--plum)':'var(--line)'}">
+      ${w.coupleLocked
+        ? '<b>🔒 Your song choices are locked</b><div class="muted">The deadline set by your DJ has passed. Contact your DJ if you need to make a change.</div>'
+        : '<b>⏰ Please finish by '+fmtWeddingDate(w.lockDate)+'</b><div class="muted">After this date your choices lock so your DJ can prepare. You can keep editing until then.</div>'}
+    </div>`:''}
     ${(ME.multiOp&&!DEMO&&w.id!=='DEMO')?`<div class="panel" id="assign-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><b>Assign a DJ</b><div class="muted">Give one of your team this wedding to run. They'll see it in their events.</div></div>
       <div id="assign-control" class="muted" style="font-size:.9rem">Loading team…</div>
@@ -857,7 +870,7 @@ async function exportBlockSpotify(blockId,btn){
   }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
 }
 function renderBlocks(){
-  const w=CURRENT, isDJ=ME.role!=='couple', canEdit=!DEMO;
+  const w=CURRENT, isDJ=ME.role!=='couple', canEdit=!DEMO&&(CURRENT.canEdit!==false);
   document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
     const isLive=w.liveBlockId===b.id;
     const full=b.songs.length>=b.capacity;
@@ -1060,7 +1073,29 @@ async function toggleWedPlayed(blockId,songId){
 }
 function copyInvite(code){
   const link=location.origin+'/wedding.html?code='+encodeURIComponent(code);
-  navigator.clipboard?.writeText(link).then(()=>toast('Invite link copied'),()=>toast('Link: '+link));
+  let msg='Plan your wedding music with us on Spinlist:\n\n'+link+'\n(or go to spinlist.co.uk/wedding.html and enter code '+code+')';
+  if(CURRENT&&CURRENT.lockDate){
+    msg+='\n\n⏰ Please finish your song choices by '+fmtWeddingDate(CURRENT.lockDate)+'. After that date your choices lock so we can prepare your music.';
+  }
+  navigator.clipboard?.writeText(msg).then(()=>toast('Invite copied — includes the deadline'),()=>toast('Copied: '+link));
+}
+async function saveLockDate(){
+  const v=document.getElementById('lock-date-input').value;
+  if(!v){toast('Pick a date first');return;}
+  // Lock at end of the chosen day (23:59) so the couple has the whole day.
+  const ts=new Date(v+'T23:59:59').getTime();
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/lock-date',{method:'POST',body:JSON.stringify({lockDate:ts})});
+    CURRENT=d.wedding;renderPlan();
+    toast('Deadline set ✓');
+  }catch(e){ toast(e.message); }
+}
+async function clearLockDate(){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/lock-date',{method:'POST',body:JSON.stringify({lockDate:null})});
+    CURRENT=d.wedding;renderPlan();
+    toast('Deadline cleared');
+  }catch(e){ toast(e.message); }
 }
 
 /* ---------------- CSV EXPORT (DJ) ---------------- */
