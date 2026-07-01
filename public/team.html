@@ -168,6 +168,7 @@ function renderList(){
         </div>
       </div>
       <div class="dj-actions">
+        ${(dj.isMe||dj.linked)?'':`<button class="btn btn-ghost btn-sm" onclick="inviteDj('${dj.id}','${esc(dj.name||dj.email)}','${esc(dj.email)}')">Invite</button>`}
         <button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit${dj.linked?' team profile':''}</button>
         ${dj.isMe?'':`<button class="btn btn-danger btn-sm" onclick="removeDj('${dj.id}','${esc(dj.name||dj.email)}',${dj.linked})">${dj.linked?'Unlink':'Remove'}</button>`}
       </div>
@@ -248,6 +249,26 @@ function emailLoginDetails(){
   const subject=encodeURIComponent('Your Spinlist DJ login');
   const body=encodeURIComponent(loginDetailsText());
   window.location.href=`mailto:${encodeURIComponent(LAST_LOGIN.email)}?subject=${subject}&body=${body}`;
+}
+// Invite an existing sub-DJ later (no password — it's hashed and can't be shown again).
+function inviteText(email){
+  return `You've been added as a DJ on Spinlist.\n\nLogin page: ${location.origin}\nEmail: ${email}\n\nUse the password you were given when your account was set up. If you don't have it, ask for a password reset and a new one will be provided.\n\nSign in to see the events and weddings assigned to you.`;
+}
+async function inviteDj(id,label,email){
+  const txt=inviteText(email);
+  // Try clipboard first; offer to open email too.
+  let copied=false;
+  try{ await navigator.clipboard.writeText(txt); copied=true; }catch(e){
+    const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');copied=true;}catch(_){}
+    document.body.removeChild(ta);
+  }
+  toast(copied?('Invite for '+label+' copied ✓'):'Could not copy — opening email');
+  // Also offer to open a pre-filled email.
+  if(confirm('Invite details copied.\n\nOpen a pre-filled email to '+email+' now?')){
+    const subject=encodeURIComponent('Your Spinlist DJ login');
+    window.location.href=`mailto:${encodeURIComponent(email)}?subject=${subject}&body=${encodeURIComponent(txt)}`;
+  }
 }
 function removeDj(id,label,linked){
   const verb=linked?'Unlink':'Remove';
