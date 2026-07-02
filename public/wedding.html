@@ -115,6 +115,28 @@ function isDjView(){ return ME && ME.role!=='couple' && !PREVIEW_COUPLE; }
 function toggleCouplePreview(){ PREVIEW_COUPLE=!PREVIEW_COUPLE; renderPlan(); window.scrollTo(0,0); }
 
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2400);}
+// Themed replacement for prompt() — asks for an email, returns a Promise<string|null>.
+function askEmail(title,placeholder){
+  return new Promise(resolve=>{
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(5,9,20,.72);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px';
+    ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px;max-width:400px;width:100%">
+      <div style="font-weight:800;font-size:1.05rem;margin-bottom:14px">${title}</div>
+      <input id="__ae-input" type="email" placeholder="${placeholder||'you@example.com'}" style="width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink);margin-bottom:16px">
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost btn-sm" id="__ae-cancel">Cancel</button>
+        <button class="btn btn-neon btn-sm" id="__ae-ok">Send</button>
+      </div>
+    </div>`;
+    document.body.appendChild(ov);
+    const input=ov.querySelector('#__ae-input');input.focus();
+    const done=v=>{document.body.removeChild(ov);resolve(v);};
+    ov.querySelector('#__ae-cancel').onclick=()=>done(null);
+    ov.querySelector('#__ae-ok').onclick=()=>done(input.value.trim()||null);
+    input.onkeydown=e=>{if(e.key==='Enter')done(input.value.trim()||null);if(e.key==='Escape')done(null);};
+    ov.onclick=e=>{if(e.target===ov)done(null);};
+  });
+}
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 async function api(path,opts){
@@ -1094,7 +1116,7 @@ function copyInvite(code){
 // Email the couple their invite. Uses the DJ's Resend account if connected;
 // otherwise falls back to opening the DJ's own email app.
 async function emailWeddingInvite(){
-  const to=prompt("Couple's email address:");
+  const to=await askEmail("Email the couple their invite","couple@example.com");
   if(!to)return;
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim())){toast('That does not look like an email address');return;}
   try{

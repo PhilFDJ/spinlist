@@ -221,7 +221,7 @@ async function loadUsers(){
       d.users.map(u=>{
         const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
         const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';
-        const actions=u.isAdmin?'<span class="muted" style="font-size:.8rem">—</span>':`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="resetUserPass('${u.id}','${esc(u.email)}')">Reset password</button> <button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteUser('${u.id}','${esc(u.email)}')">Delete</button>`;
+        const actions=u.isAdmin?'<span class="muted" style="font-size:.8rem">—</span>':`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="resetUserPass('${u.id}','${esc(u.email)}')">Reset password</button> ${u.role==='subdj'?`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="makeIndependent('${u.id}','${esc(u.email)}')">Make independent</button> `:''}<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteUser('${u.id}','${esc(u.email)}')">Delete</button>`;
         return `<tr>
           <td><code>${esc(u.email)}</code>${adminTag}</td>
           <td>${esc(u.name||'—')}</td>
@@ -242,6 +242,13 @@ async function resetUserPass(id,email){
   const r=await fetch('/api/admin/users/'+encodeURIComponent(id)+'/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
   if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not reset.');return;}
   alert('Password reset for '+email);
+}
+async function makeIndependent(id,email){
+  if(!confirm('Make '+email+' an independent DJ?\n\nThey will keep any plan/code on their account and be able to create their own events, while staying linked to your team for assigned jobs.'))return;
+  const r=await fetch('/api/admin/users/'+encodeURIComponent(id)+'/make-independent',{method:'POST'});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not convert.');return;}
+  alert(email+' is now an independent DJ.');
+  loadUsers();
 }
 async function deleteUser(id,email){
   if(!confirm('Permanently delete '+email+'? This removes their account, events and weddings. This cannot be undone.'))return;

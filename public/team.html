@@ -146,7 +146,7 @@ function renderList(){
         ${noPass?'':`<label class="field"><span>New password <span style="font-weight:400">(leave blank to keep current)</span></span><input id="e-pass-${dj.id}" type="text" placeholder="Set a new temporary password" minlength="6"></label>`}
         <div class="err" id="e-err-${dj.id}"></div>
         <div class="dj-actions" style="justify-content:space-between">
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-neon btn-sm" onclick="saveDj('${dj.id}',${noPass})">Save</button>
             <button class="btn btn-ghost btn-sm" onclick="cancelEdit()">Cancel</button>
           </div>

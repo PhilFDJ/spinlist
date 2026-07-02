@@ -1092,6 +1092,7 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
       name: u.name || '',
       plan: u.plan || 'none',
       planName,
+      role: u.role || 'host',
       status,                       // 'paying' | 'comp' | 'active' | 'free'
       compUntil: u.comp_until || null,
       compCode: u.comp_code || null,
@@ -1128,6 +1129,15 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
     return res.status(400).json({ error: 'Admin accounts cannot be deleted here.' });
   }
   db.deleteUser(u.id);
+  res.json({ ok: true });
+});
+
+// --- admin: make a managed sub-DJ an independent DJ (keeps them linked to the team) ---
+app.post('/api/admin/users/:id/make-independent', requireAdmin, (req, res) => {
+  const u = db.getUserById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  if (u.role !== 'subdj') return res.status(400).json({ error: 'That account is not a managed sub-DJ.' });
+  db.convertSubToIndependent(u.id);
   res.json({ ok: true });
 });
 
