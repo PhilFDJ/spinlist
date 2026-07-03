@@ -1099,6 +1099,19 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
       eventsCreated: db.listEventsByHost(u.id).length,
       isAdmin: ADMIN_EMAILS.includes(u.email.toLowerCase()),
       createdAt: u.created_at || null,
+      // For couple accounts: their wedding date + the host DJ who owns the plan.
+      couple: (u.role === 'couple') ? (() => {
+        const w = db.getWeddingByCouple(u.id);
+        if (!w) return null;
+        const host = db.getUserById(w.host_id);
+        return {
+          weddingName: w.name || '',
+          weddingDate: w.wedding_date || null,
+          coupleNames: w.couple_names || '',
+          hostName: (host && host.name) || '',
+          hostEmail: (host && host.email) || '',
+        };
+      })() : null,
     };
   });
   const summary = {

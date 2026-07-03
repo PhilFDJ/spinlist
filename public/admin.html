@@ -49,6 +49,10 @@
   .msg{font-size:.9rem;margin-top:12px;min-height:18px}
   .signed-out{text-align:center;padding:80px 20px;color:var(--muted)}
   .hint{color:var(--muted);font-size:.82rem;margin-top:4px}
+  .info-badge{position:relative;display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:var(--plum,#7b6cff);color:#fff;font-size:.68rem;font-weight:800;cursor:help;margin-left:6px;vertical-align:middle}
+  .info-badge .tip{visibility:hidden;opacity:0;transition:.15s;position:absolute;bottom:130%;left:0;background:#0b1020;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:10px 12px;font-size:.78rem;font-weight:500;line-height:1.6;color:#e8ecf5;white-space:nowrap;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.4);text-align:left}
+  .info-badge:hover .tip{visibility:visible;opacity:1}
+  .info-badge .tip b{color:#fff}
 </style>
 </head>
 <body>
@@ -221,9 +225,17 @@ async function loadUsers(){
       d.users.map(u=>{
         const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
         const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';
+        // Couple accounts: hover info box with wedding date + host DJ.
+        let coupleInfo='';
+        if(u.role==='couple'&&u.couple){
+          const c=u.couple;
+          const wd=c.weddingDate?new Date(c.weddingDate).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'long',year:'numeric'}):'Not set';
+          const host=c.hostName?(esc(c.hostName)+(c.hostEmail?(' ('+esc(c.hostEmail)+')'):'')):(c.hostEmail?esc(c.hostEmail):'—');
+          coupleInfo=`<span class="info-badge">i<span class="tip"><b>Wedding:</b> ${esc(c.weddingName||c.coupleNames||'—')}<br><b>Date:</b> ${wd}<br><b>Host DJ:</b> ${host}</span></span>`;
+        }
         const actions=u.isAdmin?'<span class="muted" style="font-size:.8rem">—</span>':`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="resetUserPass('${u.id}','${esc(u.email)}')">Reset password</button> ${u.role==='subdj'?`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="makeIndependent('${u.id}','${esc(u.email)}')">Make independent</button> `:''}<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteUser('${u.id}','${esc(u.email)}')">Delete</button>`;
         return `<tr>
-          <td><code>${esc(u.email)}</code>${adminTag}</td>
+          <td><code>${esc(u.email)}</code>${adminTag}${coupleInfo}</td>
           <td>${esc(u.name||'—')}</td>
           <td>${esc(u.planName)}</td>
           <td>${badge(u.status)}</td>
