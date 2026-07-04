@@ -616,6 +616,13 @@ function coupleEditLocked(w, userId) {
   if (userId === w.host_id || userId === w.assigned_dj) return false;  // DJ always edits
   return Date.now() > lock;
 }
+// Fire a notification to the wedding's DJ when the COUPLE makes a change.
+function notifyCoupleActivity(w, actor, type, text) {
+  if (!w || !actor) return;
+  if (actor.id !== w.couple_id) return;          // only couple actions notify
+  const label = w.couple_names || w.name || 'A couple';
+  db.addNotification(w.host_id, { type, weddingId: w.id, weddingName: w.name || '', text: `${label}: ${text}` });
+}
 // Sub-DJ inherits planner access from their parent owner (so they can open weddings).
 function userHasPlannerAccess(user) {
   if (user.role === 'subdj' && user.parent_id) {
@@ -752,6 +759,8 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
   }
   const songs = Array.isArray((req.body || {}).songs) ? req.body.songs : [];
   const updated = db.setWeddingBlockSongs(w.id, req.params.blockId, songs);
+  const blk = (updated.blocks || []).find(b => b.id === req.params.blockId);
+  notifyCoupleActivity(w, req.user, 'songs', `updated songs${blk ? ' in “' + blk.name + '”' : ''}`);
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
@@ -911,6 +920,7 @@ app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
   }
   const timeline = Array.isArray((req.body || {}).timeline) ? req.body.timeline : [];
   const updated = db.setWeddingTimeline(w.id, timeline);
+  notifyCoupleActivity(w, req.user, 'timeline', 'updated the timeline');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
@@ -983,6 +993,7 @@ app.post('/api/weddings/:id/answers', auth.requireAuth, (req, res) => {
   }
   const answers = (req.body || {}).answers || {};
   const updated = db.setWeddingAnswers(w.id, answers);
+  notifyCoupleActivity(w, req.user, 'answers', 'answered questionnaire questions');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
@@ -1104,12 +1115,15 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
         const w = db.getWeddingByCouple(u.id);
         if (!w) return null;
         const host = db.getUserById(w.host_id);
+        const assigned = w.assigned_dj ? db.getUserById(w.assigned_dj) : null;
         return {
           weddingName: w.name || '',
           weddingDate: w.wedding_date || null,
           coupleNames: w.couple_names || '',
           hostName: (host && host.name) || '',
           hostEmail: (host && host.email) || '',
+          assignedName: assigned ? (assigned.name || assigned.email) : '',
+          assignedEmail: assigned ? assigned.email : '',
         };
       })() : null,
     };
@@ -1364,6 +1378,23 @@ app.post('/api/weddings/:id/lock-date', auth.requireAuth, (req, res) => {
   res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id) });
 });
 
+
+/* =========================================================
+   NOTIFICATIONS (DJ sees couple activity)
+   ========================================================= */
+app.get('/api/notifications', auth.requireAuth, (req, res) => {
+  res.json({
+    notifications: db.listNotifications(req.user.id).map(n => ({
+      id: n.id, type: n.type, weddingId: n.wedding_id, weddingName: n.wedding_name,
+      text: n.text, read: !!n.read, createdAt: n.created_at,
+    })),
+    unread: db.countUnread(req.user.id),
+  });
+});
+app.post('/api/notifications/read', auth.requireAuth, (req, res) => {
+  db.markNotificationsRead(req.user.id);
+  res.json({ ok: true });
+});
 
 /* =========================================================
    RESEND EMAIL (subscriber connects their own Resend key)

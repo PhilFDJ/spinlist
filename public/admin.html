@@ -231,7 +231,8 @@ async function loadUsers(){
           const c=u.couple;
           const wd=c.weddingDate?new Date(c.weddingDate).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'long',year:'numeric'}):'Not set';
           const host=c.hostName?(esc(c.hostName)+(c.hostEmail?(' ('+esc(c.hostEmail)+')'):'')):(c.hostEmail?esc(c.hostEmail):'—');
-          coupleInfo=`<span class="info-badge">i<span class="tip"><b>Wedding:</b> ${esc(c.weddingName||c.coupleNames||'—')}<br><b>Date:</b> ${wd}<br><b>Host DJ:</b> ${host}</span></span>`;
+          const assigned=c.assignedName?(esc(c.assignedName)+(c.assignedEmail?(' ('+esc(c.assignedEmail)+')'):'')):'Not assigned';
+          coupleInfo=`<span class="info-badge">i<span class="tip"><b>Wedding:</b> ${esc(c.weddingName||c.coupleNames||'—')}<br><b>Date:</b> ${wd}<br><b>Host DJ:</b> ${host}<br><b>Assigned DJ:</b> ${assigned}</span></span>`;
         }
         const actions=u.isAdmin?'<span class="muted" style="font-size:.8rem">—</span>':`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="resetUserPass('${u.id}','${esc(u.email)}')">Reset password</button> ${u.role==='subdj'?`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="makeIndependent('${u.id}','${esc(u.email)}')">Make independent</button> `:''}<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteUser('${u.id}','${esc(u.email)}')">Delete</button>`;
         return `<tr>

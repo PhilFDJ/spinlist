@@ -82,7 +82,9 @@
 <body>
 <header class="bar"><div class="wrap">
   <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
-  <nav id="wed-nav"><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+  <nav id="wed-nav"><span id="notif-bell" style="display:none;position:relative;cursor:pointer;margin-right:6px" onclick="toggleNotifPanel(event)">🔔<span id="notif-count" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--plum);color:#fff;font-size:.62rem;font-weight:800;min-width:16px;height:16px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 3px"></span></span><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+  <div id="notif-panel" style="display:none;position:fixed;top:60px;right:20px;width:340px;max-width:calc(100vw - 40px);max-height:70vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:300;padding:8px"></div>
+  <div id="gig-window" style="display:none;position:fixed;top:90px;right:20px;width:360px;max-width:calc(100vw - 40px);max-height:75vh;background:#0b1020;border:2px solid var(--neon);border-radius:16px;box-shadow:0 16px 50px rgba(0,0,0,.6);z-index:290;overflow:hidden;display:none;flex-direction:column"></div>
 </div></header>
 
 <div class="wrap" id="root">
@@ -113,6 +115,93 @@ let PREVIEW_COUPLE=false;       // DJ previewing the couple's view
 // The account holder can preview the couple view via PREVIEW_COUPLE.
 function isDjView(){ return ME && ME.role!=='couple' && !PREVIEW_COUPLE; }
 function toggleCouplePreview(){ PREVIEW_COUPLE=!PREVIEW_COUPLE; renderPlan(); window.scrollTo(0,0); }
+
+/* ---------- Notification centre (DJ only) ---------- */
+let NOTIFS=[], NOTIF_SEEN=null;
+async function loadNotifs(firstLoad){
+  if(!ME||ME.role==='couple')return;
+  let d;
+  try{ d=await (await fetch('/api/notifications')).json(); }catch(e){ return; }
+  NOTIFS=d.notifications||[];
+  const bell=document.getElementById('notif-bell'),cnt=document.getElementById('notif-count');
+  if(bell)bell.style.display='inline-block';
+  if(cnt){ if(d.unread>0){cnt.style.display='flex';cnt.textContent=d.unread>9?'9+':d.unread;} else cnt.style.display='none'; }
+  // Toast newly-arrived unread items (not on the very first paint of the session).
+  if(!firstLoad){
+    NOTIFS.filter(n=>!n.read && (!NOTIF_SEEN||n.createdAt>NOTIF_SEEN)).slice(0,3).forEach(n=>toast('🔔 '+n.text));
+  }else{
+    // On first load, toast a summary if there's unread activity.
+    if(d.unread>0)toast('🔔 '+d.unread+' new update'+(d.unread>1?'s':'')+' from couples');
+  }
+  if(NOTIFS.length)NOTIF_SEEN=Math.max(...NOTIFS.map(n=>n.createdAt));
+}
+function toggleNotifPanel(e){
+  if(e)e.stopPropagation();
+  const p=document.getElementById('notif-panel');if(!p)return;
+  if(p.style.display==='block'){p.style.display='none';return;}
+  renderNotifPanel();p.style.display='block';
+  // Mark read after opening.
+  fetch('/api/notifications/read',{method:'POST'}).then(()=>{const c=document.getElementById('notif-count');if(c)c.style.display='none';NOTIFS.forEach(n=>n.read=true);});
+}
+function renderNotifPanel(){
+  const p=document.getElementById('notif-panel');if(!p)return;
+  if(!NOTIFS.length){p.innerHTML='<p class="muted" style="padding:16px;text-align:center;font-size:.88rem">No activity yet.</p>';return;}
+  const ago=ts=>{const s=(Date.now()-ts)/1000;if(s<60)return'just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';};
+  const icon=t=>t==='songs'?'🎵':t==='timeline'?'🕐':t==='answers'?'📋':'🔔';
+  p.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px 10px"><b style="font-size:.95rem">Notifications</b><button class="btn btn-ghost btn-sm" onclick="toggleNotifPanel(event)">Close</button></div>'+
+    NOTIFS.map(n=>`<div onclick="openWeddingFromNotif('${n.weddingId||''}')" style="display:flex;gap:10px;padding:10px;border-radius:10px;cursor:pointer;${n.read?'':'background:rgba(123,108,255,.1)'}" onmouseover="this.style.background='var(--paper-2)'" onmouseout="this.style.background='${n.read?'transparent':'rgba(123,108,255,.1)'}'">
+      <span style="font-size:1.1rem">${icon(n.type)}</span>
+      <div style="flex:1;min-width:0"><div style="font-size:.86rem">${esc(n.text)}</div><div class="muted" style="font-size:.72rem;margin-top:2px">${ago(n.createdAt)}</div></div>
+    </div>`).join('');
+}
+async function openWeddingFromNotif(wid){
+  document.getElementById('notif-panel').style.display='none';
+  if(!wid)return;
+  try{ const d=await api('/api/weddings/'+wid); CURRENT=d.wedding; renderPlan(); window.scrollTo(0,0); }catch(e){}
+}
+document.addEventListener('click',e=>{const p=document.getElementById('notif-panel');const b=document.getElementById('notif-bell');if(p&&p.style.display==='block'&&!p.contains(e.target)&&b&&!b.contains(e.target))p.style.display='none';});
+
+/* ---------- Gig window (floating, DJ + sub-DJ) ---------- */
+function openGigWindow(){
+  const gw=document.getElementById('gig-window');if(!gw)return;
+  renderGigWindow();
+  gw.style.display='flex';
+}
+function renderGigWindow(){
+  const gw=document.getElementById('gig-window');if(!gw||!CURRENT)return;
+  const q=CURRENT.questionnaire;
+  const answers=CURRENT.answers||{};
+  const flagged=(q&&q.questions||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
+  const rows=flagged.length?flagged.map(qq=>{
+    const a=answers[qq.id];
+    return `<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
+      <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);font-weight:700">${esc(qq.label)}</div>
+      <div style="font-size:1rem;color:#fff;margin-top:3px">${a?esc(a):'<span style="color:#6b7280">—</span>'}</div>
+    </div>`;
+  }).join(''):'<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template.</div>';
+  gw.innerHTML=`
+    <div id="gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
+      <b style="font-size:.95rem">📺 ${esc(CURRENT.coupleNames||CURRENT.name||'Gig')}</b>
+      <div style="display:flex;gap:6px">
+        <span onclick="refreshGig()" title="Refresh" style="cursor:pointer;font-weight:800">⟳</span>
+        <span onclick="document.getElementById('gig-window').style.display='none'" title="Close" style="cursor:pointer;font-weight:800">✕</span>
+      </div>
+    </div>
+    <div style="overflow:auto">${rows}</div>`;
+  makeGigDraggable();
+}
+async function refreshGig(){
+  try{ const d=await api('/api/weddings/'+CURRENT.id); CURRENT=d.wedding; renderGigWindow(); }catch(e){}
+}
+function makeGigDraggable(){
+  const gw=document.getElementById('gig-window');const head=document.getElementById('gig-head');if(!gw||!head)return;
+  let dx=0,dy=0,drag=false;
+  const down=e=>{drag=true;const p=e.touches?e.touches[0]:e;const r=gw.getBoundingClientRect();dx=p.clientX-r.left;dy=p.clientY-r.top;gw.style.right='auto';e.preventDefault();};
+  const move=e=>{if(!drag)return;const p=e.touches?e.touches[0]:e;gw.style.left=Math.max(0,Math.min(window.innerWidth-60,p.clientX-dx))+'px';gw.style.top=Math.max(0,Math.min(window.innerHeight-40,p.clientY-dy))+'px';};
+  const up=()=>{drag=false;};
+  head.onmousedown=down;document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+  head.ontouchstart=down;document.addEventListener('touchmove',move,{passive:false});document.addEventListener('touchend',up);
+}
 
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2400);}
 // Themed replacement for prompt() — asks for an email, returns a Promise<string|null>.
@@ -163,6 +252,11 @@ async function boot(){
     // Not logged in: if there's a code, show couple signup; else show a sign-in prompt.
     renderSignup(code);
     return;
+  }
+  if(ME.role!=='couple'){
+    // DJs: load notifications now and poll for couple activity.
+    loadNotifs(true);
+    setInterval(()=>loadNotifs(false),45000);
   }
   if(ME.role==='couple'){
     // Couples get a minimal page — only Log out in the nav.
@@ -748,6 +842,7 @@ function renderTplQuestions(){
         </select>
         ${(q.type==='choice'||q.type==='multiselect')?`<input value="${esc((q.options||[]).join(', '))}" placeholder="Options, comma-separated" oninput="editingTpl.questions[${i}].options=this.value.split(',').map(s=>s.trim()).filter(Boolean)"
           style="flex:1;min-width:200px;font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">`:''}
+        ${q.type==='header'?'':`<label style="display:flex;gap:6px;align-items:center;font-size:.8rem;color:var(--muted);cursor:pointer;white-space:nowrap"><input type="checkbox" ${q.gigShow?'checked':''} onchange="editingTpl.questions[${i}].gigShow=this.checked"> 📺 Gig window</label>`}
       </div>
     </div>`;
   }).join('')||'<p class="muted" style="margin-bottom:8px">No questions yet.</p>';
@@ -795,6 +890,7 @@ function renderPlan(){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
         <button class="btn btn-ghost btn-sm" onclick="exportWeddingPDF()">⬇ PDF run-sheet</button>
+        <button class="btn btn-ghost btn-sm" onclick="openGigWindow()">📺 Gig window</button>
         <button class="btn btn-ghost btn-sm" onclick="toggleCouplePreview()">👁 Preview couple's view</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
@@ -1195,9 +1291,13 @@ async function exportWeddingPDF(){
   function clip(s,n){s=(s||'').toString();return s.length>n?s.slice(0,n-1)+'…':s;}
   function need(h){ if(y+h>284){doc.addPage();y=18;} }
 
-  // Header band
-  doc.setFillColor(13,18,40);doc.rect(0,0,PW,34,'F');
-  doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(20);
+  // Header band — use the agency's accent colour (fall back to dark navy).
+  const hexToRgb=h=>{const m=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((h||'').trim());return m?[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]:null;};
+  const readableOn=rgb=>((rgb[0]*299+rgb[1]*587+rgb[2]*114)/1000>150?[13,11,20]:[255,255,255]);
+  const accent=(w.branding&&w.branding.color&&hexToRgb(w.branding.color))||[13,18,40];
+  const headText=readableOn(accent);
+  doc.setFillColor(accent[0],accent[1],accent[2]);doc.rect(0,0,PW,34,'F');
+  doc.setTextColor(headText[0],headText[1],headText[2]);doc.setFont('helvetica','bold');doc.setFontSize(20);
   doc.text(clip(w.name||'Wedding',40),M,16);
   doc.setFont('helvetica','normal');doc.setFontSize(11);
   let sub=[];if(w.coupleNames)sub.push(w.coupleNames);if(w.weddingDate)sub.push(fmtWeddingDate(w.weddingDate));
@@ -1355,11 +1455,14 @@ function renderQuestionnaire(){
     return;
   }
   const answers=w.answers||{};
-  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><h2>${esc(q.name||'Questionnaire')}</h2>${isDJ?'<span class="muted" style="font-size:.85rem">Couple&#39;s answers</span>':''}</div>
+  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>${esc(q.name||'Questionnaire')}</h2>${isDJ?`<div style="display:flex;gap:8px;align-items:center"><span class="muted" style="font-size:.85rem">${answersEditMode?'Editing answers':'Couple&#39;s answers'}</span><button class="btn ${answersEditMode?'btn-neon':'btn-ghost'} btn-sm" onclick="toggleAnswerEdit()">${answersEditMode?'Done':'✎ Edit answers'}</button></div>`:''}</div>
     ${!isDJ?'<p class="lead" style="margin-bottom:8px">Answer these for your DJ — saves automatically.</p>':''}
-    <div class="panel">${q.questions.map(qq=>questionField(qq,answers[qq.id],isDJ)).join('')}</div>`;
+    ${isDJ&&answersEditMode?'<p class="muted" style="margin-bottom:8px;font-size:.85rem">You are editing on the couple&#39;s behalf. Changes save automatically.</p>':''}
+    <div class="panel">${q.questions.map(qq=>questionField(qq,answers[qq.id],isDJ&&!answersEditMode)).join('')}</div>`;
 }
-function questionField(q,val,isDJ){
+let answersEditMode=false;
+function toggleAnswerEdit(){ answersEditMode=!answersEditMode; renderQuestionnaire(); }
+function questionField(q,val,readOnly){
   if(q.type==='header'){
     return `<div style="padding:18px 0 4px;border-top:2px solid var(--line);margin-top:6px">
       <div style="font-size:.78rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--plum)">${esc(q.label)}</div>
@@ -1368,8 +1471,8 @@ function questionField(q,val,isDJ){
   val=val||'';
   const lbl=`<div style="font-weight:700;margin-bottom:8px">${esc(q.label)}</div>`;
   let input;
-  if(isDJ){
-    // DJ sees read-only answers
+  if(readOnly){
+    // DJ sees read-only answers (unless they toggled Edit answers)
     input=`<div class="muted" style="background:var(--paper-2);border-radius:8px;padding:10px 12px;min-height:20px">${val?esc(val):'<i>No answer yet</i>'}</div>`;
   }else if(q.type==='yesno'){
     input=`<div style="display:flex;gap:8px">
