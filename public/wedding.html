@@ -178,7 +178,8 @@ function renderGigWindow(){
       <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);font-weight:700">${esc(qq.label)}</div>
       <div style="font-size:1rem;color:#fff;margin-top:3px">${a?esc(a):'<span style="color:#6b7280">—</span>'}</div>
     </div>`;
-  }).join(''):'<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template.</div>';
+  }).join(''):'<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template, then save the template.</div>';
+  const diag=`<div style="padding:6px 14px;font-size:.68rem;color:#5b6479;border-top:1px solid rgba(255,255,255,.08)">Debug: questionnaire ${q?'present':'MISSING'} · ${q&&q.questions?q.questions.length:0} questions · ${flagged.length} flagged for gig</div>`;
   gw.innerHTML=`
     <div id="gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
       <b style="font-size:.95rem">📺 ${esc(CURRENT.coupleNames||CURRENT.name||'Gig')}</b>
@@ -188,7 +189,7 @@ function renderGigWindow(){
         <span onclick="document.getElementById('gig-window').style.display='none'" title="Close" style="cursor:pointer;font-weight:800">✕</span>
       </div>
     </div>
-    <div style="overflow:auto">${rows}</div>`;
+    <div style="overflow:auto">${rows}</div>${diag}`;
   makeGigDraggable();
 }
 async function refreshGig(){
