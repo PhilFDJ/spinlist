@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gig Window · Spinlist</title>
+<link rel="icon" href="/img/favicon-32.png" sizes="32x32">
+<style>
+  :root{ --neon:#c1ff2f; --ink:#e8ecf5; --muted:#8b93a7; --line:rgba(255,255,255,.1); --bg:#070b16; --panel:#0d1424; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;background:var(--neon);color:#0a1228}
+  header .title{font-weight:800;font-size:1.15rem;display:flex;align-items:center;gap:8px;min-width:0}
+  header .title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  header .meta{font-size:.8rem;font-weight:700;opacity:.75;white-space:nowrap}
+  main{padding:8px 0 40px}
+  .row{padding:16px 22px;border-bottom:1px solid var(--line)}
+  .row .q{font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--neon);font-weight:800}
+  .row .a{font-size:1.35rem;line-height:1.35;color:#fff;margin-top:6px;word-wrap:break-word}
+  .row .a.empty{color:#5b6479;font-size:1.05rem;font-style:italic}
+  .status{padding:60px 22px;text-align:center;color:var(--muted)}
+  .foot{position:fixed;bottom:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:var(--panel);border-top:1px solid var(--line);font-size:.72rem;color:var(--muted)}
+  .foot button{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:5px 10px;font:inherit;font-size:.72rem;cursor:pointer}
+  .foot button:hover{color:var(--ink)}
+  @media(max-width:420px){ .row .a{font-size:1.15rem} }
+</style>
+</head>
+<body>
+  <header>
+    <div class="title">📺 <span id="wed-name">Gig window</span></div>
+    <div class="meta" id="wed-date"></div>
+  </header>
+  <main id="main"><div class="status">Loading…</div></main>
+  <div class="foot"><span id="updated">—</span><button onclick="load()">Refresh now</button></div>
+<script>
+const params=new URLSearchParams(location.search);
+const WID=params.get('w');
+function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function load(){
+  const main=document.getElementById('main');
+  if(!WID){ main.innerHTML='<div class="status">No wedding specified.</div>'; return; }
+  let d;
+  try{
+    const r=await fetch('/api/weddings/'+encodeURIComponent(WID));
+    if(r.status===401){ main.innerHTML='<div class="status">Please <a href="/" style="color:var(--neon)">log in</a> on the main site, then reopen this window.</div>'; return; }
+    if(!r.ok){ main.innerHTML='<div class="status">Could not load this wedding.</div>'; return; }
+    d=await r.json();
+  }catch(e){ main.innerHTML='<div class="status">Connection problem — will retry.</div>'; return; }
+  const w=d.wedding;
+  document.getElementById('wed-name').textContent=w.coupleNames||w.name||'Gig window';
+  document.getElementById('wed-date').textContent=w.weddingDate?new Date(w.weddingDate).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'';
+  document.title='📺 '+(w.coupleNames||w.name||'Gig')+' · Spinlist';
+  const q=w.questionnaire, answers=w.answers||{};
+  const flagged=((q&&q.questions)||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
+  if(!flagged.length){
+    main.innerHTML='<div class="status">No questions are flagged for the gig window yet.<br>Tick “📺 Gig window” on questions in your template, then re-apply it to this wedding.</div>';
+  }else{
+    main.innerHTML=flagged.map(qq=>{
+      const a=answers[qq.id];
+      return '<div class="row"><div class="q">'+esc(qq.label)+'</div><div class="a'+(a?'':' empty')+'">'+(a?esc(a):'No answer yet')+'</div></div>';
+    }).join('');
+  }
+  document.getElementById('updated').textContent='Updated '+new Date().toLocaleTimeString();
+}
+load();
+setInterval(load,30000);   // auto-refresh every 30s
+</script>
+</body>
+</html>
