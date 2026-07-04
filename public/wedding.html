@@ -198,6 +198,11 @@ async function refreshGig(){
 function popOutGig(){
   if(!CURRENT)return;
   const w=window.open('/gig.html?w='+encodeURIComponent(CURRENT.id),'gig_'+CURRENT.id,'width=420,height=640');
+  // Hand the child the exact data we already have, so it shows immediately and
+  // always matches the in-page window — even if the stored snapshot differs.
+  if(w){
+    try{ w.__SEED_WEDDING=JSON.parse(JSON.stringify(CURRENT)); }catch(e){}
+  }
   // Close the in-page floating panel since it's now popped out.
   const gw=document.getElementById('gig-window');if(gw)gw.style.display='none';
   if(w)w.focus();
