@@ -173,12 +173,14 @@ function renderGigWindow(){
   const answers=CURRENT.answers||{};
   const flagged=(q&&q.questions||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
   const rows=flagged.length?flagged.map(qq=>{
-    const a=answers[qq.id];
+    const a=answers[qq.id]||'';
     return `<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
       <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);font-weight:700">${esc(qq.label)}</div>
-      <div style="font-size:1rem;color:#fff;margin-top:3px">${a?esc(a):'<span style="color:#6b7280">—</span>'}</div>
+      <input value="${esc(a)}" placeholder="tap to add…" onchange="saveGigAnswer('${qq.id}',this.value)"
+        style="width:100%;font-size:1rem;color:#fff;margin-top:3px;background:transparent;border:none;border-bottom:1px dashed transparent;padding:2px 0;font-family:inherit"
+        onfocus="this.style.borderBottomColor='var(--neon)'" onblur="this.style.borderBottomColor='transparent'">
     </div>`;
-  }).join(''):'<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template, then save the template. <a href="#" onclick="window.open(\'/api/weddings/\'+CURRENT.id+\'/gig-diag\');return false" style="color:var(--neon)">🔍 Diagnose</a></div>';
+  }).join(''):'<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template, then save the template.</div>';
   gw.innerHTML=`
     <div id="gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
       <b style="font-size:.95rem">📺 ${esc(CURRENT.coupleNames||CURRENT.name||'Gig')}</b>
@@ -194,6 +196,16 @@ function renderGigWindow(){
 }
 async function refreshGig(){
   try{ const d=await api('/api/weddings/'+CURRENT.id); CURRENT=d.wedding; renderGigWindow(); }catch(e){}
+}
+// Fill in / edit a gig-window answer live at the gig (DJ can complete blanks).
+async function saveGigAnswer(qid,val){
+  CURRENT.answers=CURRENT.answers||{};
+  CURRENT.answers[qid]=val;
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/answers',{method:'POST',body:JSON.stringify({answers:CURRENT.answers})});
+    CURRENT=d.wedding;
+    toast('Saved ✓');
+  }catch(e){ toast('Could not save: '+e.message); }
 }
 // Open the gig window as its own standalone browser window (drag to a 2nd screen).
 function popOutGig(){

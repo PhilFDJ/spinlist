@@ -632,23 +632,27 @@ function userHasPlannerAccess(user) {
   return planHasWeddingPlanner(user);
 }
 
-// Return the wedding's questionnaire with gig-window flags resolved LIVE from the
-// owner's current templates (matched per-question by label). This means ticking
-// “gig window” on a template shows up immediately, even for old snapshots whose
-// stored questions predate the flag.
-function questionnaireWithGigFlags(w) {
+// Return the wedding's questionnaire with gig-window flags resolved LIVE from
+// templates (matched per-question by label). We consider BOTH the wedding owner's
+// templates AND the current viewer's templates, so a sub-DJ or co-DJ who ticked
+// their own copy still gets the flags. Any template flagging a label wins.
+function questionnaireWithGigFlags(w, viewerId) {
   const q = w.questionnaire;
   if (!q || !Array.isArray(q.questions)) return q || null;
-  const templates = db.listTemplates(w.host_id) || [];
+  const owners = [w.host_id];
+  if (viewerId && viewerId !== w.host_id) owners.push(viewerId);
+  // Also include the viewer's parent owner if they're a sub-DJ.
+  const viewer = viewerId ? db.getUserById(viewerId) : null;
+  if (viewer && viewer.role === 'subdj' && viewer.parent_id) owners.push(viewer.parent_id);
   const flagByLabel = {};
-  templates.forEach(t => (t.questions || []).forEach(tq => {
+  owners.forEach(oid => (db.listTemplates(oid) || []).forEach(t => (t.questions || []).forEach(tq => {
     if (tq.label) { const k = tq.label.trim().toLowerCase(); if (tq.gigShow) flagByLabel[k] = true; else if (!(k in flagByLabel)) flagByLabel[k] = false; }
-  }));
+  })));
   return {
     name: q.name,
     questions: q.questions.map(qq => {
       const k = (qq.label || '').trim().toLowerCase();
-      const live = (k in flagByLabel) ? flagByLabel[k] : !!qq.gigShow;   // template wins, else stored
+      const live = flagByLabel[k] === true ? true : (k in flagByLabel ? false : !!qq.gigShow);
       return Object.assign({}, qq, { gigShow: live });
     }),
   };
@@ -665,7 +669,7 @@ function publicWedding(w, viewerId) {
     coupleJoined: !!w.couple_id,
     blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
-    questionnaire: questionnaireWithGigFlags(w),
+    questionnaire: questionnaireWithGigFlags(w, viewerId),
     answers: w.answers || {},
     liveBlockId: w.live_block_id || null,
     liveEventId: w.live_event_id || null,
@@ -1007,7 +1011,7 @@ app.post('/api/weddings/:id/questionnaire', auth.requireAuth, (req, res) => {
 app.post('/api/weddings/:id/answers', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+  if (req.user.id !== w.host_id && req.user.id !== w.couple_id && w.assigned_dj !== req.user.id) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   if (coupleEditLocked(w, req.user.id)) {
@@ -1404,31 +1408,6 @@ app.post('/api/weddings/:id/lock-date', auth.requireAuth, (req, res) => {
 /* =========================================================
    NOTIFICATIONS (DJ sees couple activity)
    ========================================================= */
-
-// TEMP diagnostic: compare a wedding's questionnaire labels vs the owner's template flags.
-app.get('/api/weddings/:id/gig-diag', auth.requireAuth, (req, res) => {
-  const w = db.getWedding(req.params.id);
-  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (!canAccessWedding(req.user, w)) return res.status(403).json({ error: 'no access' });
-  const q = w.questionnaire;
-  const templates = db.listTemplates(w.host_id) || [];
-  const tplFlags = {};
-  templates.forEach(t => (t.questions || []).forEach(tq => {
-    if (tq.label) tplFlags[tq.label] = { normalized: tq.label.trim().toLowerCase(), gigShow: !!tq.gigShow };
-  }));
-  res.json({
-    weddingHostId: w.host_id,
-    myUserId: req.user.id,
-    templateCount: templates.length,
-    templateFlags: tplFlags,
-    questionnaireName: q ? q.name : null,
-    questionnaireQuestions: q && q.questions ? q.questions.map(qq => ({
-      label: qq.label, normalized: (qq.label || '').trim().toLowerCase(),
-      storedGigShow: qq.gigShow === undefined ? 'MISSING' : qq.gigShow, type: qq.type,
-    })) : null,
-    resolvedFlagged: (questionnaireWithGigFlags(w).questions || []).filter(x => x.gigShow).map(x => x.label),
-  });
-});
 
 app.get('/api/notifications', auth.requireAuth, (req, res) => {
   res.json({
