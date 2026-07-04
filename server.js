@@ -632,6 +632,28 @@ function userHasPlannerAccess(user) {
   return planHasWeddingPlanner(user);
 }
 
+// Return the wedding's questionnaire with gig-window flags resolved LIVE from the
+// owner's current templates (matched per-question by label). This means ticking
+// “gig window” on a template shows up immediately, even for old snapshots whose
+// stored questions predate the flag.
+function questionnaireWithGigFlags(w) {
+  const q = w.questionnaire;
+  if (!q || !Array.isArray(q.questions)) return q || null;
+  const templates = db.listTemplates(w.host_id) || [];
+  const flagByLabel = {};
+  templates.forEach(t => (t.questions || []).forEach(tq => {
+    if (tq.label) { const k = tq.label.trim().toLowerCase(); if (tq.gigShow) flagByLabel[k] = true; else if (!(k in flagByLabel)) flagByLabel[k] = false; }
+  }));
+  return {
+    name: q.name,
+    questions: q.questions.map(qq => {
+      const k = (qq.label || '').trim().toLowerCase();
+      const live = (k in flagByLabel) ? flagByLabel[k] : !!qq.gigShow;   // template wins, else stored
+      return Object.assign({}, qq, { gigShow: live });
+    }),
+  };
+}
+
 function publicWedding(w, viewerId) {
   if (!w) return null;
   const isHost = viewerId && viewerId === w.host_id;
@@ -643,7 +665,7 @@ function publicWedding(w, viewerId) {
     coupleJoined: !!w.couple_id,
     blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
-    questionnaire: w.questionnaire || null,
+    questionnaire: questionnaireWithGigFlags(w),
     answers: w.answers || {},
     liveBlockId: w.live_block_id || null,
     liveEventId: w.live_event_id || null,
