@@ -49,6 +49,10 @@
   .msg{font-size:.9rem;margin-top:12px;min-height:18px}
   .signed-out{text-align:center;padding:80px 20px;color:var(--muted)}
   .hint{color:var(--muted);font-size:.82rem;margin-top:4px}
+  .info-badge{position:relative;display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:var(--plum,#7b6cff);color:#fff;font-size:.68rem;font-weight:800;cursor:help;margin-left:6px;vertical-align:middle}
+  .info-badge .tip{visibility:hidden;opacity:0;transition:.15s;position:absolute;bottom:130%;left:0;background:#0b1020;border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:10px 12px;font-size:.78rem;font-weight:500;line-height:1.6;color:#e8ecf5;white-space:nowrap;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.4);text-align:left}
+  .info-badge:hover .tip{visibility:visible;opacity:1}
+  .info-badge .tip b{color:#fff}
 </style>
 </head>
 <body>
@@ -80,6 +84,7 @@ async function boot(){
       <div class="seg">
         <button id="seg-comp" class="on" onclick="setKind('comp')">Complimentary</button>
         <button id="seg-discount" onclick="setKind('discount')">Discount</button>
+        <button id="seg-addon" onclick="setKind('addon')">Spotify add-on</button>
       </div>
 
       <div id="comp-fields">
@@ -87,6 +92,11 @@ async function boot(){
           <div class="field"><label>Plan granted</label><select id="c-plan"><option value="pro">BASIC</option><option value="studio">PRO</option><option value="prowedding">PRO WEDDING</option><option value="proweddingmulti">PRO WEDDING MULTI-OP</option></select></div>
           <div class="field"><label>Duration (months)</label><input id="c-months" type="number" min="1" placeholder="blank = forever"></div>
         </div>
+        <div class="field" style="margin-top:8px"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="c-spotify"> Also grant Spotify export (permanent)</label></div>
+      </div>
+
+      <div id="addon-fields" style="display:none">
+        <p class="hint">Grants permanent Spotify export only — no plan change. Use this to gift the add-on to a paying subscriber; they keep their current plan.</p>
       </div>
 
       <div id="discount-fields" style="display:none">
@@ -130,8 +140,10 @@ function setKind(k){
   KIND=k;
   document.getElementById('seg-comp').classList.toggle('on',k==='comp');
   document.getElementById('seg-discount').classList.toggle('on',k==='discount');
+  document.getElementById('seg-addon').classList.toggle('on',k==='addon');
   document.getElementById('comp-fields').style.display=k==='comp'?'block':'none';
   document.getElementById('discount-fields').style.display=k==='discount'?'block':'none';
+  document.getElementById('addon-fields').style.display=k==='addon'?'block':'none';
 }
 
 async function createCode(){
@@ -144,10 +156,12 @@ async function createCode(){
   if(KIND==='comp'){
     body.plan=document.getElementById('c-plan').value;
     body.months=document.getElementById('c-months').value||null;
-  }else{
+    body.grantsSpotify=document.getElementById('c-spotify').checked;
+  }else if(KIND==='discount'){
     body.discountKind=document.getElementById('d-kind').value;
     body.discountVal=document.getElementById('d-val').value;
   }
+  // addon: no extra fields — backend grants Spotify only.
   msg.style.color='var(--muted)';msg.textContent='Creating…';
   const r=await fetch('/api/admin/codes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
@@ -164,7 +178,9 @@ async function loadCodes(){
   el.innerHTML=`<table><thead><tr><th>Code</th><th>Type</th><th>Grants</th><th>Uses</th><th>Expires</th><th>Note</th><th></th></tr></thead><tbody>${
     d.codes.map(c=>{
       const grants=c.kind==='comp'
-        ? (planLabel(c.plan)+(c.months?(' · '+c.months+'mo'):' · forever'))
+        ? (planLabel(c.plan)+(c.months?(' · '+c.months+'mo'):' · forever')+(c.grants_spotify?' · +Spotify':''))
+        : c.kind==='addon'
+        ? 'Spotify export'
         : (c.discount_kind==='percent'?(c.discount_val+'% off'):('£'+(c.discount_val/100).toFixed(2)+' off'));
       const uses=c.uses+(c.max_uses?('/'+c.max_uses):'');
       const exp=c.expires_at?new Date(c.expires_at).toLocaleDateString():'never';
@@ -175,7 +191,7 @@ async function loadCodes(){
         <td>${uses}</td>
         <td>${exp}</td>
         <td>${esc(c.note||'')}</td>
-        <td><button class="btn btn-ghost" onclick="toggleCode('${esc(c.code)}')">${c.active?'Disable':'Enable'}</button></td>
+        <td><button class="btn btn-ghost" onclick="toggleCode('${esc(c.code)}')">${c.active?'Disable':'Enable'}</button>${c.active?'':`<button class="btn btn-ghost" style="margin-left:6px;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteCode('${esc(c.code)}')">Delete</button>`}</td>
       </tr>`;
     }).join('')
   }</tbody></table>`;
@@ -183,6 +199,12 @@ async function loadCodes(){
 
 async function toggleCode(code){
   await fetch('/api/admin/codes/'+encodeURIComponent(code)+'/toggle',{method:'POST'});
+  loadCodes();
+}
+async function deleteCode(code){
+  if(!confirm('Permanently delete code '+code+'? This cannot be undone.'))return;
+  const r=await fetch('/api/admin/codes/'+encodeURIComponent(code),{method:'DELETE'});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not delete');return;}
   loadCodes();
 }
 
@@ -199,21 +221,54 @@ async function loadUsers(){
       const [label,cls]=map[st]||['Free','free'];
       return `<span class="badge ${cls}">${label}</span>`;
     };
-    list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th>Events</th><th>Joined</th></tr></thead><tbody>${
+    list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th>Events</th><th>Joined</th><th></th></tr></thead><tbody>${
       d.users.map(u=>{
         const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
         const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';
+        // Couple accounts: hover info box with wedding date + host DJ.
+        let coupleInfo='';
+        if(u.role==='couple'&&u.couple){
+          const c=u.couple;
+          const wd=c.weddingDate?new Date(c.weddingDate).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'long',year:'numeric'}):'Not set';
+          const host=c.hostName?(esc(c.hostName)+(c.hostEmail?(' ('+esc(c.hostEmail)+')'):'')):(c.hostEmail?esc(c.hostEmail):'—');
+          const assigned=c.assignedName?(esc(c.assignedName)+(c.assignedEmail?(' ('+esc(c.assignedEmail)+')'):'')):'Not assigned';
+          coupleInfo=`<span class="info-badge">i<span class="tip"><b>Wedding:</b> ${esc(c.weddingName||c.coupleNames||'—')}<br><b>Date:</b> ${wd}<br><b>Host DJ:</b> ${host}<br><b>Assigned DJ:</b> ${assigned}</span></span>`;
+        }
+        const actions=u.isAdmin?'<span class="muted" style="font-size:.8rem">—</span>':`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="resetUserPass('${u.id}','${esc(u.email)}')">Reset password</button> ${u.role==='subdj'?`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="makeIndependent('${u.id}','${esc(u.email)}')">Make independent</button> `:''}<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteUser('${u.id}','${esc(u.email)}')">Delete</button>`;
         return `<tr>
-          <td><code>${esc(u.email)}</code>${adminTag}</td>
+          <td><code>${esc(u.email)}</code>${adminTag}${coupleInfo}</td>
           <td>${esc(u.name||'—')}</td>
           <td>${esc(u.planName)}</td>
           <td>${badge(u.status)}</td>
           <td>${u.eventsCreated}</td>
           <td>${joined}</td>
+          <td style="white-space:nowrap">${actions}</td>
         </tr>`;
       }).join('')
     }</tbody></table>`;
   }catch(e){ list.innerHTML='<p style="color:var(--muted);font-size:.9rem">Could not load hosts.</p>'; }
+}
+async function resetUserPass(id,email){
+  const pw=prompt('New password for '+email+' (min 6 chars):');
+  if(pw===null)return;
+  if(pw.length<6){alert('Password must be at least 6 characters.');return;}
+  const r=await fetch('/api/admin/users/'+encodeURIComponent(id)+'/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not reset.');return;}
+  alert('Password reset for '+email);
+}
+async function makeIndependent(id,email){
+  if(!confirm('Make '+email+' an independent DJ?\n\nThey will keep any plan/code on their account and be able to create their own events, while staying linked to your team for assigned jobs.'))return;
+  const r=await fetch('/api/admin/users/'+encodeURIComponent(id)+'/make-independent',{method:'POST'});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not convert.');return;}
+  alert(email+' is now an independent DJ.');
+  loadUsers();
+}
+async function deleteUser(id,email){
+  if(!confirm('Permanently delete '+email+'? This removes their account, events and weddings. This cannot be undone.'))return;
+  if(!confirm('Are you absolutely sure? This is permanent.'))return;
+  const r=await fetch('/api/admin/users/'+encodeURIComponent(id),{method:'DELETE'});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.error||'Could not delete.');return;}
+  loadUsers();
 }
 
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}

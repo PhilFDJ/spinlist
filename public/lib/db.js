@@ -23,10 +23,10 @@ let store;
 try {
   store = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 } catch (_) {
-  store = { users: [], sessions: [], processed_events: [], events_created: [], codes: [], redemptions: [], events: [], weddings: [] };
+  store = { users: [], sessions: [], processed_events: [], events_created: [], codes: [], redemptions: [], events: [], weddings: [], notifications: [] };
 }
 // ensure all collections exist even if an older file is loaded
-for (const k of ['users', 'sessions', 'processed_events', 'events_created', 'codes', 'redemptions', 'events', 'weddings']) {
+for (const k of ['users', 'sessions', 'processed_events', 'events_created', 'codes', 'redemptions', 'events', 'weddings', 'notifications']) {
   if (!Array.isArray(store[k])) store[k] = [];
 }
 
@@ -66,12 +66,20 @@ module.exports = {
       name: u.name || '',
       role: u.role || 'host',          // 'host' (DJ) | 'couple' (wedding login) | 'subdj' (team DJ)
       parent_id: u.parent_id || null,  // for subdj: the multi-op owner who created them
-      profile: u.profile || '',        // for subdj: short bio shown to the owner
+      profile: u.profile || '',        // short bio
+      dj_photo: u.dj_photo || null,     // /uploads/... path to DJ photo
+      dj_website: u.dj_website || '',    // optional website link
+      dj_website2: u.dj_website2 || '',  // optional second website link
+      dj_youtube: u.dj_youtube || '',    // optional YouTube link
       plan: u.role === 'couple' ? 'couple' : (u.role === 'subdj' ? 'subdj' : 'trial'),
       sub_status: u.role === 'couple' ? 'couple' : (u.role === 'subdj' ? 'subdj' : 'trial'),
       stripe_customer: null, stripe_sub: null,
       comp_until: null, comp_code: null,
       brand_logo: null, brand_color: null, brand_tagline: null,
+      spotify_export: false,            // granted via a special comp code (permanent)
+      resend_api_key: u.resend_api_key || null,   // subscriber's own Resend key (write-only from UI)
+      resend_from: u.resend_from || '',            // verified from-address, e.g. invites@theirdomain.com
+      resend_from_name: u.resend_from_name || '',  // display name on the email
       created_at: u.created_at,
     };
     store.users.push(user);
@@ -81,6 +89,25 @@ module.exports = {
   // Sub-DJs created by a multi-op owner.
   listSubDjs(parentId) {
     return store.users.filter(u => u.role === 'subdj' && u.parent_id === parentId);
+  },
+  // Convert a managed sub-account into an independent DJ (their own 'host' account),
+  // while keeping them linked to the former owner's team so assignments still work.
+  convertSubToIndependent(subId) {
+    const u = this.getUserById(subId);
+    if (!u || u.role !== 'subdj') return null;
+    const ownerId = u.parent_id;
+    u.role = 'host';
+    u.parent_id = null;
+    // Link them to the owner's team the "linked existing account" way.
+    if (ownerId) {
+      const owner = this.getUserById(ownerId);
+      if (owner) {
+        if (!owner.team_members) owner.team_members = [];
+        if (!owner.team_members.includes(subId)) owner.team_members.push(subId);
+      }
+    }
+    persist();
+    return u;
   },
   // Full team = created sub-accounts + linked existing accounts (via team_members ids).
   listTeam(ownerId) {
@@ -115,14 +142,75 @@ module.exports = {
     const owner = this.getUserById(ownerId);
     return !!(owner && owner.team_members && owner.team_members.includes(memberId));
   },
+  // Owner's team-specific display override for a linked DJ (name/profile shown
+  // within this owner's team, without touching the DJ's own account).
+  getTeamOverride(ownerId, memberId) {
+    const owner = this.getUserById(ownerId);
+    return (owner && owner.team_overrides && owner.team_overrides[memberId]) || null;
+  },
+  setTeamOverride(ownerId, memberId, fields) {
+    const owner = this.getUserById(ownerId);
+    if (!owner) return null;
+    if (!owner.team_overrides) owner.team_overrides = {};
+    const cur = owner.team_overrides[memberId] || {};
+    if (fields.name !== undefined) cur.name = fields.name;
+    if (fields.profile !== undefined) cur.profile = fields.profile;
+    if (fields.dj_photo !== undefined) cur.dj_photo = fields.dj_photo;
+    if (fields.dj_website !== undefined) cur.dj_website = fields.dj_website;
+    if (fields.dj_website2 !== undefined) cur.dj_website2 = fields.dj_website2;
+    if (fields.dj_youtube !== undefined) cur.dj_youtube = fields.dj_youtube;
+    owner.team_overrides[memberId] = cur;
+    persist();
+    return cur;
+  },
   updateSubDj(id, fields) {
     const u = this.getUserById(id);
     if (!u || u.role !== 'subdj') return null;
     if (fields.name !== undefined) u.name = fields.name;
     if (fields.profile !== undefined) u.profile = fields.profile;
+    if (fields.dj_photo !== undefined) u.dj_photo = fields.dj_photo;
+    if (fields.dj_website !== undefined) u.dj_website = fields.dj_website;
+    if (fields.dj_website2 !== undefined) u.dj_website2 = fields.dj_website2;
+    if (fields.dj_youtube !== undefined) u.dj_youtube = fields.dj_youtube;
     if (fields.password_hash !== undefined) u.password_hash = fields.password_hash;
     persist();
     return u;
+  },
+  // Update any user's own profile (used by the owner editing their DJ profile).
+  updateUserProfile(id, fields) {
+    const u = this.getUserById(id);
+    if (!u) return null;
+    if (fields.name !== undefined) u.name = fields.name;
+    if (fields.profile !== undefined) u.profile = fields.profile;
+    if (fields.dj_photo !== undefined) u.dj_photo = fields.dj_photo;
+    if (fields.dj_website !== undefined) u.dj_website = fields.dj_website;
+    if (fields.dj_website2 !== undefined) u.dj_website2 = fields.dj_website2;
+    if (fields.dj_youtube !== undefined) u.dj_youtube = fields.dj_youtube;
+    persist();
+    return u;
+  },
+  // Resolve the DJ profile to show for a job (event/wedding). Uses the assigned
+  // DJ if set, else the owner. Applies the owner's team override for linked DJs.
+  djProfileFor(ownerId, assignedDjId) {
+    const djId = assignedDjId || ownerId;
+    const u = this.getUserById(djId);
+    if (!u) return null;
+    let name = u.name || '', profile = u.profile || '', photo = u.dj_photo || null, website = u.dj_website || '';
+    let website2 = u.dj_website2 || '', youtube = u.dj_youtube || '';
+    // If this DJ is a linked member of the owner's team, the owner's override wins.
+    if (djId !== ownerId && u.role !== 'subdj') {
+      const ov = this.getTeamOverride(ownerId, djId);
+      if (ov) {
+        if (ov.name) name = ov.name;
+        if (ov.profile) profile = ov.profile;
+        if (ov.dj_photo) photo = ov.dj_photo;
+        if (ov.dj_website) website = ov.dj_website;
+        if (ov.dj_website2) website2 = ov.dj_website2;
+        if (ov.dj_youtube) youtube = ov.dj_youtube;
+      }
+    }
+    if (!name && !profile && !photo && !website && !website2 && !youtube) return null;
+    return { name, profile, photo, website, website2, youtube };
   },
   deleteSubDj(id) {
     const i = store.users.findIndex(u => u.id === id && u.role === 'subdj');
@@ -162,6 +250,46 @@ module.exports = {
   listWeddingsAssignedTo(djId) {
     return store.weddings.filter(w => w.assigned_dj === djId).sort(byWeddingDate);
   },
+  // Every wedding's linked live-requests event id — these are never shown as
+  // standalone events; they only appear inside the wedding planner's live block.
+  allWeddingLiveEventIds() {
+    return store.weddings.map(w => w.live_event_id).filter(Boolean);
+  },
+  // Find the wedding that owns a given live-requests event (if any).
+  getWeddingByLiveEvent(eventId) {
+    return store.weddings.find(w => w.live_event_id === eventId) || null;
+  },
+  // Find the wedding a couple account is linked to (if any).
+  getWeddingByCouple(coupleId) {
+    return store.weddings.find(w => w.couple_id === coupleId) || null;
+  },
+  // ----- notifications (DJ sees couple activity) -----
+  addNotification(userId, { type, weddingId, weddingName, text }) {
+    // De-dupe: collapse repeated same-type activity on the same wedding within 5 min.
+    const recent = store.notifications.find(n =>
+      n.user_id === userId && n.wedding_id === weddingId && n.type === type &&
+      Date.now() - n.created_at < 5 * 60 * 1000);
+    if (recent) { recent.text = text; recent.created_at = Date.now(); recent.read = 0; persist(); return recent; }
+    const n = { id: 'ntf_' + Math.random().toString(36).slice(2, 10), user_id: userId, type,
+      wedding_id: weddingId || null, wedding_name: weddingName || '', text, read: 0, created_at: Date.now() };
+    store.notifications.push(n);
+    // Keep the list bounded per user (latest 100).
+    const mine = store.notifications.filter(x => x.user_id === userId).sort((a, b) => a.created_at - b.created_at);
+    if (mine.length > 100) { const drop = mine.slice(0, mine.length - 100).map(x => x.id); store.notifications = store.notifications.filter(x => !drop.includes(x.id)); }
+    persist();
+    return n;
+  },
+  listNotifications(userId, limit = 40) {
+    return store.notifications.filter(n => n.user_id === userId)
+      .sort((a, b) => b.created_at - a.created_at).slice(0, limit);
+  },
+  countUnread(userId) {
+    return store.notifications.filter(n => n.user_id === userId && !n.read).length;
+  },
+  markNotificationsRead(userId) {
+    store.notifications.forEach(n => { if (n.user_id === userId) n.read = 1; });
+    persist();
+  },
   getUserByEmail(email) {
     return store.users.find(u => u.email === (email || '').toLowerCase()) || undefined;
   },
@@ -200,6 +328,74 @@ module.exports = {
   grantComp(userId, { plan, comp_until, comp_code }) {
     const u = this.getUserById(userId);
     if (u) { u.plan = plan; u.sub_status = 'comp'; u.comp_until = comp_until ?? null; u.comp_code = comp_code ?? null; persist(); }
+  },
+  // Permanently grant Spotify-export access (via a special comp code).
+  grantSpotifyExport(userId) {
+    const u = this.getUserById(userId);
+    if (u) { u.spotify_export = true; persist(); }
+  },
+  // Save a subscriber's Resend email config. Key is stored as-is server-side but
+  // never returned to the browser (see publicUser / resendStatus).
+  setResendConfig(userId, { apiKey, from, fromName }) {
+    const u = this.getUserById(userId);
+    if (!u) return null;
+    if (apiKey !== undefined) u.resend_api_key = apiKey || null;
+    if (from !== undefined) u.resend_from = from || '';
+    if (fromName !== undefined) u.resend_from_name = fromName || '';
+    persist();
+    return u;
+  },
+  clearResendConfig(userId) {
+    const u = this.getUserById(userId);
+    if (u) { u.resend_api_key = null; u.resend_from = ''; u.resend_from_name = ''; persist(); }
+  },
+  // The effective Resend config for a user (used to actually send). For a sub-DJ,
+  // fall back to the parent owner's config so a team can share one setup.
+  resendConfigFor(userId) {
+    const u = this.getUserById(userId);
+    if (!u) return null;
+    if (u.resend_api_key && u.resend_from) return { apiKey: u.resend_api_key, from: u.resend_from, fromName: u.resend_from_name || '' };
+    if (u.role === 'subdj' && u.parent_id) {
+      const p = this.getUserById(u.parent_id);
+      if (p && p.resend_api_key && p.resend_from) return { apiKey: p.resend_api_key, from: p.resend_from, fromName: p.resend_from_name || '' };
+    }
+    return null;
+  },
+  setUserPassword(userId, password_hash) {
+    const u = this.getUserById(userId);
+    if (u) { u.password_hash = password_hash; persist(); }
+  },
+  // Permanently delete a user and clean up their data + any references to them.
+  deleteUser(userId) {
+    const u = this.getUserById(userId);
+    if (!u) return false;
+    // Their own events and weddings.
+    store.events = store.events.filter(e => e.host_id !== userId);
+    store.weddings = store.weddings.filter(w => w.host_id !== userId);
+    // Unlink as couple / assigned DJ on anything that referenced them.
+    store.weddings.forEach(w => {
+      if (w.couple_id === userId) w.couple_id = null;
+      if (w.assigned_dj === userId) w.assigned_dj = null;
+    });
+    store.events.forEach(e => { if (e.assigned_dj === userId) e.assigned_dj = null; });
+    // If they were a multi-op owner, remove their sub-DJs too.
+    store.users.filter(x => x.role === 'subdj' && x.parent_id === userId).forEach(sub => {
+      store.events = store.events.filter(e => e.host_id !== sub.id);
+      store.weddings = store.weddings.filter(w => w.host_id !== sub.id);
+    });
+    store.users = store.users.filter(x => !(x.role === 'subdj' && x.parent_id === userId));
+    // Remove them from any owner's linked team + overrides.
+    store.users.forEach(o => {
+      if (Array.isArray(o.team_members)) o.team_members = o.team_members.filter(id => id !== userId);
+      if (o.team_overrides && o.team_overrides[userId]) delete o.team_overrides[userId];
+    });
+    // Sessions + redemptions + the user record.
+    if (Array.isArray(store.sessions)) store.sessions = store.sessions.filter(s => s.user_id !== userId);
+    if (Array.isArray(store.redemptions)) store.redemptions = store.redemptions.filter(r => r.user_id !== userId);
+    if (Array.isArray(store.events_created)) store.events_created = store.events_created.filter(x => x.user_id !== userId);
+    store.users = store.users.filter(x => x.id !== userId);
+    persist();
+    return true;
   },
   expireCompIfNeeded(user) {
     const u = this.getUserById(user.id);
@@ -267,6 +463,7 @@ module.exports = {
       months: c.months ?? null, discount_kind: c.discount_kind ?? null,
       discount_val: c.discount_val ?? null, stripe_promo: c.stripe_promo ?? null,
       max_uses: c.max_uses ?? null, uses: 0, expires_at: c.expires_at ?? null,
+      grants_spotify: c.grants_spotify ? 1 : 0,
       active: 1, note: c.note ?? null, created_at: c.created_at,
     };
     store.codes.push(code);
@@ -281,6 +478,13 @@ module.exports = {
   },
   setCodeActive(code, active) {
     const c = this.getCode(code); if (c) { c.active = active ? 1 : 0; persist(); }
+  },
+  deleteCode(code) {
+    const i = store.codes.findIndex(c => c.code === code);
+    if (i === -1) return false;
+    store.codes.splice(i, 1);
+    persist();
+    return true;
   },
   incrementCodeUses(code) {
     const c = this.getCode(code); if (c) { c.uses += 1; persist(); }
@@ -462,6 +666,12 @@ module.exports = {
     if (w) { w.live_event_id = eventId || null; persist(); }
     return w;
   },
+  // Set the couple's edit lock: a timestamp, 0 = explicitly cleared, null = use default.
+  setWeddingLockDate(weddingId, lockTs) {
+    const w = this.getWedding(weddingId);
+    if (w) { w.lock_date = (lockTs === null || lockTs === undefined) ? null : lockTs; persist(); }
+    return w;
+  },
   // Set (or clear) which block is in live guest-requests mode.
   setWeddingLiveBlock(weddingId, blockId) {
     const w = this.getWedding(weddingId);
@@ -560,9 +770,10 @@ module.exports = {
       name: (tpl.name || 'Untitled').toString().slice(0, 80),
       questions: (Array.isArray(tpl.questions) ? tpl.questions : []).slice(0, 60).map((q, i) => ({
         id: q.id || ('q' + (i + 1)),
-        type: ['text', 'yesno', 'choice', 'header'].includes(q.type) ? q.type : 'text',
+        type: ['text', 'yesno', 'choice', 'multiselect', 'header'].includes(q.type) ? q.type : 'text',
         label: (q.label || '').toString().slice(0, 200),
-        options: q.type === 'choice' ? (Array.isArray(q.options) ? q.options : []).slice(0, 10).map(o => (o || '').toString().slice(0, 80)) : [],
+        options: (q.type === 'choice' || q.type === 'multiselect') ? (Array.isArray(q.options) ? q.options : []).slice(0, 20).map(o => (o || '').toString().slice(0, 80)) : [],
+        gigShow: !!q.gigShow,   // show this question + answer in the live gig window
       })),
     };
     const idx = u.q_templates.findIndex(t => t.id === clean.id);
@@ -571,6 +782,20 @@ module.exports = {
       if (u.q_templates.length >= 5) return { error: 'limit' };   // max 5 templates
       u.q_templates.push(clean);
     }
+    // Propagate gig-window flags to the DJ's existing weddings. We match per
+    // QUESTION by label (case-insensitive) rather than by template name, so old
+    // snapshots pick up the flags even if the questionnaire name differs.
+    const flagByLabel = {};
+    clean.questions.forEach(q => { if (q.label) flagByLabel[q.label.trim().toLowerCase()] = !!q.gigShow; });
+    store.weddings.forEach(w => {
+      if (w.host_id !== userId) return;
+      const q = w.questionnaire;
+      if (!q || !Array.isArray(q.questions)) return;
+      q.questions.forEach(wq => {
+        const key = (wq.label || '').trim().toLowerCase();
+        if (key && key in flagByLabel) wq.gigShow = flagByLabel[key];
+      });
+    });
     persist();
     return clean;
   },

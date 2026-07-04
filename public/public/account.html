@@ -161,6 +161,14 @@ async function boot(){
       </div>
     ` : ''}
 
+    ${d.user.emailInvites ? `
+      <div class="panel">
+        <h2>Email invites (Resend)</h2>
+        <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">Connect your own <a href="https://resend.com" target="_blank" rel="noopener" style="color:var(--plum)">Resend</a> account to email wedding invites to couples and login details to your DJs, from your own address.</p>
+        <div id="resend-box"><p style="color:var(--muted);font-size:.9rem">Checking…</p></div>
+      </div>
+    ` : ''}
+
     <div class="actions">
       <a class="btn btn-primary" href="/">Create an event</a>
       ${(noPlan||isComp||isTrial)
@@ -181,6 +189,71 @@ async function boot(){
     document.getElementById('logo-preview').innerHTML=`<img src="${url}" style="max-width:100%;max-height:100%">`;
   });
   if(plan.spotifyExport)loadSpotify();
+  if(d.user.emailInvites)loadResend();
+}
+
+async function loadResend(){
+  const box=document.getElementById('resend-box');if(!box)return;
+  let s={};
+  try{ s=await (await fetch('/api/resend/status')).json(); }catch(e){ box.textContent='Could not load.'; return; }
+  const inp='font:inherit;padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;background:var(--paper-2);color:var(--ink);width:100%';
+  if(s.connected||s.inherited){
+    box.innerHTML=`
+      <div style="background:rgba(30,215,96,.12);border:1px solid rgba(30,215,96,.4);color:#1ed760;padding:10px 14px;border-radius:8px;font-size:.9rem;margin-bottom:14px">✓ ${s.inherited?'Using your team owner&#39;s Resend setup':'Resend connected'}${s.from?(' · sending from <b>'+esc(s.from)+'</b>'):''}${s.hint?(' · key '+esc(s.hint)):''}</div>
+      ${s.inherited?'':`
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-ghost" onclick="testResend(this)">Send test email</button>
+        <button class="btn btn-ghost" onclick="editResend()">Edit settings</button>
+        <button class="btn btn-ghost" onclick="clearResend()" style="color:var(--coral);border-color:var(--coral)">Disconnect</button>
+      </div>`}
+      <p id="resend-msg" style="font-size:.88rem;margin-top:12px;min-height:16px"></p>
+      <div id="resend-form" style="display:none;margin-top:14px"></div>`;
+  }else{
+    box.innerHTML=`<div id="resend-form"></div>`;
+    renderResendForm();
+  }
+}
+function resendFormHtml(){
+  const inp='font:inherit;padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;background:var(--paper-2);color:var(--ink);width:100%';
+  return `
+    <label style="display:block;font-size:.82rem;font-weight:700;color:var(--muted);margin-bottom:5px">Resend API key</label>
+    <input id="r-key" type="password" placeholder="re_..." style="${inp};margin-bottom:12px" autocomplete="off">
+    <label style="display:block;font-size:.82rem;font-weight:700;color:var(--muted);margin-bottom:5px">From address (must be on your verified Resend domain)</label>
+    <input id="r-from" placeholder="invites@yourdomain.com" style="${inp};margin-bottom:12px">
+    <label style="display:block;font-size:.82rem;font-weight:700;color:var(--muted);margin-bottom:5px">From name (optional)</label>
+    <input id="r-name" placeholder="e.g. Marco's Mobile Disco" style="${inp};margin-bottom:14px">
+    <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">In Resend, add & verify your domain (SPF/DKIM DNS records), then create a <b>send-only</b> API key restricted to that domain. Your key is stored securely and never shown again. <a href="https://resend.com/docs/dashboard/domains/introduction" target="_blank" rel="noopener" style="color:var(--plum)">Domain setup guide →</a></p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="saveResend()">Save & connect</button>
+      <button class="btn btn-ghost" onclick="loadResend()">Cancel</button>
+    </div>
+    <p id="resend-msg" style="font-size:.88rem;margin-top:12px;min-height:16px"></p>`;
+}
+function renderResendForm(){ const f=document.getElementById('resend-form'); if(f){f.style.display='block';f.innerHTML=resendFormHtml();} }
+function editResend(){ renderResendForm(); }
+async function saveResend(){
+  const msg=document.getElementById('resend-msg');msg.style.color='var(--muted)';msg.textContent='Saving…';
+  const apiKey=document.getElementById('r-key').value.trim();
+  const from=document.getElementById('r-from').value.trim();
+  const fromName=document.getElementById('r-name').value.trim();
+  const r=await fetch('/api/resend/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey,from,fromName})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){msg.style.color='var(--coral)';msg.textContent=d.error||'Could not save.';return;}
+  loadResend();
+}
+async function testResend(btn){
+  const msg=document.getElementById('resend-msg');msg.style.color='var(--muted)';msg.textContent='Sending test…';
+  if(btn)btn.disabled=true;
+  const r=await fetch('/api/resend/test',{method:'POST'});
+  const d=await r.json().catch(()=>({}));
+  if(btn)btn.disabled=false;
+  if(!r.ok){msg.style.color='var(--coral)';msg.textContent=d.error||'Test failed.';return;}
+  msg.style.color='#1ed760';msg.textContent='✓ Test email sent — check your inbox.';
+}
+async function clearResend(){
+  if(!confirm('Disconnect Resend? Email invites will fall back to opening your own email app.'))return;
+  await fetch('/api/resend/config',{method:'DELETE'});
+  loadResend();
 }
 
 async function loadSpotify(){
@@ -236,7 +309,7 @@ async function redeemCode(){
   const d=await r.json();
   if(!r.ok){msg.style.color='var(--coral)';msg.textContent=d.error||'Could not redeem.';return;}
   msg.style.color='var(--neon-dim)';msg.textContent=d.message;
-  if(d.type==='comp')setTimeout(boot,1200);   // refresh to show new plan
+  if(d.type==='comp'||d.type==='addon')setTimeout(boot,1200);   // refresh to show new plan/perk
 }
 async function portal(){
   const r=await fetch('/api/billing/portal',{method:'POST'});const d=await r.json();

@@ -36,10 +36,11 @@
   .logo-img{height:54px;width:auto;display:block}
   @media(max-width:640px){.logo-img{height:44px}}
   .logo .dot{width:13px;height:13px;border-radius:50%;background:var(--neon);box-shadow:0 0 0 4px rgba(198,242,78,.25)}
-  .nav-pills{display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px}
-  .nav-pills button{border:0;background:transparent;font:inherit;font-size:.82rem;font-weight:600;padding:7px 14px;border-radius:100px;cursor:pointer;color:var(--muted);transition:.2s}
-  .nav-pills button.active{background:var(--ink);color:var(--paper)}
-  @media(max-width:640px){.nav-pills button{padding:7px 10px;font-size:.74rem}}
+  .nav-pills{display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;flex-wrap:wrap}
+  .nav-pills button,.nav-pills a{border:0;background:transparent;font:inherit;font-size:.82rem;font-weight:600;padding:7px 14px;border-radius:100px;cursor:pointer;color:var(--muted);transition:.2s;text-decoration:none;display:inline-flex;align-items:center}
+  .nav-pills button.active,.nav-pills a.active{background:var(--ink);color:var(--paper)}
+  .nav-pills button:hover,.nav-pills a:hover{color:var(--ink)}
+  @media(max-width:640px){.nav-pills button,.nav-pills a{padding:7px 10px;font-size:.74rem}}
   .view{display:none;animation:fade .4s ease}
   .view.show{display:block}
   @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -152,7 +153,7 @@
     <div class="wrap">
       <p class="eyebrow">Crowd-sourced setlists</p>
       <h1 class="display">Let the room<br>pick the <span class="lit">music.</span></h1>
-      <p class="sub">Hosts build an event, share one link or QR code, and guests search Spotify's real catalogue to vote for the songs they want. When voting closes, the DJ gets a ranked playlist — PDF and Spotify export.</p>
+      <p class="sub">Hosts build an event, share one link or QR code, and guests search Spotify's real catalogue to vote for the songs they want. When voting closes, the DJ gets a ranked playlist they can download as a PDF or CSV.</p>
       <div class="cta-row">
         <button class="btn btn-primary" onclick="go('create')">Create an event →</button>
         <button class="btn btn-ghost" onclick="loadDemo()">See the demo</button>
@@ -166,7 +167,7 @@
       <div class="cell"><div class="n">01 / HOST</div><h3>Build the event</h3><p>Name it, set a vote deadline, choose how many votes each guest gets.</p></div>
       <div class="cell"><div class="n">02 / SHARE</div><h3>One link, one code</h3><p>Send a link or print the QR for tables. No app, no login for guests.</p></div>
       <div class="cell"><div class="n">03 / VOTE</div><h3>Guests choose</h3><p>Search Spotify live, vote for favourites, watch the leaderboard move.</p></div>
-      <div class="cell"><div class="n">04 / EXPORT</div><h3>Hand to the DJ</h3><p>At the deadline, download a ranked PDF and push a Spotify playlist.</p></div>
+      <div class="cell"><div class="n">04 / EXPORT</div><h3>Hand to the DJ</h3><p>At the deadline, download a ranked PDF or CSV of every request.</p></div>
     </div>
   </div>
 </section>
@@ -251,6 +252,7 @@
         <div id="leaderboard"></div>
         <div class="export-row">
           <button class="btn btn-primary" onclick="exportPDF()">⬇ Download DJ PDF</button>
+          <button class="btn btn-ghost" onclick="downloadSongCSV()">⬇ Export CSV</button>
           <button class="btn btn-neon" id="playlist-btn" onclick="openExportModal()" style="display:none">🎵 Export playlist ▸</button>
           <button class="btn btn-neon" id="spotify-btn" onclick="exportSpotify()" style="display:none">Export to Spotify ▸</button>
           <button class="btn btn-ghost" onclick="toggleDeadline()" id="close-btn">Close voting now</button>
@@ -271,6 +273,7 @@
     <div id="guest-content" style="display:none">
       <div id="brand-banner" style="display:none;align-items:center;gap:14px;padding:14px 18px;border:1px solid var(--line);border-radius:14px;margin-bottom:8px;background:var(--surface)"></div>
       <div class="section-head"><p class="eyebrow" id="g-type">Wedding</p><h2 id="g-name">Event</h2><p style="color:var(--muted)" id="g-host"></p></div>
+      <div id="g-dj" style="display:none"></div>
       <div id="g-closed" class="closed-banner" style="display:none">🔒 Voting has closed — thanks for picking the tunes!</div>
       <div class="api-warn" id="api-warn">⚠ Couldn't reach the Spotify search service. Make sure the backend is running (<code>npm start</code>) and your credentials are set.</div>
       <div class="role-note" id="g-quota">You have <b id="g-left">5</b> votes left.</div>
@@ -465,7 +468,7 @@ async function createSpinlistEvent(){
   EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
     votesPer:ev.votesPer,deadline:ev.deadline,closed:ev.locked,locked:ev.locked,
     tracks:{},maxGuests:data.maxGuests,
-    branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
+    branding:(ME&&ME.branding&&window.__myBranding)?window.__myBranding:null};
   myVotes={};toast('Event created 🎉');go('dashboard');
  }catch(err){
   toast('Error: '+(err&&err.message?err.message:err));
@@ -525,7 +528,7 @@ async function renderEvents(){
     function assignSelect(kind,id,current){
       if(!isOwner||!team.length)return '';
       const opts=['<option value="">— Unassigned —</option>'].concat(
-        team.map(dj=>`<option value="${dj.id}" ${current===dj.id?'selected':''}>${esc(dj.name||dj.email)}</option>`)
+        team.map(dj=>`<option value="${dj.id}" ${current===dj.id?'selected':''}>${esc(dj.name||dj.email)}${dj.isMe?' (you)':''}</option>`)
       ).join('');
       return `<select onchange="assign('${kind}','${id}',this.value)" style="font:inherit;font-size:.8rem;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--paper-2);color:var(--ink)">${opts}</select>`;
     }
@@ -601,9 +604,9 @@ async function openEvent(id){
     if(!r.ok){toast('Could not open event');return;}
     const d=await r.json();const ev=d.event;
     EVENT={id:ev.id,hostId:ev.hostId,name:ev.name,type:ev.type,host:ev.host,
-      votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
+      votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,eventDate:ev.eventDate||null,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),tracks:{},
-      branding:(ME&&['pro','studio'].includes(ME.plan)&&window.__myBranding)?window.__myBranding:null};
+      branding:d.branding||null};   // event owner's branding — consistent for any DJ running it
     (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
     myVotes={};go('dashboard');
   }catch(e){ toast('Network error'); }
@@ -742,8 +745,8 @@ function renderDashboard(){
   document.getElementById('dash-type').textContent=EVENT.type;
   document.getElementById('dash-host').textContent='Hosted by '+EVENT.host;
   // Spotify export is Studio-only
-  const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.plan==='studio')?'inline-flex':'none';
-  const pb=document.getElementById('playlist-btn');if(pb)pb.style.display=(ME&&ME.plan==='studio')?'inline-flex':'none';
+  const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
+  const pb=document.getElementById('playlist-btn');if(pb)pb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
   const closed=EVENT.closed||EVENT.locked||(EVENT.deadline&&Date.now()>EVENT.deadline);
   const st=document.getElementById('dash-status');
   st.textContent=closed?'Voting closed':'Voting open';
@@ -964,7 +967,9 @@ async function exportPDF(){
   doc.text(EVENT.name+'  ·  '+EVENT.type,14,25);
 
   doc.setTextColor(13,11,20);doc.setFontSize(10);
-  doc.text('Hosted by '+EVENT.host+'   |   '+totalVotes()+' total votes   |   '+list.length+' songs',14,44);
+  const evDate=EVENT.eventDate?new Date(EVENT.eventDate).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'}):null;
+  if(evDate){doc.setFont('helvetica','bold');doc.text(evDate,14,38);doc.setFont('helvetica','normal');}
+  doc.text('Hosted by '+EVENT.host+'   |   '+totalVotes()+' total votes   |   '+list.length+' songs',14,evDate?44:40);
   doc.setDrawColor(accent[0],accent[1],accent[2]);doc.line(14,48,196,48);
   let y=58;doc.setFont('helvetica','bold');doc.setFontSize(11);
   doc.text('#',14,y);doc.text('TITLE',24,y);doc.text('ARTIST',110,y);doc.text('VOTES',180,y);
@@ -998,7 +1003,7 @@ function buildSongList(){
   return ranked().map(t=>`${t.title} - ${t.artist}`).join('\n');
 }
 function openExportModal(){
-  if(!ME||ME.plan!=='studio'){toast('Playlist export is a PRO feature.');return;}
+  if(!ME||!ME.spotifyExport){toast('Playlist export is not enabled on your account.');return;}
   if(!ranked().length){toast('No songs yet — nothing to export');return;}
   document.getElementById('export-modal').style.display='flex';
 }
@@ -1040,7 +1045,7 @@ function copySongList(){
 }
 
 async function exportSpotify(){
-  if(!ME||ME.plan!=='studio'){toast('Spotify export is a PRO feature. Upgrade to enable it.');return;}
+  if(!ME||!ME.spotifyExport){toast('Spotify export is not enabled on your account.');return;}
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
   toast('Exporting to Spotify…');
@@ -1073,6 +1078,26 @@ function renderGuest(){
   document.getElementById('g-name').textContent=EVENT.name;
   document.getElementById('g-type').textContent=EVENT.type;
   document.getElementById('g-host').textContent='Hosted by '+EVENT.host;
+  // "Your DJ" card (only when the event has an assigned DJ with a profile).
+  const djEl=document.getElementById('g-dj');
+  if(djEl){
+    const dj=EVENT.dj;
+    if(dj&&(dj.name||dj.profile||dj.photo)){
+      djEl.style.display='block';
+      djEl.style.cssText='display:block;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;background:var(--surface)';
+      djEl.innerHTML=`<div style="display:flex;gap:14px;align-items:flex-start">
+        ${dj.photo?`<img src="${esc(dj.photo)}" alt="" style="width:64px;height:64px;border-radius:12px;object-fit:cover;flex-shrink:0">`:''}
+        <div style="flex:1">
+          <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;font-weight:700;color:var(--muted)">Your DJ</div>
+          <div style="font-weight:800;font-size:1.08rem;margin-top:2px">${esc(dj.name||'')}</div>
+          ${dj.profile?`<div style="color:var(--muted);margin-top:5px;font-size:.9rem;white-space:pre-wrap">${esc(dj.profile)}</div>`:''}
+          ${dj.website?`<div style="margin-top:7px"><a href="${esc(dj.website)}" target="_blank" rel="noopener" style="color:var(--plum);font-weight:700;font-size:.86rem">Visit website →</a></div>`:''}
+          ${dj.website2?`<div style="margin-top:4px"><a href="${esc(dj.website2)}" target="_blank" rel="noopener" style="color:var(--plum);font-weight:700;font-size:.86rem">Visit website →</a></div>`:''}
+          ${dj.youtube?`<div style="margin-top:4px"><a href="${esc(dj.youtube)}" target="_blank" rel="noopener" style="color:var(--plum);font-weight:700;font-size:.86rem">▶ Watch on YouTube →</a></div>`:''}
+        </div>
+      </div>`;
+    } else { djEl.style.display='none'; }
+  }
   renderBranding();
   const closed=EVENT.closed||EVENT.locked||(EVENT.deadline&&Date.now()>EVENT.deadline);
   document.getElementById('g-closed').style.display=closed?'flex':'none';
@@ -1183,11 +1208,24 @@ async function loadMe(){
 function planLabel(p){return p==='none'||!p?'no plan':p;}
 function renderAcctNav(){
   const el=document.getElementById('acct-nav');if(!el)return;
-  const contact='<a href="/contact.html" style="color:var(--ink);text-decoration:none">Contact</a>';
-  const wed=(ME&&ME.weddingPlanner)?'<a href="/wedding.html" style="color:var(--ink);text-decoration:none">Wedding Planner</a> ':'';
-  const team=(ME&&ME.multiOp)?'<a href="/team.html" style="color:var(--ink);text-decoration:none">My DJs</a> ':'';
-  if(ME){el.innerHTML=`${team}${wed}${contact} <a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(ME.planName||planLabel(ME.plan))}</a>`;}
-  else{el.innerHTML=`${contact} <a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
+  // Inject feature links into the central nav pills (after the built-in tabs).
+  renderMainNavExtras();
+  if(ME){el.innerHTML=`<a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(ME.planName||planLabel(ME.plan))}</a>`;}
+  else{el.innerHTML=`<a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
+}
+// Add Wedding Planner / My DJs / Contact as pill buttons in the main central menu.
+function renderMainNavExtras(){
+  const nav=document.getElementById('main-nav');if(!nav)return;
+  // Clear any previously-added extras (so we don't duplicate on re-render).
+  nav.querySelectorAll('[data-extra]').forEach(n=>n.remove());
+  const add=(label,href)=>{
+    const a=document.createElement('a');
+    a.textContent=label;a.href=href;a.setAttribute('data-extra','1');
+    nav.appendChild(a);
+  };
+  if(ME&&ME.multiOp)add('My DJs','/team.html');
+  if(ME&&ME.weddingPlanner)add('Wedding Planner','/wedding.html');
+  add('Contact','/contact.html');
 }
 
 window.addEventListener('load',async ()=>{
@@ -1282,6 +1320,7 @@ async function loadGuestEvent(eventId){
       votesPer:ev.votesPer,deadline:ev.deadline,locked:ev.locked,
       askName:ev.askName,askNationality:ev.askNationality,
       closed:ev.locked||(ev.deadline&&Date.now()>ev.deadline),
+      dj:ev.dj||null,
       tracks:{},branding:d.branding||null};
     (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
   }catch(e){ EVENT=null; }

@@ -82,7 +82,9 @@
 <body>
 <header class="bar"><div class="wrap">
   <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
-  <nav><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+  <nav id="wed-nav"><span id="notif-bell" style="display:none;position:relative;cursor:pointer;margin-right:6px" onclick="toggleNotifPanel(event)">🔔<span id="notif-count" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--plum);color:#fff;font-size:.62rem;font-weight:800;min-width:16px;height:16px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 3px"></span></span><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+  <div id="notif-panel" style="display:none;position:fixed;top:60px;right:20px;width:340px;max-width:calc(100vw - 40px);max-height:70vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:300;padding:8px"></div>
+  <div id="gig-window" style="display:none;position:fixed;top:90px;right:20px;width:360px;max-width:calc(100vw - 40px);max-height:75vh;background:#0b1020;border:2px solid var(--neon);border-radius:16px;box-shadow:0 16px 50px rgba(0,0,0,.6);z-index:290;overflow:hidden;display:none;flex-direction:column"></div>
 </div></header>
 
 <div class="wrap" id="root">
@@ -107,8 +109,174 @@
 <script>
 let ME=null, CURRENT=null;     // CURRENT = the wedding being edited
 let activeBlockId=null;
+let PREVIEW_COUPLE=false;       // DJ previewing the couple's view
+
+// True when the current viewer should see the DJ view (false = couple view).
+// The account holder can preview the couple view via PREVIEW_COUPLE.
+function isDjView(){ return ME && ME.role!=='couple' && !PREVIEW_COUPLE; }
+function toggleCouplePreview(){ PREVIEW_COUPLE=!PREVIEW_COUPLE; renderPlan(); window.scrollTo(0,0); }
+
+/* ---------- Notification centre (DJ only) ---------- */
+let NOTIFS=[], NOTIF_SEEN=null;
+async function loadNotifs(firstLoad){
+  if(!ME||ME.role==='couple')return;
+  let d;
+  try{ d=await (await fetch('/api/notifications')).json(); }catch(e){ return; }
+  NOTIFS=d.notifications||[];
+  const bell=document.getElementById('notif-bell'),cnt=document.getElementById('notif-count');
+  if(bell)bell.style.display='inline-block';
+  if(cnt){ if(d.unread>0){cnt.style.display='flex';cnt.textContent=d.unread>9?'9+':d.unread;} else cnt.style.display='none'; }
+  // Toast newly-arrived unread items (not on the very first paint of the session).
+  if(!firstLoad){
+    NOTIFS.filter(n=>!n.read && (!NOTIF_SEEN||n.createdAt>NOTIF_SEEN)).slice(0,3).forEach(n=>toast('🔔 '+n.text));
+  }else{
+    // On first load, toast a summary if there's unread activity.
+    if(d.unread>0)toast('🔔 '+d.unread+' new update'+(d.unread>1?'s':'')+' from couples');
+  }
+  if(NOTIFS.length)NOTIF_SEEN=Math.max(...NOTIFS.map(n=>n.createdAt));
+}
+function toggleNotifPanel(e){
+  if(e)e.stopPropagation();
+  const p=document.getElementById('notif-panel');if(!p)return;
+  if(p.style.display==='block'){p.style.display='none';return;}
+  renderNotifPanel();p.style.display='block';
+  // Mark read after opening.
+  fetch('/api/notifications/read',{method:'POST'}).then(()=>{const c=document.getElementById('notif-count');if(c)c.style.display='none';NOTIFS.forEach(n=>n.read=true);});
+}
+function renderNotifPanel(){
+  const p=document.getElementById('notif-panel');if(!p)return;
+  if(!NOTIFS.length){p.innerHTML='<p class="muted" style="padding:16px;text-align:center;font-size:.88rem">No activity yet.</p>';return;}
+  const ago=ts=>{const s=(Date.now()-ts)/1000;if(s<60)return'just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';};
+  const icon=t=>t==='songs'?'🎵':t==='timeline'?'🕐':t==='answers'?'📋':'🔔';
+  p.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px 10px"><b style="font-size:.95rem">Notifications</b><button class="btn btn-ghost btn-sm" onclick="toggleNotifPanel(event)">Close</button></div>'+
+    NOTIFS.map(n=>`<div onclick="openWeddingFromNotif('${n.weddingId||''}')" style="display:flex;gap:10px;padding:10px;border-radius:10px;cursor:pointer;${n.read?'':'background:rgba(123,108,255,.1)'}" onmouseover="this.style.background='var(--paper-2)'" onmouseout="this.style.background='${n.read?'transparent':'rgba(123,108,255,.1)'}'">
+      <span style="font-size:1.1rem">${icon(n.type)}</span>
+      <div style="flex:1;min-width:0"><div style="font-size:.86rem">${esc(n.text)}</div><div class="muted" style="font-size:.72rem;margin-top:2px">${ago(n.createdAt)}</div></div>
+    </div>`).join('');
+}
+async function openWeddingFromNotif(wid){
+  document.getElementById('notif-panel').style.display='none';
+  if(!wid)return;
+  try{ const d=await api('/api/weddings/'+wid); CURRENT=d.wedding; renderPlan(); window.scrollTo(0,0); }catch(e){}
+}
+document.addEventListener('click',e=>{const p=document.getElementById('notif-panel');const b=document.getElementById('notif-bell');if(p&&p.style.display==='block'&&!p.contains(e.target)&&b&&!b.contains(e.target))p.style.display='none';});
+
+/* ---------- Gig window (floating, DJ + sub-DJ) ---------- */
+function openGigWindow(){
+  const gw=document.getElementById('gig-window');if(!gw)return;
+  renderGigWindow();
+  gw.style.display='flex';
+}
+function renderGigWindow(){
+  const gw=document.getElementById('gig-window');if(!gw||!CURRENT)return;
+  const q=CURRENT.questionnaire;
+  const answers=CURRENT.answers||{};
+  const flagged=(q&&q.questions||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
+  const rows=flagged.length?flagged.map(qq=>{
+    const a=answers[qq.id];
+    return `<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
+      <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);font-weight:700">${esc(qq.label)}</div>
+      <div style="font-size:1rem;color:#fff;margin-top:3px">${a?esc(a):'<span style="color:#6b7280">—</span>'}</div>
+    </div>`;
+  }).join(''):'<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template, then save the template. <a href="#" onclick="window.open(\'/api/weddings/\'+CURRENT.id+\'/gig-diag\');return false" style="color:var(--neon)">🔍 Diagnose</a></div>';
+  gw.innerHTML=`
+    <div id="gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
+      <b style="font-size:.95rem">📺 ${esc(CURRENT.coupleNames||CURRENT.name||'Gig')}</b>
+      <div style="display:flex;gap:8px">
+        <span onclick="floatGigOnTop()" title="Float on top (Chrome/Edge)" style="cursor:pointer;font-weight:800">📌</span>
+        <span onclick="popOutGig()" title="Pop out to its own window" style="cursor:pointer;font-weight:800">⤢</span>
+        <span onclick="refreshGig()" title="Refresh" style="cursor:pointer;font-weight:800">⟳</span>
+        <span onclick="document.getElementById('gig-window').style.display='none'" title="Close" style="cursor:pointer;font-weight:800">✕</span>
+      </div>
+    </div>
+    <div style="overflow:auto">${rows}</div>`;
+  makeGigDraggable();
+}
+async function refreshGig(){
+  try{ const d=await api('/api/weddings/'+CURRENT.id); CURRENT=d.wedding; renderGigWindow(); }catch(e){}
+}
+// Open the gig window as its own standalone browser window (drag to a 2nd screen).
+function popOutGig(){
+  if(!CURRENT)return;
+  const w=window.open('/gig.html?w='+encodeURIComponent(CURRENT.id),'gig_'+CURRENT.id,'width=420,height=640');
+  // Hand the child the exact data we already have, so it shows immediately and
+  // always matches the in-page window — even if the stored snapshot differs.
+  if(w){
+    try{ w.__SEED_WEDDING=JSON.parse(JSON.stringify(CURRENT)); }catch(e){}
+  }
+  // Close the in-page floating panel since it's now popped out.
+  const gw=document.getElementById('gig-window');if(gw)gw.style.display='none';
+  if(w)w.focus();
+}
+// Float the gig window always-on-top using Document Picture-in-Picture (Chrome/Edge).
+// Falls back to the standalone pop-out window on browsers without support (e.g. Safari).
+let gigPipWin=null,gigPipTimer=null;
+async function floatGigOnTop(){
+  if(!('documentPictureInPicture' in window)){
+    toast('Always-on-top needs Chrome/Edge — opening a pop-out you can pin instead');
+    popOutGig();
+    return;
+  }
+  try{
+    gigPipWin=await documentPictureInPicture.requestWindow({width:380,height:520});
+  }catch(e){ toast('Could not open floating window — opening pop-out instead'); popOutGig(); return; }
+  const gw=document.getElementById('gig-window');if(gw)gw.style.display='none';
+  const paint=()=>{
+    const q=CURRENT.questionnaire, answers=CURRENT.answers||{};
+    const flagged=(q&&q.questions||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
+    const rows=flagged.length?flagged.map(qq=>{const a=answers[qq.id];
+      return '<div class="row"><div class="q">'+esc(qq.label)+'</div><div class="a'+(a?'':' empty')+'">'+(a?esc(a):'No answer yet')+'</div></div>';
+    }).join(''):'<div class="status">No questions flagged for the gig window. Tick “📺 Gig window” on your template and save.</div>';
+    gigPipWin.document.body.innerHTML='<header>📺 '+esc(CURRENT.coupleNames||CURRENT.name||'Gig')+'</header><main>'+rows+'</main>';
+  };
+  gigPipWin.document.head.innerHTML='<style>'
+    +'*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#070b16;color:#e8ecf5}'
+    +'header{position:sticky;top:0;background:#c1ff2f;color:#0a1228;font-weight:800;padding:12px 16px;font-size:1rem}'
+    +'main{padding:4px 0}.row{padding:12px 18px;border-bottom:1px solid rgba(255,255,255,.08)}'
+    +'.row .q{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#c1ff2f;font-weight:800}'
+    +'.row .a{font-size:1.25rem;color:#fff;margin-top:4px;word-wrap:break-word}.row .a.empty{color:#5b6479;font-style:italic;font-size:1rem}'
+    +'.status{padding:30px 18px;text-align:center;color:#8b93a7;font-size:.9rem}</style>';
+  paint();
+  clearInterval(gigPipTimer);
+  gigPipTimer=setInterval(async()=>{
+    if(!gigPipWin||gigPipWin.closed){clearInterval(gigPipTimer);gigPipWin=null;return;}
+    try{ const d=await api('/api/weddings/'+CURRENT.id); CURRENT=d.wedding; paint(); }catch(e){}
+  },20000);
+  gigPipWin.addEventListener('pagehide',()=>{clearInterval(gigPipTimer);gigPipWin=null;});
+}
+function makeGigDraggable(){
+  const gw=document.getElementById('gig-window');const head=document.getElementById('gig-head');if(!gw||!head)return;
+  let dx=0,dy=0,drag=false;
+  const down=e=>{drag=true;const p=e.touches?e.touches[0]:e;const r=gw.getBoundingClientRect();dx=p.clientX-r.left;dy=p.clientY-r.top;gw.style.right='auto';e.preventDefault();};
+  const move=e=>{if(!drag)return;const p=e.touches?e.touches[0]:e;gw.style.left=Math.max(0,Math.min(window.innerWidth-60,p.clientX-dx))+'px';gw.style.top=Math.max(0,Math.min(window.innerHeight-40,p.clientY-dy))+'px';};
+  const up=()=>{drag=false;};
+  head.onmousedown=down;document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+  head.ontouchstart=down;document.addEventListener('touchmove',move,{passive:false});document.addEventListener('touchend',up);
+}
 
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2400);}
+// Themed replacement for prompt() — asks for an email, returns a Promise<string|null>.
+function askEmail(title,placeholder){
+  return new Promise(resolve=>{
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(5,9,20,.72);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px';
+    ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px;max-width:400px;width:100%">
+      <div style="font-weight:800;font-size:1.05rem;margin-bottom:14px">${title}</div>
+      <input id="__ae-input" type="email" placeholder="${placeholder||'you@example.com'}" style="width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink);margin-bottom:16px">
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost btn-sm" id="__ae-cancel">Cancel</button>
+        <button class="btn btn-neon btn-sm" id="__ae-ok">Send</button>
+      </div>
+    </div>`;
+    document.body.appendChild(ov);
+    const input=ov.querySelector('#__ae-input');input.focus();
+    const done=v=>{document.body.removeChild(ov);resolve(v);};
+    ov.querySelector('#__ae-cancel').onclick=()=>done(null);
+    ov.querySelector('#__ae-ok').onclick=()=>done(input.value.trim()||null);
+    input.onkeydown=e=>{if(e.key==='Enter')done(input.value.trim()||null);if(e.key==='Escape')done(null);};
+    ov.onclick=e=>{if(e.target===ov)done(null);};
+  });
+}
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 async function api(path,opts){
@@ -136,7 +304,17 @@ async function boot(){
     renderSignup(code);
     return;
   }
-  if(ME.role==='couple'){ renderCoupleHome(); return; }
+  if(ME.role!=='couple'){
+    // DJs: load notifications now and poll for couple activity.
+    loadNotifs(true);
+    setInterval(()=>loadNotifs(false),45000);
+  }
+  if(ME.role==='couple'){
+    // Couples get a minimal page — only Log out in the nav.
+    const nav=document.getElementById('wed-nav');
+    if(nav)nav.innerHTML='<a href="#" onclick="logout();return false">Log out</a>';
+    renderCoupleHome(); return;
+  }
   renderDJHome();
 }
 
@@ -255,6 +433,7 @@ async function renderCoupleHome(){
 /* ---------------- DJ HOME ---------------- */
 let djShowArchived=false;
 async function renderDJHome(){
+  PREVIEW_COUPLE=false;
   stopLivePolling();
   const root=document.getElementById('root');
   let weddings=[];
@@ -709,15 +888,17 @@ function renderTplQuestions(){
         <select onchange="setQType(${i},this.value)" style="font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">
           <option value="text" ${q.type==='text'?'selected':''}>Text answer</option>
           <option value="yesno" ${q.type==='yesno'?'selected':''}>Yes / No</option>
-          <option value="choice" ${q.type==='choice'?'selected':''}>Multiple choice</option>
+          <option value="choice" ${q.type==='choice'?'selected':''}>Multiple choice (pick one)</option>
+          <option value="multiselect" ${q.type==='multiselect'?'selected':''}>Checklist (pick several)</option>
         </select>
-        ${q.type==='choice'?`<input value="${esc((q.options||[]).join(', '))}" placeholder="Options, comma-separated" oninput="editingTpl.questions[${i}].options=this.value.split(',').map(s=>s.trim()).filter(Boolean)"
+        ${(q.type==='choice'||q.type==='multiselect')?`<input value="${esc((q.options||[]).join(', '))}" placeholder="Options, comma-separated" oninput="editingTpl.questions[${i}].options=this.value.split(',').map(s=>s.trim()).filter(Boolean)"
           style="flex:1;min-width:200px;font:inherit;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">`:''}
+        ${q.type==='header'?'':`<label style="display:flex;gap:6px;align-items:center;font-size:.8rem;color:var(--muted);cursor:pointer;white-space:nowrap"><input type="checkbox" ${q.gigShow?'checked':''} onchange="editingTpl.questions[${i}].gigShow=this.checked"> 📺 Gig window</label>`}
       </div>
     </div>`;
   }).join('')||'<p class="muted" style="margin-bottom:8px">No questions yet.</p>';
 }
-function setQType(i,type){editingTpl.questions[i].type=type;if(type==='choice'&&!editingTpl.questions[i].options)editingTpl.questions[i].options=[];renderTplQuestions();}
+function setQType(i,type){editingTpl.questions[i].type=type;if((type==='choice'||type==='multiselect')&&!editingTpl.questions[i].options)editingTpl.questions[i].options=[];renderTplQuestions();}
 function addTplQuestion(){editingTpl.questions.push({type:'text',label:'',options:[]});renderTplQuestions();}
 function addTplHeader(){editingTpl.questions.push({type:'header',label:'',options:[]});renderTplQuestions();}
 async function saveTemplate(){
@@ -742,11 +923,15 @@ async function openWedding(id){
 }
 let currentTab='music';
 function renderPlan(){
-  const w=CURRENT, isDJ=ME.role!=='couple';
+  const w=CURRENT, isDJ=isDjView();
   const root=document.getElementById('root');
   const filled=w.blocks.reduce((s,b)=>s+b.songs.length,0);
   const cap=w.blocks.reduce((s,b)=>s+b.capacity,0);
   root.innerHTML=`
+    ${PREVIEW_COUPLE?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-color:var(--neon);background:rgba(193,255,47,.08);margin-top:20px">
+      <div><b>👁 Previewing the couple's view</b><div class="muted">This is exactly what the couple sees. Editing is disabled while previewing.</div></div>
+      <button class="btn btn-neon btn-sm" onclick="toggleCouplePreview()">← Back to DJ view</button>
+    </div>`:''}
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
       <div>
         <p class="eyebrow">${isDJ?'Wedding plan':'Your wedding songs'}</p>
@@ -756,16 +941,42 @@ function renderPlan(){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
         <button class="btn btn-ghost btn-sm" onclick="exportWeddingPDF()">⬇ PDF run-sheet</button>
+        <button class="btn btn-ghost btn-sm" onclick="openGigWindow()">📺 Gig window</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleCouplePreview()">👁 Preview couple's view</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
     </div>
     ${isDJ&&!DEMO&&w.inviteCode?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
-      <div style="display:flex;gap:8px;align-items:center"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button><button class="btn btn-ghost btn-sm" onclick="emailWeddingInvite()">✉ Email invite</button></div>
     </div>`:''}
-    ${(ME.multiOp&&!DEMO&&w.id!=='DEMO')?`<div class="panel" id="assign-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+    ${isDJ&&!DEMO?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><b>Song choice deadline</b><div class="muted">After this date the couple can't edit their choices — giving you time to prep. You can still edit anytime.${w.lockIsDefault?' <span style="color:var(--plum)">Defaulting to 14 days before the wedding — set your own below to change it.</span>':''}</div></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="date" id="lock-date-input" value="${w.lockDate?new Date(w.lockDate).toISOString().slice(0,10):''}" style="font:inherit;font-size:.88rem;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">
+        <button class="btn btn-neon btn-sm" onclick="saveLockDate()">Set</button>
+        ${w.lockDate?'<button class="btn btn-ghost btn-sm" onclick="clearLockDate()">Clear</button>':''}
+      </div>
+    </div>`:''}
+    ${(!isDJ&&w.lockDate)?`<div class="panel" style="border-color:${w.coupleLocked?'var(--plum)':'var(--line)'}">
+      ${w.coupleLocked
+        ? '<b>🔒 Your song choices are locked</b><div class="muted">The deadline set by your DJ has passed. Contact your DJ if you need to make a change.</div>'
+        : '<b>⏰ Please finish by '+fmtWeddingDate(w.lockDate)+'</b><div class="muted">After this date your choices lock so your DJ can prepare. You can keep editing until then.</div>'}
+    </div>`:''}
+    ${(isDJ&&ME.multiOp&&!DEMO&&w.id!=='DEMO')?`<div class="panel" id="assign-panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><b>Assign a DJ</b><div class="muted">Give one of your team this wedding to run. They'll see it in their events.</div></div>
       <div id="assign-control" class="muted" style="font-size:.9rem">Loading team…</div>
+    </div>`:''}
+    ${w.dj&&(w.dj.name||w.dj.profile||w.dj.photo)?`<div class="panel" style="display:flex;gap:16px;align-items:flex-start">
+      ${w.dj.photo?`<img src="${esc(w.dj.photo)}" alt="" style="width:72px;height:72px;border-radius:14px;object-fit:cover;flex-shrink:0">`:''}
+      <div style="flex:1">
+        <div class="muted" style="font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;font-weight:700">Your DJ</div>
+        <div style="font-weight:800;font-size:1.15rem;margin-top:2px">${esc(w.dj.name||'')}</div>
+        ${w.dj.profile?`<div style="color:var(--ink-2);margin-top:6px;white-space:pre-wrap">${esc(w.dj.profile)}</div>`:''}
+        ${w.dj.website?`<div style="margin-top:8px"><a href="${esc(w.dj.website)}" target="_blank" rel="noopener" style="color:var(--neon);font-weight:700;font-size:.9rem">Visit website →</a></div>`:''}
+        ${w.dj.website2?`<div style="margin-top:4px"><a href="${esc(w.dj.website2)}" target="_blank" rel="noopener" style="color:var(--neon);font-weight:700;font-size:.9rem">Visit website →</a></div>`:''}
+        ${w.dj.youtube?`<div style="margin-top:4px"><a href="${esc(w.dj.youtube)}" target="_blank" rel="noopener" style="color:var(--neon);font-weight:700;font-size:.9rem">▶ Watch on YouTube →</a></div>`:''}
+      </div>
     </div>`:''}
 
     <div class="tabs">
@@ -796,7 +1007,7 @@ function renderPlan(){
   renderTimeline();
   renderQuestionnaire();
   switchTab(currentTab);
-  if(ME.multiOp&&!DEMO&&CURRENT.id!=='DEMO')loadAssignControl();
+  if(isDjView()&&ME.multiOp&&!DEMO&&CURRENT.id!=='DEMO')loadAssignControl();
 }
 // Owner: populate the "Assign a DJ" dropdown on this wedding.
 async function loadAssignControl(){
@@ -806,7 +1017,7 @@ async function loadAssignControl(){
   if(!team.length){ el.innerHTML='<a class="btn btn-ghost btn-sm" href="/team.html">+ Add DJs to your team</a>'; return; }
   const cur=CURRENT.assignedDj||'';
   const opts=['<option value="">— Unassigned —</option>'].concat(
-    team.map(dj=>`<option value="${dj.id}" ${cur===dj.id?'selected':''}>${esc(dj.name||dj.email)}</option>`)
+    team.map(dj=>`<option value="${dj.id}" ${cur===dj.id?'selected':''}>${esc(dj.name||dj.email)}${dj.isMe?' (you)':''}</option>`)
   ).join('');
   el.innerHTML=`<select onchange="assignWeddingDJTo(this.value)" style="font:inherit;font-size:.88rem;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">${opts}</select>`;
 }
@@ -822,8 +1033,25 @@ function switchTab(tab){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('show',p.id==='pane-'+tab));
 }
+// Export one wedding block to its own Spotify playlist.
+async function exportBlockSpotify(blockId,btn){
+  const orig=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='Exporting…';}
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/blocks/'+blockId+'/export-spotify',{method:'POST',body:JSON.stringify({})});
+    toast('Playlist created on Spotify ✓ ('+d.count+' songs)');
+    if(d.url)window.open(d.url,'_blank','noopener');
+  }catch(e){
+    if(/connect|reconnect|session/i.test(e.message)){
+      toast('Connect your Spotify account first');
+      location.href='/api/spotify/connect';
+      return;
+    }
+    toast(e.message);
+  }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
+}
 function renderBlocks(){
-  const w=CURRENT, isDJ=ME.role!=='couple', canEdit=!DEMO;
+  const w=CURRENT, isDJ=isDjView(), canEdit=!DEMO&&(CURRENT.canEdit!==false)&&!PREVIEW_COUPLE;
   document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
     const isLive=w.liveBlockId===b.id;
     const full=b.songs.length>=b.capacity;
@@ -845,7 +1073,7 @@ function renderBlocks(){
     return `<div class="block drag-row" ${dragAttrs}>
       <div class="block-head">
         <h3>${(isDJ&&canEdit)?`<span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'music')">⠿</span> `:''}${esc(b.name)}</h3>
-        <div style="display:flex;gap:8px;align-items:center">${liveToggle}<span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${(isDJ&&!DEMO&&w.canExportSpotify&&b.songs.length)?`<button class="mini-btn" onclick="exportBlockSpotify('${b.id}',this)">🎵 Export to Spotify</button>`:''}${liveToggle}<span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span></div>
       </div>
       <div>${b.songs.map((s,idx)=>songRow(b.id,s,idx,canEdit,isDJ)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
       ${(full||!canEdit)?'':`<button class="addbtn" onclick="openSearch('${b.id}')">+ Add a song</button>`}
@@ -962,7 +1190,7 @@ async function refreshLiveBoard(){
   if(!w.liveEventId){el.innerHTML='<p class="muted" style="font-size:.85rem">No guest requests yet.</p>';return;}
   let songs=[];
   try{ songs=(await api('/api/weddings/'+w.id+'/live-leaderboard')).songs||[]; }catch(e){return;}
-  const isDJ=ME.role!=='couple';
+  const isDJ=isDjView();
   if(!songs.length){el.innerHTML='<p class="muted" style="font-size:.85rem">No requests yet — they will appear here as guests vote.</p>';return;}
   el.innerHTML=songs.map((s,idx)=>{
     const reqs=(s.requesters&&s.requesters.length)?`<div class="muted" style="font-size:.78rem;margin-top:2px">Requested by ${s.requesters.map(esc).join(', ')}</div>`:'';
@@ -1026,7 +1254,48 @@ async function toggleWedPlayed(blockId,songId){
 }
 function copyInvite(code){
   const link=location.origin+'/wedding.html?code='+encodeURIComponent(code);
-  navigator.clipboard?.writeText(link).then(()=>toast('Invite link copied'),()=>toast('Link: '+link));
+  let msg='Plan your wedding music with us on Spinlist:\n\n'+link+'\n(or go to spinlist.co.uk/wedding.html and enter code '+code+')';
+  if(CURRENT&&CURRENT.lockDate){
+    msg+='\n\n⏰ Please finish your song choices by '+fmtWeddingDate(CURRENT.lockDate)+'. After that date your choices lock so we can prepare your music.';
+  }
+  navigator.clipboard?.writeText(msg).then(()=>toast('Invite copied — includes the deadline'),()=>toast('Copied: '+link));
+}
+// Email the couple their invite. Uses the DJ's Resend account if connected;
+// otherwise falls back to opening the DJ's own email app.
+async function emailWeddingInvite(){
+  const to=await askEmail("Email the couple their invite","couple@example.com");
+  if(!to)return;
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim())){toast('That does not look like an email address');return;}
+  try{
+    await api('/api/weddings/'+CURRENT.id+'/email-invite',{method:'POST',body:JSON.stringify({to:to.trim()})});
+    toast('Invite emailed to '+to.trim()+' ✓');
+  }catch(e){
+    // No Resend set up (or send failed) → fall back to the DJ's own email app.
+    const link=location.origin+'/wedding.html?code='+encodeURIComponent(CURRENT.inviteCode);
+    let body='Plan your wedding music with us on Spinlist:\n\n'+link+'\n(or go to spinlist.co.uk/wedding.html and enter code '+CURRENT.inviteCode+')';
+    if(CURRENT.lockDate)body+='\n\nPlease finish your song choices by '+fmtWeddingDate(CURRENT.lockDate)+'.';
+    if(/connect resend|set up/i.test(e.message)){toast('Opening your email app (connect Resend in Account to send directly)');}
+    else{toast(e.message);}
+    window.location.href='mailto:'+encodeURIComponent(to.trim())+'?subject='+encodeURIComponent('Plan your wedding music')+'&body='+encodeURIComponent(body);
+  }
+}
+async function saveLockDate(){
+  const v=document.getElementById('lock-date-input').value;
+  if(!v){toast('Pick a date first');return;}
+  // Lock at end of the chosen day (23:59) so the couple has the whole day.
+  const ts=new Date(v+'T23:59:59').getTime();
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/lock-date',{method:'POST',body:JSON.stringify({lockDate:ts})});
+    CURRENT=d.wedding;renderPlan();
+    toast('Deadline set ✓');
+  }catch(e){ toast(e.message); }
+}
+async function clearLockDate(){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/lock-date',{method:'POST',body:JSON.stringify({lockDate:null})});
+    CURRENT=d.wedding;renderPlan();
+    toast('Deadline cleared');
+  }catch(e){ toast(e.message); }
 }
 
 /* ---------------- CSV EXPORT (DJ) ---------------- */
@@ -1073,13 +1342,25 @@ async function exportWeddingPDF(){
   function clip(s,n){s=(s||'').toString();return s.length>n?s.slice(0,n-1)+'…':s;}
   function need(h){ if(y+h>284){doc.addPage();y=18;} }
 
-  // Header band
-  doc.setFillColor(13,18,40);doc.rect(0,0,PW,34,'F');
-  doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(20);
+  // Header band — use the agency's accent colour (fall back to dark navy).
+  const hexToRgb=h=>{const m=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((h||'').trim());return m?[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]:null;};
+  const readableOn=rgb=>((rgb[0]*299+rgb[1]*587+rgb[2]*114)/1000>150?[13,11,20]:[255,255,255]);
+  const accent=(w.branding&&w.branding.color&&hexToRgb(w.branding.color))||[13,18,40];
+  const headText=readableOn(accent);
+  doc.setFillColor(accent[0],accent[1],accent[2]);doc.rect(0,0,PW,34,'F');
+  doc.setTextColor(headText[0],headText[1],headText[2]);doc.setFont('helvetica','bold');doc.setFontSize(20);
   doc.text(clip(w.name||'Wedding',40),M,16);
   doc.setFont('helvetica','normal');doc.setFontSize(11);
   let sub=[];if(w.coupleNames)sub.push(w.coupleNames);if(w.weddingDate)sub.push(fmtWeddingDate(w.weddingDate));
   doc.text(sub.join('   ·   '),M,25);
+  // Optional host logo, right-aligned in the band.
+  if(w.branding&&w.branding.logo){
+    try{
+      const logoData=await loadImageData(w.branding.logo);
+      if(logoData){const fmt=/\.png|image\/png/i.test(w.branding.logo)?'PNG':(/\.svg|svg\+xml/i.test(w.branding.logo)?'PNG':'JPEG');
+        doc.addImage(logoData,fmt,PW-M-28,3,28,28);}
+    }catch(e){/* skip unsupported */}
+  }
   y=44;
 
   function sectionTitle(t){
@@ -1215,7 +1496,7 @@ async function saveTimeline(){
 
 /* ---------------- QUESTIONNAIRE (couple answers / DJ views) ---------------- */
 function renderQuestionnaire(){
-  const w=CURRENT, isDJ=ME.role!=='couple';
+  const w=CURRENT, isDJ=isDjView();
   const el=document.getElementById('questionnaire-content');
   if(!el)return;
   const q=w.questionnaire;
@@ -1225,11 +1506,14 @@ function renderQuestionnaire(){
     return;
   }
   const answers=w.answers||{};
-  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><h2>${esc(q.name||'Questionnaire')}</h2>${isDJ?'<span class="muted" style="font-size:.85rem">Couple&#39;s answers</span>':''}</div>
+  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>${esc(q.name||'Questionnaire')}</h2>${isDJ?`<div style="display:flex;gap:8px;align-items:center"><span class="muted" style="font-size:.85rem">${answersEditMode?'Editing answers':'Couple&#39;s answers'}</span><button class="btn ${answersEditMode?'btn-neon':'btn-ghost'} btn-sm" onclick="toggleAnswerEdit()">${answersEditMode?'Done':'✎ Edit answers'}</button></div>`:''}</div>
     ${!isDJ?'<p class="lead" style="margin-bottom:8px">Answer these for your DJ — saves automatically.</p>':''}
-    <div class="panel">${q.questions.map(qq=>questionField(qq,answers[qq.id],isDJ)).join('')}</div>`;
+    ${isDJ&&answersEditMode?'<p class="muted" style="margin-bottom:8px;font-size:.85rem">You are editing on the couple&#39;s behalf. Changes save automatically.</p>':''}
+    <div class="panel">${q.questions.map(qq=>questionField(qq,answers[qq.id],isDJ&&!answersEditMode)).join('')}</div>`;
 }
-function questionField(q,val,isDJ){
+let answersEditMode=false;
+function toggleAnswerEdit(){ answersEditMode=!answersEditMode; renderQuestionnaire(); }
+function questionField(q,val,readOnly){
   if(q.type==='header'){
     return `<div style="padding:18px 0 4px;border-top:2px solid var(--line);margin-top:6px">
       <div style="font-size:.78rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--plum)">${esc(q.label)}</div>
@@ -1238,8 +1522,8 @@ function questionField(q,val,isDJ){
   val=val||'';
   const lbl=`<div style="font-weight:700;margin-bottom:8px">${esc(q.label)}</div>`;
   let input;
-  if(isDJ){
-    // DJ sees read-only answers
+  if(readOnly){
+    // DJ sees read-only answers (unless they toggled Edit answers)
     input=`<div class="muted" style="background:var(--paper-2);border-radius:8px;padding:10px 12px;min-height:20px">${val?esc(val):'<i>No answer yet</i>'}</div>`;
   }else if(q.type==='yesno'){
     input=`<div style="display:flex;gap:8px">
@@ -1247,6 +1531,11 @@ function questionField(q,val,isDJ){
   }else if(q.type==='choice'){
     input=`<div style="display:flex;gap:8px;flex-wrap:wrap">
       ${(q.options||[]).map(o=>`<button class="btn ${val===o?'btn-neon':'btn-ghost'} btn-sm" onclick="setAnswer('${q.id}','${esc(o).replace(/'/g,"&#39;")}')">${esc(o)}</button>`).join('')}</div>`;
+  }else if(q.type==='multiselect'){
+    // Answer stored as a comma-separated list; couples can pick several.
+    const chosen=(val||'').split(',').map(s=>s.trim()).filter(Boolean);
+    input=`<div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${(q.options||[]).map(o=>`<button class="btn ${chosen.includes(o)?'btn-neon':'btn-ghost'} btn-sm" onclick="toggleMultiAnswer('${q.id}','${esc(o).replace(/'/g,"&#39;")}')">${chosen.includes(o)?'✓ ':''}${esc(o)}</button>`).join('')}</div>`;
   }else{
     input=`<input value="${esc(val)}" placeholder="Type your answer…" oninput="CURRENT.answers=CURRENT.answers||{};CURRENT.answers['${q.id}']=this.value;queueAnswerSave()"
       style="width:100%;font:inherit;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">`;
@@ -1256,6 +1545,16 @@ function questionField(q,val,isDJ){
 function setAnswer(qid,val){
   CURRENT.answers=CURRENT.answers||{};
   CURRENT.answers[qid]=val;
+  renderQuestionnaire();
+  saveAnswers();
+}
+// Toggle one option in a multi-select answer (stored comma-separated).
+function toggleMultiAnswer(qid,opt){
+  CURRENT.answers=CURRENT.answers||{};
+  const chosen=(CURRENT.answers[qid]||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const i=chosen.indexOf(opt);
+  if(i===-1)chosen.push(opt); else chosen.splice(i,1);
+  CURRENT.answers[qid]=chosen.join(', ');
   renderQuestionnaire();
   saveAnswers();
 }
