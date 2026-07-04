@@ -179,17 +179,17 @@ function renderGigWindow(){
       <div style="font-size:1rem;color:#fff;margin-top:3px">${a?esc(a):'<span style="color:#6b7280">—</span>'}</div>
     </div>`;
   }).join(''):'<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template, then save the template.</div>';
-  const diag=`<div style="padding:6px 14px;font-size:.68rem;color:#5b6479;border-top:1px solid rgba(255,255,255,.08)">Debug: questionnaire ${q?'present':'MISSING'} · ${q&&q.questions?q.questions.length:0} questions · ${flagged.length} flagged for gig</div>`;
   gw.innerHTML=`
     <div id="gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
       <b style="font-size:.95rem">📺 ${esc(CURRENT.coupleNames||CURRENT.name||'Gig')}</b>
       <div style="display:flex;gap:8px">
+        <span onclick="floatGigOnTop()" title="Float on top (Chrome/Edge)" style="cursor:pointer;font-weight:800">📌</span>
         <span onclick="popOutGig()" title="Pop out to its own window" style="cursor:pointer;font-weight:800">⤢</span>
         <span onclick="refreshGig()" title="Refresh" style="cursor:pointer;font-weight:800">⟳</span>
         <span onclick="document.getElementById('gig-window').style.display='none'" title="Close" style="cursor:pointer;font-weight:800">✕</span>
       </div>
     </div>
-    <div style="overflow:auto">${rows}</div>${diag}`;
+    <div style="overflow:auto">${rows}</div>`;
   makeGigDraggable();
 }
 async function refreshGig(){
@@ -207,6 +207,42 @@ function popOutGig(){
   // Close the in-page floating panel since it's now popped out.
   const gw=document.getElementById('gig-window');if(gw)gw.style.display='none';
   if(w)w.focus();
+}
+// Float the gig window always-on-top using Document Picture-in-Picture (Chrome/Edge).
+// Falls back to the standalone pop-out window on browsers without support (e.g. Safari).
+let gigPipWin=null,gigPipTimer=null;
+async function floatGigOnTop(){
+  if(!('documentPictureInPicture' in window)){
+    toast('Always-on-top needs Chrome/Edge — opening a pop-out you can pin instead');
+    popOutGig();
+    return;
+  }
+  try{
+    gigPipWin=await documentPictureInPicture.requestWindow({width:380,height:520});
+  }catch(e){ toast('Could not open floating window — opening pop-out instead'); popOutGig(); return; }
+  const gw=document.getElementById('gig-window');if(gw)gw.style.display='none';
+  const paint=()=>{
+    const q=CURRENT.questionnaire, answers=CURRENT.answers||{};
+    const flagged=(q&&q.questions||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
+    const rows=flagged.length?flagged.map(qq=>{const a=answers[qq.id];
+      return '<div class="row"><div class="q">'+esc(qq.label)+'</div><div class="a'+(a?'':' empty')+'">'+(a?esc(a):'No answer yet')+'</div></div>';
+    }).join(''):'<div class="status">No questions flagged for the gig window. Tick “📺 Gig window” on your template and save.</div>';
+    gigPipWin.document.body.innerHTML='<header>📺 '+esc(CURRENT.coupleNames||CURRENT.name||'Gig')+'</header><main>'+rows+'</main>';
+  };
+  gigPipWin.document.head.innerHTML='<style>'
+    +'*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#070b16;color:#e8ecf5}'
+    +'header{position:sticky;top:0;background:#c1ff2f;color:#0a1228;font-weight:800;padding:12px 16px;font-size:1rem}'
+    +'main{padding:4px 0}.row{padding:12px 18px;border-bottom:1px solid rgba(255,255,255,.08)}'
+    +'.row .q{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#c1ff2f;font-weight:800}'
+    +'.row .a{font-size:1.25rem;color:#fff;margin-top:4px;word-wrap:break-word}.row .a.empty{color:#5b6479;font-style:italic;font-size:1rem}'
+    +'.status{padding:30px 18px;text-align:center;color:#8b93a7;font-size:.9rem}</style>';
+  paint();
+  clearInterval(gigPipTimer);
+  gigPipTimer=setInterval(async()=>{
+    if(!gigPipWin||gigPipWin.closed){clearInterval(gigPipTimer);gigPipWin=null;return;}
+    try{ const d=await api('/api/weddings/'+CURRENT.id); CURRENT=d.wedding; paint(); }catch(e){}
+  },20000);
+  gigPipWin.addEventListener('pagehide',()=>{clearInterval(gigPipTimer);gigPipWin=null;});
 }
 function makeGigDraggable(){
   const gw=document.getElementById('gig-window');const head=document.getElementById('gig-head');if(!gw||!head)return;
