@@ -1404,6 +1404,32 @@ app.post('/api/weddings/:id/lock-date', auth.requireAuth, (req, res) => {
 /* =========================================================
    NOTIFICATIONS (DJ sees couple activity)
    ========================================================= */
+
+// TEMP diagnostic: compare a wedding's questionnaire labels vs the owner's template flags.
+app.get('/api/weddings/:id/gig-diag', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (!canAccessWedding(req.user, w)) return res.status(403).json({ error: 'no access' });
+  const q = w.questionnaire;
+  const templates = db.listTemplates(w.host_id) || [];
+  const tplFlags = {};
+  templates.forEach(t => (t.questions || []).forEach(tq => {
+    if (tq.label) tplFlags[tq.label] = { normalized: tq.label.trim().toLowerCase(), gigShow: !!tq.gigShow };
+  }));
+  res.json({
+    weddingHostId: w.host_id,
+    myUserId: req.user.id,
+    templateCount: templates.length,
+    templateFlags: tplFlags,
+    questionnaireName: q ? q.name : null,
+    questionnaireQuestions: q && q.questions ? q.questions.map(qq => ({
+      label: qq.label, normalized: (qq.label || '').trim().toLowerCase(),
+      storedGigShow: qq.gigShow === undefined ? 'MISSING' : qq.gigShow, type: qq.type,
+    })) : null,
+    resolvedFlagged: (questionnaireWithGigFlags(w).questions || []).filter(x => x.gigShow).map(x => x.label),
+  });
+});
+
 app.get('/api/notifications', auth.requireAuth, (req, res) => {
   res.json({
     notifications: db.listNotifications(req.user.id).map(n => ({
