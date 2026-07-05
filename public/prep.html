@@ -47,6 +47,8 @@
   .note{font-size:.82rem;color:var(--muted);margin-top:8px}
   .bar{height:6px;background:var(--paper);border-radius:6px;overflow:hidden;margin-top:6px}
   .bar > i{display:block;height:100%;background:var(--neon)}
+  .pickwrap{display:flex;align-items:center;gap:4px;max-width:52%;justify-content:flex-end}
+  .verpick{max-width:100%;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:.82rem}
 </style>
 </head>
 <body>
@@ -98,8 +100,13 @@
 <script>
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
-let WED=null, LIB=[], SRC='folder';   // LIB = [{title,artist,path,file?}]
+let WED=null, LIB=[], SRC='folder', PICKS={};   // LIB = [{title,artist,path,file?}]; PICKS = remembered versions
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function loadPicks(){ try{ const d=await (await fetch('/api/prep/picks',{credentials:'same-origin'})).json(); PICKS=d.picks||{}; }catch(e){ PICKS={}; } }
+async function savePick(key, chosen){
+  if(chosen)PICKS[key]=chosen; else delete PICKS[key];
+  try{ await fetch('/api/prep/picks',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({key,chosen:chosen||null})}); }catch(e){}
+}
 
 function setSrc(s){ SRC=s;
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.src===s));
@@ -131,9 +138,30 @@ function score(req, lib){
   return titleScore*0.7 + artistScore*0.3;
 }
 function bestMatch(req){
-  let best=null,bestScore=0;
-  for(const t of LIB){ const s=score(req,t); if(s>bestScore){bestScore=s;best=t;} }
-  return (bestScore>=0.45)?{track:best,score:bestScore}:null;
+  return candidates(req)[0] || null;
+}
+// All library tracks scoring above threshold, best first.
+function candidates(req){
+  const scored=[];
+  for(const t of LIB){ const s=score(req,t); if(s>=0.45)scored.push({track:t,score:s}); }
+  scored.sort((a,b)=>b.score-a.score);
+  return scored.slice(0,8);
+}
+// Key a request to remember the chosen version across weddings.
+function songKey(req){ return norm(req.title)+'|'+norm(req.artist); }
+// Given a request + its candidates, return the chosen one honouring a remembered pick.
+function chosenFor(req){
+  const cands=candidates(req);
+  if(!cands.length)return null;
+  const remembered=PICKS[songKey(req)];
+  if(remembered){
+    // Match on the RAW title+artist (not normalised) so different versions
+    // like "(Radio Edit)" vs "(Album)" — which normalise the same — stay distinct.
+    const rk=(remembered.title||'').trim().toLowerCase()+'|'+(remembered.artist||'').trim().toLowerCase();
+    const hit=cands.find(c=>(c.track.title||'').trim().toLowerCase()+'|'+(c.track.artist||'').trim().toLowerCase()===rk);
+    if(hit)return {chosen:hit,cands,remembered:true};
+  }
+  return {chosen:cands[0],cands,remembered:false};
 }
 
 /* ---------- folder scan ---------- */
@@ -259,15 +287,39 @@ function renderResults(){
   let totReq=0,totFound=0;
   const html=blocks.map(b=>{
     const rows=(b.songs||[]).map(s=>{
-      const m=bestMatch(s); totReq++; if(m)totFound++;
-      return {s,m};
+      const cf=chosenFor(s); totReq++; if(cf)totFound++;
+      return {s,cf};
     });
-    const found=rows.filter(r=>r.m).length;
-    const songHtml=rows.map(r=>`<div class="song">
-        <span class="dot ${r.m?'ok':'miss'}"></span>
+    const found=rows.filter(r=>r.cf).length;
+    const songHtml=rows.map((r,ri)=>{
+      const key=songKey(r.s);
+      if(!r.cf){
+        return `<div class="song">
+          <span class="dot miss"></span>
+          <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
+          <span class="pill miss">not found</span>
+        </div>`;
+      }
+      const {chosen,cands,remembered}=r.cf;
+      // Build a dropdown of all candidate versions if more than one.
+      let picker;
+      if(cands.length>1){
+        const opts=cands.map(c=>{
+          const val=(c.track.title||'').trim().toLowerCase()+'|'+(c.track.artist||'').trim().toLowerCase();
+          const label=(c.track.artist?c.track.artist+' - ':'')+(c.track.title||'')+(c.track.path?'  ·  '+c.track.path.split(/[\\/]/).pop():'');
+          const sel=(c===chosen)?'selected':'';
+          return `<option value="${esc(val)}" ${sel}>${esc(label)}</option>`;
+        }).join('');
+        picker=`<select class="verpick" data-key="${esc(key)}" onchange="pickVersion(this)">${opts}</select>${remembered?'<span class="pill ok" style="margin-left:6px">saved</span>':`<span class="stat" style="margin-left:6px">${cands.length} versions</span>`}`;
+      }else{
+        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((chosen.track.artist?chosen.track.artist+' - ':'')+(chosen.track.title||''))}</span>`;
+      }
+      return `<div class="song">
+        <span class="dot ok"></span>
         <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
-        ${r.m?`<span class="found" title="${esc(r.m.track.path||'')}">${esc((r.m.track.artist?r.m.track.artist+' - ':'')+(r.m.track.title||''))}</span>`:'<span class="pill miss">not found</span>'}
-      </div>`).join('');
+        <span class="pickwrap">${picker}</span>
+      </div>`;
+    }).join('');
     return `<div class="block">
       <div class="bhead" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
         <div><h3>${esc(b.name||'Block')}</h3><div class="meta">${found} of ${rows.length} matched</div></div>
@@ -281,13 +333,20 @@ function renderResults(){
     <div class="row" style="margin-bottom:10px"><button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button></div>
     ${html}`;
 }
+// The DJ picked a specific version from the dropdown — remember it across weddings.
+async function pickVersion(sel){
+  const key=sel.dataset.key;
+  const val=sel.value;                         // "rawtitle|rawartist" (lowercased)
+  const t=LIB.find(x=>(x.title||'').trim().toLowerCase()+'|'+(x.artist||'').trim().toLowerCase()===val);
+  if(t){ await savePick(key,{title:t.title,artist:t.artist}); renderResults(); }
+}
 
 function m3uForBlock(b){
   let out='#EXTM3U\n';
   (b.songs||[]).forEach(s=>{
-    const m=bestMatch(s);
-    if(m && m.track.path){
-      out+=`#EXTINF:-1,${(m.track.artist||'')} - ${m.track.title||''}\n${m.track.path}\n`;
+    const cf=chosenFor(s);
+    if(cf && cf.chosen.track.path){
+      out+=`#EXTINF:-1,${(cf.chosen.track.artist||'')} - ${cf.chosen.track.title||''}\n${cf.chosen.track.path}\n`;
     }
   });
   return out;
@@ -318,6 +377,7 @@ async function loadWed(){
     WED=d.wedding;
     document.getElementById('wed-name').textContent=WED.coupleNames||WED.name||'wedding';
     document.title='Prep · '+(WED.coupleNames||WED.name||'Spinlist');
+    await loadPicks();
     renderResults();
   }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the wedding.</p></div>'; }
 }

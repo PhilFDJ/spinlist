@@ -1430,6 +1430,17 @@ app.post('/api/notifications/digest', auth.requireAuth, (req, res) => {
   res.json({ ok: true, dailyDigest: on });
 });
 
+// Prep tool: the DJ's remembered "go-to version" per song (across all weddings).
+app.get('/api/prep/picks', auth.requireAuth, (req, res) => {
+  res.json({ picks: db.getPrepPicks(req.user.id) });
+});
+app.post('/api/prep/picks', auth.requireAuth, (req, res) => {
+  const { key, chosen } = req.body || {};
+  if (!key || typeof key !== 'string') return res.status(400).json({ error: 'key required' });
+  const picks = db.setPrepPick(req.user.id, key, chosen || null);
+  res.json({ ok: true, picks });
+});
+
 /* =========================================================
    RESEND EMAIL (subscriber connects their own Resend key)
    ========================================================= */
