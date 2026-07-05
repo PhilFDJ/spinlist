@@ -338,9 +338,15 @@ async function scanFiles(files, fsapi){
   function tick(){
     if(done%50===0||done===total){
       barI.style.width=Math.round(done/total*100)+'%';
-      const rate=readCount/Math.max(0.001,(Date.now()-t0)/1000);   // ETA based on files actually read
-      const remainingReads=total-done;   // upper bound; reused files are near-instant
-      const eta=rate>0?Math.round(remainingReads/Math.max(rate, remainingReads/60)):0;
+      // ETA from the actual read rate applied to how many files still need reading.
+      const elapsed=(Date.now()-t0)/1000;
+      const readRate=readCount/Math.max(0.001,elapsed);   // files read per second
+      // Estimate remaining reads: assume the same reused-fraction holds for the rest.
+      const processed=Math.max(1,done);
+      const readFraction=readCount/processed;             // share of files that needed a read
+      const remaining=total-done;
+      const remainingReads=remaining*readFraction;
+      const eta=readRate>0?Math.round(remainingReads/readRate):0;
       stat.textContent=done+' / '+total+' files'+(reused?'  ·  '+reused+' unchanged':'')+(eta>2&&readCount>5?'  ·  ~'+fmtTime(eta)+' left':'');
     }
   }
