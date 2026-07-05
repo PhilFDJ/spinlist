@@ -109,7 +109,7 @@
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
 const SETUP=!WID && (params.get('setup')==='1' || params.get('setup')==='');
-let WED=null, LIB=[], SRC='folder', PICKS={}, LIB_NAME='', PREV_LIB=[];   // PREV_LIB = last saved lib (with size/mtime) for incremental rescans
+let WED=null, LIB=[], SRC='folder', PICKS={}, LIB_NAME='', PREV_LIB=[], LIB_TOKEN_INDEX=new Map();   // PREV_LIB = last saved lib for incremental rescans
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function loadPicks(){ try{ const d=await (await fetch('/api/prep/picks',{credentials:'same-origin'})).json(); PICKS=d.picks||{}; }catch(e){ PICKS={}; } }
 async function savePick(key, chosen){
@@ -134,7 +134,7 @@ async function loadSavedLibrary(){
     const d=await (await fetch('/api/prep/library',{credentials:'same-origin'})).json();
     if(d.library && Array.isArray(d.library.tracks) && d.library.tracks.length){
       LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',path:t.p||'',video:!!t.v,size:t.s||0,mtime:t.m||0}));
-      PREV_LIB=LIB.slice();   // remember for incremental rescan
+      PREV_LIB=LIB.slice(); invalidateLibIndex();   // remember for incremental rescan
       LIB_NAME=d.library.name||'library';
       return true;
     }
@@ -142,10 +142,11 @@ async function loadSavedLibrary(){
   return false;
 }
 function showLibStatus(msg){ const el=document.getElementById('lib-status'); if(el)el.textContent=msg; }
+function invalidateLibIndex(){ LIB_INDEXED=false; }
 async function clearSavedLibrary(){
   if(!confirm('Forget your saved library? You can re-scan a folder to build a new one.'))return;
   try{ await fetch('/api/prep/library',{method:'DELETE',credentials:'same-origin'}); }catch(e){}
-  LIB=[]; LIB_NAME=''; showLibStatus('Saved library cleared.'); renderResults();
+  LIB=[]; LIB_NAME=''; invalidateLibIndex(); showLibStatus('Saved library cleared.'); renderResults();
 }
 
 function setSrc(s){ SRC=s;
@@ -200,10 +201,42 @@ function score(req, lib){
 function bestMatch(req){
   return candidates(req)[0] || null;
 }
-// All library tracks scoring above threshold, best first.
+// --- Fast matching index: precompute each track's tokens + an inverted index so we
+// only score tracks that share at least one token with the request (not the whole library). ---
+let LIB_INDEXED=false;
+function buildLibIndex(){
+  LIB_TOKEN_INDEX=new Map();   // token -> array of track refs
+  for(const t of LIB){
+    // cache the track's tokens once
+    t._tok = tokens((t.title||'')+' '+(t.artist||'')+' '+(t.path||''));
+    t._tt  = tokens(t.title||'');
+    t._ta  = tokens(t.artist||'');
+    for(const tok of t._tok){
+      let arr=LIB_TOKEN_INDEX.get(tok); if(!arr){ arr=[]; LIB_TOKEN_INDEX.set(tok,arr); }
+      arr.push(t);
+    }
+  }
+  LIB_INDEXED=true;
+}
+function scoreFast(req, lib){
+  const rt=req._rt, ra=req._ra;
+  let titleScore=jaccard(rt, lib._tt);
+  const titleInWhole=jaccard(rt, lib._tok);
+  titleScore=Math.max(titleScore, titleInWhole*0.9);
+  let artistScore=lib._ta.size?jaccard(ra, lib._ta):jaccard(ra, lib._tok)*0.9;
+  return titleScore*0.7 + artistScore*0.3;
+}
+// All library tracks scoring above threshold, best first — using the token index.
 function candidates(req){
+  if(!LIB_INDEXED) buildLibIndex();
+  // Precompute the request's tokens once.
+  if(!req._rt){ req._rt=tokens(req.title); req._ra=tokens(req.artist); }
+  // Gather only candidate tracks that share a token with the request title/artist.
+  const seen=new Set(); const pool=[];
+  const addFrom=(tok)=>{ const arr=LIB_TOKEN_INDEX.get(tok); if(arr){ for(const t of arr){ if(!seen.has(t)){ seen.add(t); pool.push(t); } } } };
+  req._rt.forEach(addFrom); req._ra.forEach(addFrom);
   const scored=[];
-  for(const t of LIB){ const s=score(req,t); if(s>=0.45)scored.push({track:t,score:s}); }
+  for(const t of pool){ const s=scoreFast(req,t); if(s>=0.45)scored.push({track:t,score:s}); }
   scored.sort((a,b)=>b.score-a.score);
   return scored.slice(0,8);
 }
@@ -354,7 +387,7 @@ async function scanFiles(files, fsapi){
     await Promise.all(files.slice(i,i+CONCURRENCY).map(handleOne));
     if(i % (CONCURRENCY*4) === 0) await new Promise(r=>setTimeout(r));   // yield occasionally so the bar paints
   }
-  LIB=newLib;
+  LIB=newLib; invalidateLibIndex();
   PREV_LIB=newLib;
   stat.textContent=LIB.length+' tracks'+(reused?' ('+reused+' unchanged, '+readCount+' newly read)':'');
   bar.style.display='none';
@@ -507,6 +540,7 @@ document.getElementById('library-input').onchange=async(e)=>{
   } else {
     LIB = parseM3U(text);
   }
+  invalidateLibIndex();
   stat.textContent=LIB.length+' tracks imported';
   LIB_NAME=f.name.replace(/\.[^.]+$/,'');
   renderResults();
@@ -656,7 +690,7 @@ document.getElementById('find-file-input').onchange=async(e)=>{
   if(!title){ const base=f.name.replace(/\.[^.]+$/,''); const parts=base.split(' - '); if(parts.length>=2){artist=artist||parts[0].trim();title=parts.slice(1).join(' - ').trim();} else title=base.trim(); }
   const path=f.webkitRelativePath||f.name;
   // Add to the in-memory library so it exports + shows immediately.
-  LIB.push({title,artist,path});
+  LIB.push({title,artist,path}); invalidateLibIndex();
   // Remember as a MANUAL pick keyed to the song (by filename, so a rescan re-finds it).
   await savePick(_findKey, {manual:true, title, artist, name:f.name, path});
   _findKey=null;
@@ -704,17 +738,21 @@ async function loadWed(){
     return;
   }
   if(!WID){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">No wedding specified. Open Prep from a wedding in your planner.</p></div>'; return; }
+  document.getElementById('results').innerHTML='<div class="panel"><p class="status">Loading your library and this wedding\u2019s songs…</p></div>';
   try{
-    const r=await fetch('/api/weddings/'+encodeURIComponent(WID),{credentials:'same-origin'});
-    if(r.status===401||r.status===403){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Please <a href="/">log in</a> and open Prep from your planner.</p></div>'; return; }
-    const d=await r.json();
+    // Fetch the wedding, remembered picks, and saved library all at once (not one-after-another).
+    const [wedRes] = await Promise.all([
+      fetch('/api/weddings/'+encodeURIComponent(WID),{credentials:'same-origin'}),
+      loadPicks(),
+      loadSavedLibrary().then(h=>{ window.__hadSaved=h; })
+    ]);
+    if(wedRes.status===401||wedRes.status===403){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Please <a href="/">log in</a> and open Prep from your planner.</p></div>'; return; }
+    const d=await wedRes.json();
     WED=d.wedding;
     document.getElementById('wed-name').textContent=WED.coupleNames||WED.name||'wedding';
     document.title='Prep · '+(WED.coupleNames||WED.name||'Spinlist');
-    await loadPicks();
-    const hadSaved=await loadSavedLibrary();   // auto-load account library across devices
     renderResults();
-    if(hadSaved){ document.getElementById('folder-stat').textContent='Loaded your saved library ('+LIB.length+' tracks). Rescan a folder to update it.'; showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
+    if(window.__hadSaved){ document.getElementById('folder-stat').textContent='Loaded your saved library ('+LIB.length+' tracks). Rescan a folder to update it.'; showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
     // If we remembered a folder from a previous session, offer a one-click rescan.
     try{
       const saved=await idbGet('dirHandle');
