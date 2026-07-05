@@ -146,13 +146,33 @@ function setSrc(s){ SRC=s;
 }
 
 /* ---------- normalisation & matching ---------- */
+// Common DJ/edit descriptors to ignore when matching (bracketed OR loose).
+const EDIT_TAGS=[
+  'extended mix','extended edit','extended version','extended','ext mix','ext edit','ext',
+  'intro edit','intro clean','intro dirty','intro outro','intro','outro',
+  'xtend','xtd','x tend','short edit','short mix','short','quick mix','quick hit','quick',
+  'radio edit','radio mix','radio version','radio','clean edit','clean version','clean','dirty edit','dirty',
+  'club mix','club edit','club','dance mix','dance edit','original mix','original version','original',
+  'remix','re edit','redrum','re drum','edit','remaster','remastered','mono','stereo',
+  'acapella','a capella','instrumental','dub','vip mix','vip','bootleg','mashup','mash up',
+  'transition','trans','segue','starter','ender','128','132','swing','ck cut','dj edit','djedit',
+  'single version','album version','12 inch','12','7 inch','7','vocal mix','vocal'
+];
+function stripEditTags(s){
+  let out=' '+s+' ';
+  for(const tag of EDIT_TAGS){
+    // remove the tag as whole words wherever it appears
+    out=out.replace(new RegExp('\\b'+tag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','g'),' ');
+  }
+  return out;
+}
 function norm(s){
-  return (s||'').toLowerCase()
-    .replace(/\(.*?\)|\[.*?\]/g,' ')                 // drop (feat…), [remix] etc
+  s=(s||'').toLowerCase()
+    .replace(/\(.*?\)|\[.*?\]|\{.*?\}/g,' ')          // drop (…) […] {…}
     .replace(/\bfeat\.?\b|\bft\.?\b/g,' ')
-    .replace(/&/g,' and ')
-    .replace(/[^a-z0-9 ]+/g,' ')
-    .replace(/\s+/g,' ').trim();
+    .replace(/&/g,' and ');
+  s=stripEditTags(s);                                 // remove loose DJ-edit words too
+  return s.replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
 }
 function tokens(s){ return new Set(norm(s).split(' ').filter(Boolean)); }
 function jaccard(a,b){ if(!a.size||!b.size)return 0; let i=0; a.forEach(x=>{if(b.has(x))i++;}); return i/(a.size+b.size-i); }
