@@ -1423,6 +1423,13 @@ app.post('/api/notifications/read', auth.requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Toggle the daily digest email (opt-in, off by default).
+app.post('/api/notifications/digest', auth.requireAuth, (req, res) => {
+  const on = !!(req.body || {}).on;
+  db.setDailyDigest(req.user.id, on);
+  res.json({ ok: true, dailyDigest: on });
+});
+
 /* =========================================================
    RESEND EMAIL (subscriber connects their own Resend key)
    ========================================================= */
@@ -1553,6 +1560,71 @@ app.post('/api/team/:id/email-invite', auth.requireAuth, requireEmailTier, async
   if (!out.ok) return res.status(502).json({ error: out.error });
   res.json({ ok: true });
 });
+
+/* =========================================================
+   DAILY DIGEST — one round-up email per opted-in DJ per day
+   ========================================================= */
+// Send window (server local time). Configurable later via env DIGEST_HOUR (0-23).
+const DIGEST_HOUR = Number.isFinite(+process.env.DIGEST_HOUR) ? Math.max(0, Math.min(23, +process.env.DIGEST_HOUR)) : 8;
+
+function dayKey(d = new Date()) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function digestHtml(name, items) {
+  const rows = items.map(n => `<tr>
+      <td style="padding:8px 0;border-bottom:1px solid #eee;font-size:14px;color:#1a1f2e">${escapeHtml(n.text)}</td>
+      <td style="padding:8px 0;border-bottom:1px solid #eee;font-size:12px;color:#8b93a7;white-space:nowrap;text-align:right">${new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+    </tr>`).join('');
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:0 auto">
+      <div style="background:#0d1220;padding:20px 24px;border-radius:12px 12px 0 0">
+        <span style="color:#c1ff2f;font-weight:800;font-size:18px">Spinlist</span>
+        <span style="color:#fff;font-weight:600;font-size:15px"> · Daily round-up</span>
+      </div>
+      <div style="border:1px solid #eee;border-top:none;border-radius:0 0 12px 12px;padding:22px 24px">
+        <p style="font-size:15px;color:#1a1f2e;margin:0 0 4px">Hi ${escapeHtml(name || 'there')},</p>
+        <p style="font-size:14px;color:#555;margin:0 0 16px">Here's what your couples got up to yesterday — ${items.length} update${items.length === 1 ? '' : 's'}.</p>
+        <table style="width:100%;border-collapse:collapse">${rows}</table>
+        <p style="margin:20px 0 0"><a href="${BASE_URL}/wedding.html" style="display:inline-block;background:#c1ff2f;color:#0a1228;font-weight:700;text-decoration:none;padding:10px 18px;border-radius:8px;font-size:14px">Open your planner</a></p>
+        <p style="font-size:12px;color:#8b93a7;margin:18px 0 0">You're getting this because you turned on the daily round-up in your account. You can switch it off any time under Account.</p>
+      </div>
+    </div>`;
+}
+
+async function sendDailyDigests() {
+  const today = dayKey();
+  const now = new Date();
+  const until = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(); // midnight today
+  const since = until - 864e5;                                                        // midnight yesterday
+  const due = db.usersDueDigest(today);
+  for (const u of due) {
+    try {
+      const items = db.notificationsBetween(u.id, since, until);
+      // Mark as processed for today regardless, so we never double-send.
+      db.markDigestSent(u.id, today);
+      if (!items.length) continue;                 // nothing happened yesterday — skip the email
+      const cfg = db.resendConfigFor(u.id);
+      if (!cfg) continue;                          // no email set up — silently skip
+      await sendViaResend(cfg, {
+        to: u.email,
+        subject: `Spinlist round-up · ${items.length} update${items.length === 1 ? '' : 's'} from your couples`,
+        html: digestHtml(u.name, items),
+        replyTo: u.email,
+      });
+    } catch (e) { /* keep going through the rest */ }
+  }
+}
+
+// Check every 15 minutes; fire the batch once we're at/after the send hour for a new day.
+let _lastDigestDay = null;
+setInterval(() => {
+  const now = new Date();
+  const today = dayKey(now);
+  if (now.getHours() >= DIGEST_HOUR && _lastDigestDay !== today) {
+    _lastDigestDay = today;
+    sendDailyDigests();
+  }
+}, 15 * 60 * 1000);
 
 
 app.post('/api/redeem', auth.requireAuth, (req, res) => {
@@ -1947,7 +2019,7 @@ function shapeResults(json) {
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
   const p = PLANS[u.plan];
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u) };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest };
 }
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public')));

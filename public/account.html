@@ -167,6 +167,16 @@ async function boot(){
         <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">Connect your own <a href="https://resend.com" target="_blank" rel="noopener" style="color:var(--plum)">Resend</a> account to email wedding invites to couples and login details to your DJs, from your own address.</p>
         <div id="resend-box"><p style="color:var(--muted);font-size:.9rem">Checking…</p></div>
       </div>
+
+      <div class="panel">
+        <h2>Daily round-up email</h2>
+        <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">Get one email a day summarising everything your couples updated — songs, timelines and questionnaire answers — from the previous day. Sent from your connected email (above).</p>
+        <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+          <input type="checkbox" id="digest-toggle" ${d.user.dailyDigest ? 'checked' : ''} onchange="toggleDigest(this.checked)" style="width:18px;height:18px;accent-color:var(--plum)">
+          <span style="font-size:.95rem">Email me a daily round-up of couple activity</span>
+        </label>
+        <p id="digest-msg" style="font-size:.85rem;color:var(--muted);margin-top:8px;min-height:16px"></p>
+      </div>
     ` : ''}
 
     <div class="actions">
@@ -192,6 +202,18 @@ async function boot(){
   if(d.user.emailInvites)loadResend();
 }
 
+async function toggleDigest(on){
+  const msg=document.getElementById('digest-msg');
+  if(msg){msg.style.color='var(--muted)';msg.textContent='Saving…';}
+  try{
+    const r=await fetch('/api/notifications/digest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on:!!on})});
+    if(!r.ok)throw new Error('failed');
+    if(msg){msg.textContent=on?'On — you\u2019ll get a daily round-up when there\u2019s activity.':'Off — no daily emails.';}
+  }catch(e){
+    if(msg){msg.style.color='#ff6b5e';msg.textContent='Could not save — please try again.';}
+    const t=document.getElementById('digest-toggle');if(t)t.checked=!on;
+  }
+}
 async function loadResend(){
   const box=document.getElementById('resend-box');if(!box)return;
   let s={};
