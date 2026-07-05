@@ -688,7 +688,10 @@ function renderResults(){
     : '';
   el.innerHTML=`<h2>Matches <span class="stat">(${totFound} of ${totReq} requests found in your library)</span></h2>
     ${relWarn}
-    <div class="row" style="margin-bottom:10px"><button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button></div>
+    <div class="row" style="margin-bottom:10px;gap:14px;align-items:center">
+      <button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button>
+      <label class="note" style="margin:0;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${PLAIN_M3U?'checked':''} onchange="togglePlainM3U(this)" style="width:15px;height:15px"> Plain paths only (if your DJ software won't import)</label>
+    </div>
     ${html}`;
 }
 // The DJ picked a specific version from the dropdown — remember it across weddings.
@@ -716,12 +719,14 @@ document.getElementById('find-file-input').onchange=async(e)=>{
 };
 
 function isAbsolutePath(p){ return /^([a-zA-Z]:[\\/]|\/|\\\\)/.test(p||''); }   // /unix, C:\win, \\unc
-function m3uForBlock(b){
-  let out='#EXTM3U\n';
+// Extended M3U (default) — #EXTINF metadata + full path. Works in Serato, rekordbox, Traktor.
+function m3uForBlock(b, plain){
+  let out = plain ? '' : '#EXTM3U\n';
   (b.songs||[]).forEach(s=>{
     const cf=chosenFor(s);
     if(cf && cf.chosen.track.path){
-      out+=`#EXTINF:-1,${(cf.chosen.track.artist||'')} - ${cf.chosen.track.title||''}\n${cf.chosen.track.path}\n`;
+      if(plain){ out+=`${cf.chosen.track.path}\n`; }
+      else { out+=`#EXTINF:-1,${(cf.chosen.track.artist||'')} - ${cf.chosen.track.title||''}\n${cf.chosen.track.path}\n`; }
     }
   });
   return out;
@@ -753,9 +758,11 @@ function download(name,text){
   }
 }
 function safeName(s){ return (s||'block').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'-'); }
+let PLAIN_M3U=false;   // toggled by the DJ if their software prefers paths-only
+function togglePlainM3U(cb){ PLAIN_M3U=!!cb.checked; }
 function exportBlock(id){
   const b=(WED.blocks||[]).find(x=>x.id===id); if(!b)return;
-  download(safeName(WED.coupleNames||WED.name)+' - '+safeName(b.name)+'.m3u', m3uForBlock(b));
+  download(safeName(WED.coupleNames||WED.name)+' - '+safeName(b.name)+'.m3u', m3uForBlock(b, PLAIN_M3U));
 }
 function exportAll(){
   // Safari blocks downloads not tied to the click gesture, so fire them synchronously
