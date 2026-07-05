@@ -225,7 +225,7 @@ function renderGigWindow(){
   const tab=(id,label)=>`<span onclick="setGigTab('${id}')" style="flex:1;text-align:center;padding:8px 4px;font-size:.8rem;font-weight:700;cursor:pointer;border-bottom:2px solid ${GIG_TAB===id?'var(--neon)':'transparent'};color:${GIG_TAB===id?'#fff':'#8b93a7'}">${label}</span>`;
   gw.innerHTML=`
     <div id="gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
-      <b style="font-size:.95rem;display:flex;align-items:center;gap:8px"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" style="height:18px;width:auto"><span>📺 ${esc(CURRENT.coupleNames||CURRENT.name||'Gig')}</span></b>
+      <b style="font-size:.95rem;display:flex;align-items:center;gap:8px"><img src="/img/spinlist-mark-white.png" alt="Spinlist" style="height:20px;width:auto"><span>📺 ${esc(CURRENT.coupleNames||CURRENT.name||'Gig')}</span></b>
       <div style="display:flex;gap:8px">
         <span onclick="floatGigOnTop()" title="Float on top (Chrome/Edge)" style="cursor:pointer;font-weight:800">📌</span>
         <span onclick="popOutGig()" title="Pop out to its own window" style="cursor:pointer;font-weight:800">⤢</span>
@@ -286,7 +286,7 @@ async function floatGigOnTop(){
     const rows=flagged.length?flagged.map(qq=>{const a=answers[qq.id];
       return '<div class="row"><div class="q">'+esc(qq.label)+'</div><div class="a'+(a?'':' empty')+'">'+(a?esc(a):'No answer yet')+'</div></div>';
     }).join(''):'<div class="status">No questions flagged for the gig window. Tick “📺 Gig window” on your template and save.</div>';
-    gigPipWin.document.body.innerHTML='<header><img src="'+location.origin+'/img/spinlist-logo-dark.png" style="height:16px;width:auto;margin-right:8px;vertical-align:middle">📺 '+esc(CURRENT.coupleNames||CURRENT.name||'Gig')+'</header><main>'+rows+'</main>';
+    gigPipWin.document.body.innerHTML='<header><img src="'+location.origin+'/img/spinlist-mark-white.png" style="height:18px;width:auto;margin-right:8px;vertical-align:middle">📺 '+esc(CURRENT.coupleNames||CURRENT.name||'Gig')+'</header><main>'+rows+'</main>';
   };
   gigPipWin.document.head.innerHTML='<style>'
     +'*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#070b16;color:#e8ecf5}'
