@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prep · Spinlist</title>
+<link rel="icon" href="/img/favicon-32.png" sizes="32x32">
+<style>
+  :root{ --neon:#c1ff2f; --ink:#e8ecf5; --muted:#8b93a7; --line:rgba(255,255,255,.1);
+         --bg:#0b1020; --surface:#121a2e; --paper:#0d1424; --plum:#7b6cff; --ok:#39d98a; --miss:#ff6b5e; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+  .wrap{max-width:900px;margin:0 auto;padding:20px 18px 60px}
+  header.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:20px}
+  header.top .brand{display:flex;align-items:center;gap:10px;font-weight:800}
+  header.top .brand img{height:26px;width:auto}
+  a{color:var(--neon)}
+  h1{font-size:1.6rem;margin:6px 0}
+  h2{font-size:1.15rem;margin:24px 0 10px}
+  .lead{color:var(--muted);font-size:.95rem}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}
+  .btn{display:inline-flex;align-items:center;gap:8px;background:var(--neon);color:#0a1228;border:none;border-radius:10px;padding:11px 18px;font:inherit;font-weight:700;cursor:pointer;text-decoration:none}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  .btn:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .tab{padding:8px 14px;border-radius:9px;border:1px solid var(--line);cursor:pointer;font-weight:700;font-size:.88rem;color:var(--muted)}
+  .tab.on{background:var(--plum);color:#fff;border-color:var(--plum)}
+  .stat{font-size:.85rem;color:var(--muted)}
+  .block{border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
+  .block .bhead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;background:var(--paper);cursor:pointer}
+  .block .bhead h3{margin:0;font-size:1rem}
+  .block .bhead .meta{font-size:.82rem;color:var(--muted)}
+  .block .body{padding:4px 14px 12px}
+  .song{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:.9rem}
+  .song:last-child{border-bottom:none}
+  .song .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+  .song .dot.ok{background:var(--ok)} .song .dot.miss{background:var(--miss)}
+  .song .req{flex:1;min-width:0}
+  .song .req b{color:#fff;font-weight:600}
+  .song .found{font-size:.8rem;color:var(--muted);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pill{font-size:.72rem;font-weight:800;padding:2px 8px;border-radius:20px}
+  .pill.ok{background:rgba(57,217,138,.15);color:var(--ok)}
+  .pill.miss{background:rgba(255,107,94,.15);color:var(--miss)}
+  .status{color:var(--muted);font-size:.9rem;padding:8px 0}
+  input[type=file]{display:none}
+  .note{font-size:.82rem;color:var(--muted);margin-top:8px}
+  .bar{height:6px;background:var(--paper);border-radius:6px;overflow:hidden;margin-top:6px}
+  .bar > i{display:block;height:100%;background:var(--neon)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <span class="brand"><img src="/img/spinlist-logo-dark.png" alt="Spinlist"></span>
+    <a href="/wedding.html" class="stat">← Back to planner</a>
+  </header>
+
+  <h1>Prep <span style="color:var(--muted);font-weight:400">· <span id="wed-name">wedding</span></span></h1>
+  <p class="lead">Match the couple's song requests against your own music library, then export a playlist (.m3u) for each block to drop straight into your DJ software. Your files stay on your computer — nothing is uploaded.</p>
+
+  <div class="panel">
+    <div class="tabs">
+      <div class="tab on" data-src="folder" onclick="setSrc('folder')">📁 Scan a folder</div>
+      <div class="tab" data-src="library" onclick="setSrc('library')">🎚️ Import a library file</div>
+    </div>
+
+    <div id="src-folder">
+      <p class="lead" style="margin-top:0">Point Spinlist at the folder your music lives in. It reads the tags (title &amp; artist) from your MP3/MP4/M4A files to find matches.</p>
+      <div class="row">
+        <button class="btn" id="pick-folder">Choose music folder</button>
+        <input type="file" id="folder-input" webkitdirectory directory multiple accept="audio/*,video/mp4,.mp3,.m4a,.mp4,.aac,.flac,.wav">
+        <span class="stat" id="folder-stat"></span>
+      </div>
+      <div class="bar" id="scan-bar" style="display:none"><i style="width:0%"></i></div>
+      <p class="note">Folder scanning works best in Chrome or Edge. In Safari, use "Import a library file" instead.</p>
+    </div>
+
+    <div id="src-library" style="display:none">
+      <p class="lead" style="margin-top:0">Export your library from your DJ app, then load the file here:</p>
+      <ul class="lead" style="margin-top:0;font-size:.88rem">
+        <li><b>iTunes / Music:</b> File › Library › Export Library… (an .xml file)</li>
+        <li><b>Rekordbox:</b> File › Export Collection in xml format</li>
+        <li><b>Serato / other:</b> export or save a crate as .m3u / .m3u8</li>
+      </ul>
+      <div class="row">
+        <button class="btn" id="pick-library">Choose library file</button>
+        <input type="file" id="library-input" accept=".xml,.m3u,.m3u8,.txt">
+        <span class="stat" id="library-stat"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="results"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/music-metadata-browser/2.5.10/music-metadata-browser.min.js"></script>
+<script>
+const params=new URLSearchParams(location.search);
+const WID=params.get('w');
+let WED=null, LIB=[], SRC='folder';   // LIB = [{title,artist,path,file?}]
+function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function setSrc(s){ SRC=s;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.src===s));
+  document.getElementById('src-folder').style.display = s==='folder'?'block':'none';
+  document.getElementById('src-library').style.display = s==='library'?'block':'none';
+}
+
+/* ---------- normalisation & matching ---------- */
+function norm(s){
+  return (s||'').toLowerCase()
+    .replace(/\(.*?\)|\[.*?\]/g,' ')                 // drop (feat…), [remix] etc
+    .replace(/\bfeat\.?\b|\bft\.?\b/g,' ')
+    .replace(/&/g,' and ')
+    .replace(/[^a-z0-9 ]+/g,' ')
+    .replace(/\s+/g,' ').trim();
+}
+function tokens(s){ return new Set(norm(s).split(' ').filter(Boolean)); }
+function jaccard(a,b){ if(!a.size||!b.size)return 0; let i=0; a.forEach(x=>{if(b.has(x))i++;}); return i/(a.size+b.size-i); }
+// score a requested song against a library track
+function score(req, lib){
+  const rt=tokens(req.title), lt=tokens(lib.title||'');
+  const ra=tokens(req.artist), la=tokens(lib.artist||'');
+  let titleScore=jaccard(rt,lt);
+  // if library has no separate artist (e.g. filename only), test against whole string
+  const whole=tokens((lib.title||'')+' '+(lib.artist||'')+' '+(lib.path||''));
+  const titleInWhole=jaccard(rt,whole);
+  titleScore=Math.max(titleScore,titleInWhole*0.9);
+  let artistScore=la.size?jaccard(ra,la):jaccard(ra,whole)*0.9;
+  return titleScore*0.7 + artistScore*0.3;
+}
+function bestMatch(req){
+  let best=null,bestScore=0;
+  for(const t of LIB){ const s=score(req,t); if(s>bestScore){bestScore=s;best=t;} }
+  return (bestScore>=0.45)?{track:best,score:bestScore}:null;
+}
+
+/* ---------- folder scan ---------- */
+document.getElementById('pick-folder').onclick=async()=>{
+  // Prefer File System Access API (Chrome/Edge) for clean paths; fallback to input.
+  if(window.showDirectoryPicker){
+    try{
+      const dir=await window.showDirectoryPicker();
+      const files=[];
+      async function walk(handle,prefix){
+        for await (const [name,h] of handle.entries()){
+          if(h.kind==='directory'){ await walk(h, prefix+name+'/'); }
+          else if(/\.(mp3|m4a|mp4|aac|flac|wav|aiff?)$/i.test(name)){ files.push({handle:h, path:prefix+name}); }
+        }
+      }
+      await walk(dir,'');
+      await scanFiles(files, true);
+      return;
+    }catch(e){ if(e && e.name==='AbortError')return; /* fall through to input */ }
+  }
+  document.getElementById('folder-input').click();
+};
+document.getElementById('folder-input').onchange=async(e)=>{
+  const files=[...e.target.files].filter(f=>/\.(mp3|m4a|mp4|aac|flac|wav|aiff?)$/i.test(f.name))
+    .map(f=>({file:f, path:f.webkitRelativePath||f.name}));
+  await scanFiles(files,false);
+};
+async function scanFiles(files, fsapi){
+  const stat=document.getElementById('folder-stat');
+  const bar=document.getElementById('scan-bar'); bar.style.display='block';
+  const barI=bar.querySelector('i');
+  LIB=[];
+  const mm=window.musicMetadata;
+  let done=0;
+  for(const f of files){
+    let title='', artist='';
+    try{
+      if(mm){
+        const blob = fsapi ? await (await f.handle.getFile()) : f.file;
+        const meta = await mm.parseBlob(blob, {duration:false, skipCovers:true});
+        title=(meta.common.title||'').trim();
+        artist=(meta.common.artist||meta.common.albumartist||'').trim();
+      }
+    }catch(_){}
+    if(!title){ // fall back to filename "Artist - Title"
+      const base=f.path.split('/').pop().replace(/\.[^.]+$/,'');
+      const parts=base.split(' - ');
+      if(parts.length>=2){ artist=artist||parts[0].trim(); title=parts.slice(1).join(' - ').trim(); }
+      else { title=base.trim(); }
+    }
+    LIB.push({title,artist,path:f.path});
+    done++; if(done%10===0||done===files.length){ barI.style.width=Math.round(done/files.length*100)+'%'; stat.textContent=done+' / '+files.length+' files read'; await new Promise(r=>setTimeout(r)); }
+  }
+  stat.textContent=LIB.length+' tracks in your library';
+  bar.style.display='none';
+  renderResults();
+}
+
+/* ---------- library file import ---------- */
+document.getElementById('pick-library').onclick=()=>document.getElementById('library-input').click();
+document.getElementById('library-input').onchange=async(e)=>{
+  const f=e.target.files[0]; if(!f)return;
+  const text=await f.text();
+  const stat=document.getElementById('library-stat');
+  if(/\.xml$/i.test(f.name)||/<\?xml/.test(text.slice(0,200))){
+    LIB = /rekordbox|DJ_PLAYLISTS/i.test(text) ? parseRekordbox(text) : parseITunes(text);
+  } else {
+    LIB = parseM3U(text);
+  }
+  stat.textContent=LIB.length+' tracks imported';
+  renderResults();
+};
+function parseITunes(xml){
+  const out=[]; const doc=new DOMParser().parseFromString(xml,'application/xml');
+  // iTunes Library.xml: <dict> entries with <key>Name</key><string>… and <key>Artist</key>…
+  const dicts=doc.querySelectorAll('dict > dict, plist > dict > dict');
+  doc.querySelectorAll('dict').forEach(d=>{
+    let name='',artist='',loc='';
+    const kids=[...d.children];
+    for(let i=0;i<kids.length-1;i++){
+      if(kids[i].tagName==='key'){
+        const k=kids[i].textContent, v=kids[i+1].textContent;
+        if(k==='Name')name=v; else if(k==='Artist')artist=v; else if(k==='Location')loc=v;
+      }
+    }
+    if(name){ out.push({title:name,artist,path:decodeURIComponent((loc||'').replace(/^file:\/\/+/,'/'))}); }
+  });
+  return dedupe(out);
+}
+function parseRekordbox(xml){
+  const out=[]; const doc=new DOMParser().parseFromString(xml,'application/xml');
+  doc.querySelectorAll('TRACK').forEach(t=>{
+    const name=t.getAttribute('Name')||'', artist=t.getAttribute('Artist')||'', loc=t.getAttribute('Location')||'';
+    if(name)out.push({title:name,artist,path:decodeURIComponent(loc.replace(/^file:\/\/localhost/,'').replace(/^file:\/\/+/,'/'))});
+  });
+  return dedupe(out);
+}
+function parseM3U(text){
+  const out=[]; const lines=text.split(/\r?\n/); let pend=null;
+  for(const ln of lines){
+    if(ln.startsWith('#EXTINF')){
+      const m=ln.replace(/^#EXTINF:[^,]*,/,''); const parts=m.split(' - ');
+      pend = parts.length>=2 ? {artist:parts[0].trim(), title:parts.slice(1).join(' - ').trim()} : {title:m.trim(),artist:''};
+    } else if(ln && !ln.startsWith('#')){
+      const path=ln.trim();
+      if(pend){ out.push({...pend,path}); pend=null; }
+      else { const base=path.split(/[\\/]/).pop().replace(/\.[^.]+$/,''); const p=base.split(' - ');
+             out.push(p.length>=2?{artist:p[0].trim(),title:p.slice(1).join(' - ').trim(),path}:{title:base,artist:'',path}); }
+    }
+  }
+  return dedupe(out);
+}
+function dedupe(list){ const seen=new Set(); return list.filter(t=>{const k=norm(t.title)+'|'+norm(t.artist);if(seen.has(k))return false;seen.add(k);return true;}); }
+
+/* ---------- results + export ---------- */
+function renderResults(){
+  const el=document.getElementById('results');
+  if(!WED){ el.innerHTML='<p class="status">Loading wedding…</p>'; return; }
+  const blocks=(WED.blocks||[]).filter(b=>(b.songs||[]).length);
+  if(!blocks.length){ el.innerHTML='<div class="panel"><p class="status">This wedding has no song requests yet.</p></div>'; return; }
+  if(!LIB.length){ el.innerHTML='<div class="panel"><p class="status">Load your music above to see matches.</p></div>'; return; }
+
+  let totReq=0,totFound=0;
+  const html=blocks.map(b=>{
+    const rows=(b.songs||[]).map(s=>{
+      const m=bestMatch(s); totReq++; if(m)totFound++;
+      return {s,m};
+    });
+    const found=rows.filter(r=>r.m).length;
+    const songHtml=rows.map(r=>`<div class="song">
+        <span class="dot ${r.m?'ok':'miss'}"></span>
+        <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
+        ${r.m?`<span class="found" title="${esc(r.m.track.path||'')}">${esc((r.m.track.artist?r.m.track.artist+' - ':'')+(r.m.track.title||''))}</span>`:'<span class="pill miss">not found</span>'}
+      </div>`).join('');
+    return `<div class="block">
+      <div class="bhead" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+        <div><h3>${esc(b.name||'Block')}</h3><div class="meta">${found} of ${rows.length} matched</div></div>
+        <button class="btn ghost" onclick="event.stopPropagation();exportBlock('${b.id}')" ${found?'':'disabled'}>Export .m3u</button>
+      </div>
+      <div class="body">${songHtml}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML=`<h2>Matches <span class="stat">(${totFound} of ${totReq} requests found in your library)</span></h2>
+    <div class="row" style="margin-bottom:10px"><button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button></div>
+    ${html}`;
+}
+
+function m3uForBlock(b){
+  let out='#EXTM3U\n';
+  (b.songs||[]).forEach(s=>{
+    const m=bestMatch(s);
+    if(m && m.track.path){
+      out+=`#EXTINF:-1,${(m.track.artist||'')} - ${m.track.title||''}\n${m.track.path}\n`;
+    }
+  });
+  return out;
+}
+function download(name,text){
+  const blob=new Blob([text],{type:'audio/x-mpegurl'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function safeName(s){ return (s||'block').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'-'); }
+function exportBlock(id){
+  const b=(WED.blocks||[]).find(x=>x.id===id); if(!b)return;
+  download(safeName(WED.coupleNames||WED.name)+' - '+safeName(b.name)+'.m3u', m3uForBlock(b));
+}
+function exportAll(){
+  (WED.blocks||[]).filter(b=>(b.songs||[]).length).forEach((b,i)=>{
+    setTimeout(()=>exportBlock(b.id), i*250);   // stagger so browsers allow multiple downloads
+  });
+}
+
+/* ---------- load wedding ---------- */
+async function loadWed(){
+  if(!WID){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">No wedding specified. Open Prep from a wedding in your planner.</p></div>'; return; }
+  try{
+    const r=await fetch('/api/weddings/'+encodeURIComponent(WID),{credentials:'same-origin'});
+    if(r.status===401||r.status===403){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Please <a href="/">log in</a> and open Prep from your planner.</p></div>'; return; }
+    const d=await r.json();
+    WED=d.wedding;
+    document.getElementById('wed-name').textContent=WED.coupleNames||WED.name||'wedding';
+    document.title='Prep · '+(WED.coupleNames||WED.name||'Spinlist');
+    renderResults();
+  }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the wedding.</p></div>'; }
+}
+loadWed();
+</script>
+</body>
+</html>
