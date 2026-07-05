@@ -63,7 +63,7 @@
   </header>
 
   <h1>Prep <span style="color:var(--muted);font-weight:400">· <span id="wed-name">wedding</span></span></h1>
-  <p class="lead" id="intro-lead">Match the couple's song requests against your own music library, then export a playlist (.m3u) for each block to drop straight into your DJ software. Your files stay on your computer — nothing is uploaded.</p>
+  <p class="lead" id="intro-lead">Match the couple's song requests against your own music library, then export a playlist (.m3u) for each block to drop straight into your DJ software. Your music files stay on your computer — we only save the track list and file locations to your account, never the songs themselves.</p>
 
   <div class="panel">
     <div class="tabs">
@@ -675,23 +675,24 @@ function renderResults(){
     return `<div class="block">
       <div class="bhead" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
         <div><h3>${esc(b.name||'Block')}</h3><div class="meta">${found} of ${rows.length} matched</div></div>
-        <button class="btn ghost" onclick="event.stopPropagation();exportBlock('${b.id}')" ${found?'':'disabled'}>Export .m3u</button>
+        ${libPathsAreRelative()?'':`<button class="btn ghost" onclick="event.stopPropagation();exportBlock('${b.id}')" ${found?'':'disabled'}>Export .m3u</button>`}
       </div>
       <div class="body">${songHtml}</div>
     </div>`;
   }).join('');
 
-  const relWarn = libPathsAreRelative()
+  const pathsRelative = libPathsAreRelative();
+  const exportArea = pathsRelative
     ? `<div class="panel" style="border-color:rgba(255,180,80,.4);background:rgba(255,180,80,.08);margin-bottom:10px">
-         <p style="margin:0;font-size:.86rem;color:#ffcf8a"><b>Heads up:</b> this library was scanned in the browser, which can't see your files' full folder paths — so these .m3u playlists may import empty into your DJ software. For .m3u files that load correctly, scan your library with the <b>Spinlist desktop app</b> (it reads the real file locations). You can still use the matches above as a reference.</p>
+         <p style="margin:0 0 6px;font-size:.9rem;color:#ffcf8a"><b>Playlist export needs the desktop app.</b></p>
+         <p style="margin:0;font-size:.84rem;color:#e8ecf5">This library was scanned in the browser, which — for privacy — can't see your files' full folder locations. DJ software needs those full paths, so a playlist exported from here would import empty. To export working .m3u playlists, set up your library with the <b>Spinlist desktop app</b> (it reads the real file locations), then come back here. The matches below are still accurate to use as a reference.</p>
        </div>`
-    : '';
+    : `<div class="row" style="margin-bottom:10px;gap:14px;align-items:center">
+         <button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button>
+         <label class="note" style="margin:0;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${PLAIN_M3U?'checked':''} onchange="togglePlainM3U(this)" style="width:15px;height:15px"> Plain paths only (if your DJ software won't import)</label>
+       </div>`;
   el.innerHTML=`<h2>Matches <span class="stat">(${totFound} of ${totReq} requests found in your library)</span></h2>
-    ${relWarn}
-    <div class="row" style="margin-bottom:10px;gap:14px;align-items:center">
-      <button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button>
-      <label class="note" style="margin:0;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${PLAIN_M3U?'checked':''} onchange="togglePlainM3U(this)" style="width:15px;height:15px"> Plain paths only (if your DJ software won't import)</label>
-    </div>
+    ${exportArea}
     ${html}`;
 }
 // The DJ picked a specific version from the dropdown — remember it across weddings.
@@ -778,7 +779,7 @@ async function loadWed(){
   if(SETUP){
     document.getElementById('wed-name').textContent='music library setup';
     document.title='Music library · Spinlist';
-    const lead=document.getElementById('intro-lead'); if(lead)lead.textContent='Set up your music library once here — scan a folder or import a library file. It\u2019s saved to your account and used automatically whenever you open Prep inside a wedding. Your files stay on your computer — nothing is uploaded.';
+    const lead=document.getElementById('intro-lead'); if(lead)lead.textContent='Set up your music library once here — scan a folder or import a library file. It\u2019s saved to your account and used automatically whenever you open Prep inside a wedding. Your music files stay on your computer — we only save the track list and file locations, never the songs themselves.';
     try{ await loadPicks(); }catch(e){}
     const hadSaved=await loadSavedLibrary();
     renderResults();
