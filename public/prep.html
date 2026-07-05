@@ -79,7 +79,7 @@
         <span class="stat" id="folder-stat"></span>
       </div>
       <div class="bar" id="scan-bar" style="display:none"><i style="width:0%"></i></div>
-      <p class="note">Folder scanning works best in Chrome or Edge. In Safari, use "Import a library file" instead.</p>
+      <p class="note">Folder scanning works best in Chrome or Edge. In Safari, use "Import a library file" instead. Music videos (.m4v, .mov) are picked up too and labelled 🎬 — point this at your video folder (e.g. ~/Movies) to include them.</p>
       <p class="note" id="lib-status" style="color:var(--neon)"></p>
       <p class="note"><a href="#" onclick="clearSavedLibrary();return false" style="color:var(--muted)">Forget my saved library</a></p>
     </div>
@@ -88,7 +88,6 @@
       <p class="lead" style="margin-top:0">Export your library from your DJ app, then load the file here:</p>
       <ul class="lead" style="margin-top:0;font-size:.88rem">
         <li><b>iTunes / Music:</b> File › Library › Export Library… (an .xml file)</li>
-        <li><b>Apple TV app (music videos):</b> the TV app can't export XML and its .tvlibrary file can't be read directly — instead use “Scan a folder” above and point it at where your video files live (e.g. ~/Movies). Videos are labelled 🎬.</li>
         <li><b>Rekordbox:</b> File › Export Collection in xml format</li>
         <li><b>Serato / other:</b> export or save a crate as .m3u / .m3u8</li>
       </ul>
@@ -290,11 +289,14 @@ async function scanFiles(files, fsapi){
   const barI=bar.querySelector('i');
   LIB=[];
   let done=0;
-  for(const f of files){
+  const total=files.length;
+  // Process in parallel batches — far faster than one-at-a-time for big libraries.
+  const CONCURRENCY=16;
+  async function handleOne(f){
     let title='', artist='';
     try{
       const blob = fsapi ? await f.handle.getFile() : f.file;
-      const tags = await readTags(blob);        // lightweight, self-contained
+      const tags = await readTags(blob);
       title=(tags.title||'').trim();
       artist=(tags.artist||'').trim();
     }catch(_){}
@@ -304,10 +306,14 @@ async function scanFiles(files, fsapi){
       if(parts.length>=2){ artist=artist||parts[0].trim(); title=parts.slice(1).join(' - ').trim(); }
       else { title=base.trim(); }
     }
-    const isVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);   // clearly-video types (.mp4 is often audio, leave unflagged)
+    const isVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);
     LIB.push({title,artist,path:f.path,video:isVid});
     done++;
-    if(done%5===0||done===files.length){ barI.style.width=Math.round(done/files.length*100)+'%'; stat.textContent=done+' / '+files.length+' files read'; await new Promise(r=>setTimeout(r)); }
+    if(done%25===0||done===total){ barI.style.width=Math.round(done/total*100)+'%'; stat.textContent=done+' / '+total+' files read'; }
+  }
+  for(let i=0;i<files.length;i+=CONCURRENCY){
+    await Promise.all(files.slice(i,i+CONCURRENCY).map(handleOne));
+    await new Promise(r=>setTimeout(r));   // yield so the progress bar paints
   }
   stat.textContent=LIB.length+' tracks in your library';
   bar.style.display='none';
@@ -321,10 +327,13 @@ async function scanFiles(files, fsapi){
 async function readTags(blob){
   const out={title:'',artist:''};
   try{
-    const head=new Uint8Array(await blob.slice(0, 512*1024).arrayBuffer());
+    // Read a small head first — ID3v2 and MP4 metadata are usually right at the start.
+    let head=new Uint8Array(await blob.slice(0, 64*1024).arrayBuffer());
     // ---- MP3 / ID3v2 ----
     if(head[0]===0x49&&head[1]===0x44&&head[2]===0x33){ // "ID3" v2
       const size=((head[6]&0x7f)<<21)|((head[7]&0x7f)<<14)|((head[8]&0x7f)<<7)|(head[9]&0x7f);
+      // If the tag is bigger than our first read, grab just enough more (capped).
+      if(10+size>head.length){ head=new Uint8Array(await blob.slice(0, Math.min(10+size, 512*1024)).arrayBuffer()); }
       const end=Math.min(10+size, head.length);
       let i=10;
       while(i+10<end){
@@ -339,16 +348,16 @@ async function readTags(blob){
       }
     }
     // ---- MP4 / M4A / MP4 video (atoms) ----
-    // ftyp box near the start signals an ISO-BMFF (MP4) container.
     const isMp4 = head.length>12 && head[4]===0x66&&head[5]===0x74&&head[6]===0x79&&head[7]===0x70; // "ftyp"
     if((!out.title||!out.artist) && isMp4){
-      const mp4=parseMp4Tags(head);
+      let mp4=parseMp4Tags(head);
       out.title=out.title||mp4.title;
       out.artist=out.artist||mp4.artist;
-      // moov (and its tags) may live at the END of the file — check the tail too.
-      if((!out.title||!out.artist) && blob.size>head.length){
+      // moov can be at the end. Only pay for a tail read if the head didn't have it
+      // and the file isn't enormous (skip huge videos — filename fallback is fine there).
+      if((!out.title||!out.artist) && blob.size>head.length && blob.size < 200*1024*1024){
         try{
-          const tailBuf=new Uint8Array(await blob.slice(Math.max(0, blob.size-2*1024*1024)).arrayBuffer());
+          const tailBuf=new Uint8Array(await blob.slice(Math.max(0, blob.size-512*1024)).arrayBuffer());
           const mp4b=parseMp4Tags(tailBuf);
           out.title=out.title||mp4b.title;
           out.artist=out.artist||mp4b.artist;
