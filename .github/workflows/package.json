@@ -1,0 +1,50 @@
+{
+  "name": "spinlist-music-manager",
+  "productName": "Spinlist Music Manager",
+  "version": "1.2.0",
+  "description": "Scan your music library and sync it to your Spinlist account for song prep.",
+  "author": "Spinlist",
+  "license": "UNLICENSED",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "co.uk.spinlist.musicmanager",
+    "productName": "Spinlist Music Manager",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.html",
+      "renderer.js",
+      "assets/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": ["dmg", "zip"],
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": ["nsis", "zip"],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Spinlist Music Manager"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Audio"
+    }
+  }
+}
