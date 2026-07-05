@@ -80,6 +80,7 @@
       </div>
       <div class="bar" id="scan-bar" style="display:none"><i style="width:0%"></i></div>
       <p class="note">Folder scanning works best in Chrome or Edge. In Safari, use "Import a library file" instead. Music videos (.m4v, .mov) are picked up too and labelled 🎬 — point this at your video folder (e.g. ~/Movies) to include them.</p>
+      <p class="note" id="safari-note" style="display:none;color:var(--muted)"></p>
       <p class="note" id="lib-status" style="color:var(--neon)"></p>
       <p class="note"><a href="#" onclick="clearSavedLibrary();return false" style="color:var(--muted)">Forget my saved library</a></p>
     </div>
@@ -290,8 +291,10 @@ async function scanFiles(files, fsapi){
   LIB=[];
   let done=0;
   const total=files.length;
-  // Process in parallel batches — far faster than one-at-a-time for big libraries.
-  const CONCURRENCY=16;
+  const t0=Date.now();
+  // Safari's file reads carry more per-call overhead, so push concurrency higher there.
+  const isSafari=/^((?!chrome|android|crios|edg).)*safari/i.test(navigator.userAgent);
+  const CONCURRENCY = isSafari ? 48 : 24;
   async function handleOne(f){
     let title='', artist='';
     try{
@@ -309,11 +312,16 @@ async function scanFiles(files, fsapi){
     const isVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);
     LIB.push({title,artist,path:f.path,video:isVid});
     done++;
-    if(done%25===0||done===total){ barI.style.width=Math.round(done/total*100)+'%'; stat.textContent=done+' / '+total+' files read'; }
+    if(done%50===0||done===total){
+      barI.style.width=Math.round(done/total*100)+'%';
+      const rate=done/Math.max(1,(Date.now()-t0)/1000);
+      const eta=rate>0?Math.round((total-done)/rate):0;
+      stat.textContent=done+' / '+total+' files'+(eta>2?'  ·  ~'+eta+'s left':'');
+    }
   }
   for(let i=0;i<files.length;i+=CONCURRENCY){
     await Promise.all(files.slice(i,i+CONCURRENCY).map(handleOne));
-    await new Promise(r=>setTimeout(r));   // yield so the progress bar paints
+    if(i % (CONCURRENCY*4) === 0) await new Promise(r=>setTimeout(r));   // yield occasionally so the bar paints
   }
   stat.textContent=LIB.length+' tracks in your library';
   bar.style.display='none';
@@ -327,8 +335,8 @@ async function scanFiles(files, fsapi){
 async function readTags(blob){
   const out={title:'',artist:''};
   try{
-    // Read a small head first — ID3v2 and MP4 metadata are usually right at the start.
-    let head=new Uint8Array(await blob.slice(0, 64*1024).arrayBuffer());
+    // Read a tiny head first — most ID3v2 and MP4 tags are within the first few KB.
+    let head=new Uint8Array(await blob.slice(0, 16*1024).arrayBuffer());
     // ---- MP3 / ID3v2 ----
     if(head[0]===0x49&&head[1]===0x44&&head[2]===0x33){ // "ID3" v2
       const size=((head[6]&0x7f)<<21)|((head[7]&0x7f)<<14)|((head[8]&0x7f)<<7)|(head[9]&0x7f);
@@ -353,9 +361,18 @@ async function readTags(blob){
       let mp4=parseMp4Tags(head);
       out.title=out.title||mp4.title;
       out.artist=out.artist||mp4.artist;
-      // moov can be at the end. Only pay for a tail read if the head didn't have it
+      // If the small head missed it, try a slightly larger head (moov near front but >16KB).
+      if((!out.title||!out.artist) && blob.size>head.length){
+        try{
+          const bigHead=new Uint8Array(await blob.slice(0, 256*1024).arrayBuffer());
+          const mp4h=parseMp4Tags(bigHead);
+          out.title=out.title||mp4h.title;
+          out.artist=out.artist||mp4h.artist;
+        }catch(_){}
+      }
+      // moov can be at the end. Only pay for a tail read if still missing
       // and the file isn't enormous (skip huge videos — filename fallback is fine there).
-      if((!out.title||!out.artist) && blob.size>head.length && blob.size < 200*1024*1024){
+      if((!out.title||!out.artist) && blob.size>256*1024 && blob.size < 200*1024*1024){
         try{
           const tailBuf=new Uint8Array(await blob.slice(Math.max(0, blob.size-512*1024)).arrayBuffer());
           const mp4b=parseMp4Tags(tailBuf);
@@ -635,6 +652,12 @@ async function loadWed(){
   }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the wedding.</p></div>'; }
 }
 loadWed();
+// Let Safari users know folder scanning is slower there (Safari lacks the fast file API).
+(function(){
+  const isSafari=/^((?!chrome|android|crios|edg).)*safari/i.test(navigator.userAgent);
+  if(isSafari){ const n=document.getElementById('safari-note'); if(n){ n.style.display='block';
+    n.textContent='Note: Safari reads folders more slowly than Chrome or Edge (Apple doesn’t support the fast file API). A big library can take a while the first time — but once scanned it’s saved to your account, so you won’t need to rescan.'; } }
+})();
 </script>
 </body>
 </html>
