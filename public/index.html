@@ -1329,6 +1329,15 @@ window.addEventListener('load',async ()=>{
     const cb=document.querySelector('#main-nav button[data-v="create"]');if(cb)cb.style.display='none';
     if(!location.hash.startsWith('#vote/')){ go('events'); }
   }
+  // Cross-page nav links land here as /index.html#view — open that view.
+  (function(){
+    const h=(location.hash||'').replace('#','');
+    if(['home','create','events','dashboard'].includes(h)){
+      // Sub-DJs/couples can't create; fall back gracefully.
+      if(h==='create' && ME && (ME.isSubDj||ME.role==='couple')) go('events');
+      else go(h);
+    }
+  })();
   if(location.hash.startsWith('#vote/')){
     guestMode=true;
     applyGuestChrome();

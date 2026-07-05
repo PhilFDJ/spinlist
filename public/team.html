@@ -47,8 +47,10 @@
 <body>
 <header class="bar"><div class="wrap">
   <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
-  <nav><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+  <div id="spinlist-nav"></div>
+  <nav><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
 </div></header>
+<script src="/js/nav.js"></script>
 
 <div class="wrap" id="root"><p style="margin-top:40px;color:var(--muted)">Loading…</p></div>
 <div class="toast" id="toast"></div>
