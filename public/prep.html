@@ -67,9 +67,10 @@
 
   <div class="panel">
     <h2 style="margin-top:0">Set up your music library</h2>
-    <p class="lead" style="margin-top:0">The <b>Spinlist Mac app</b> scans your music folder and reads the real file locations, so the playlists you export here load straight into your DJ software. It syncs to your account automatically.</p>
+    <p class="lead" style="margin-top:0">The <b>Spinlist desktop app</b> scans your music folder and reads the real file locations, so the playlists you export here load straight into your DJ software. It syncs to your account automatically.</p>
     <div class="row">
-      <a class="btn" id="mac-app-btn" href="#" style="text-decoration:none">⬇ Download the Mac app</a>
+      <a class="btn" id="mac-app-btn" href="#" style="text-decoration:none">⬇ Download for Mac</a>
+      <a class="btn" id="win-app-btn" href="#" style="text-decoration:none">⬇ Download for Windows</a>
     </div>
     <p class="note" id="mac-app-note"></p>
 
@@ -97,7 +98,9 @@
 
 <script>
 // Mac app download link — paste your download page URL here when it's live (only place to change).
-const MAC_APP_URL = 'https://github.com/PhilFDJ/spinlist/releases/download/Spinlist-Music-Manager/Spinlist.Music.Manager-1.0.0-mac.zip';
+// Desktop app download links — paste new release URLs here when you rebuild (only place to change).
+const MAC_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.2.0/Spinlist.Music.Manager-1.2.0-arm64-mac.zip';
+const WIN_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.2.0/Spinlist.Music.Manager.Setup.1.2.0.exe';
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
 const SETUP=!WID && (params.get('setup')==='1' || params.get('setup')==='');
@@ -799,15 +802,22 @@ async function loadWed(){
     }catch(e){}
   }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the wedding.</p></div>'; }
 }
-// Wire the "Download the Mac app" button (setup panel).
+// Wire the Mac + Windows download buttons (setup panel).
 (function(){
-  const btn=document.getElementById('mac-app-btn');
+  const macBtn=document.getElementById('mac-app-btn');
+  const winBtn=document.getElementById('win-app-btn');
   const note=document.getElementById('mac-app-note');
-  if(btn){
-    if(MAC_APP_URL){ btn.href=MAC_APP_URL; btn.target='_blank'; btn.rel='noopener';
-      if(note)note.textContent='Requires macOS. Unzip it, then move Spinlist Music Manager to Applications. First launch: right-click the app and choose Open.'; }
-    else { btn.href='#'; btn.onclick=(e)=>{e.preventDefault();};
-      if(note)note.textContent='Download link coming soon — the app is on its way.'; }
+  function wire(btn,url){
+    if(!btn)return;
+    if(url){ btn.href=url; btn.target='_blank'; btn.rel='noopener'; }
+    else { btn.href='#'; btn.style.opacity='.5'; btn.onclick=(e)=>{e.preventDefault();}; }
+  }
+  wire(macBtn, MAC_APP_URL);
+  wire(winBtn, WIN_APP_URL);
+  if(note){
+    note.innerHTML =
+      '<b>Mac:</b> '+(MAC_APP_URL?'unzip it, move Spinlist Music Manager to Applications, then right-click the app → Open the first time.':'coming soon.')
+      +'<br><b>Windows:</b> '+(WIN_APP_URL?'run the installer; if Windows shows a “protected your PC” notice, click More info → Run anyway.':'coming soon.');
   }
 })();
 loadWed();
