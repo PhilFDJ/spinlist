@@ -122,7 +122,7 @@ async function saveLibrary(name){
   if(!LIB.length){ showLibStatus('Nothing to save yet — scan a folder first.'); return; }
   showLibStatus('Saving your library…');
   try{
-    const payload={library:{name:name||'library', tracks:LIB.map(t=>{ const o={t:t.title,a:t.artist,p:t.path}; if(t.video)o.v=1; if(t.size)o.s=t.size; if(t.mtime)o.m=t.mtime; return o; })}};
+    const payload={library:{name:name||'library', tracks:LIB.map(t=>{ const o={t:t.title,a:t.artist,p:t.path}; if(t.video)o.v=1; if(t.director)o.d=t.director; if(t.size)o.s=t.size; if(t.mtime)o.m=t.mtime; return o; })}};
     const r=await fetch('/api/prep/library',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});
     if(r.ok){ const d=await r.json(); showLibStatus('✓ Saved '+d.count+' tracks to your account (syncs across your devices).'); }
     else if(r.status===401||r.status===403){ showLibStatus('Not saved — please log in on the main site, then reopen Prep.'); }
@@ -134,7 +134,7 @@ async function loadSavedLibrary(){
   try{
     const d=await (await fetch('/api/prep/library',{credentials:'same-origin'})).json();
     if(d.library && Array.isArray(d.library.tracks) && d.library.tracks.length){
-      LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',path:t.p||'',video:!!t.v,size:t.s||0,mtime:t.m||0}));
+      LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',director:t.d||'',path:t.p||'',video:!!t.v,size:t.s||0,mtime:t.m||0}));
       PREV_LIB=LIB.slice(); invalidateLibIndex();   // remember for incremental rescan
       LIB_NAME=d.library.name||'library';
       return true;
@@ -349,16 +349,17 @@ async function scanFiles(files, fsapi){
       const prev=prevByPath[f.path];
       // INCREMENTAL: if we've seen this exact file before (same size + modified time), reuse its tags.
       if(prev && prev.size===blob.size && prev.mtime===blob.lastModified){
-        newLib.push({title:prev.title,artist:prev.artist,path:f.path,video:!!prev.video,size:blob.size,mtime:blob.lastModified});
+        newLib.push({title:prev.title,artist:prev.artist,director:prev.director||'',path:f.path,video:!!prev.video,size:blob.size,mtime:blob.lastModified});
         reused++; done++; tick(); return;
       }
       const tags = await readTags(blob);      // only read tags for new/changed files
       readCount++;
       title=(tags.title||'').trim();
       artist=(tags.artist||'').trim();
+      var _director=(tags.director||'').trim();
       if(tags.video) detectedVid=true;        // MP4 with a real video track
       var _size=blob.size, _mtime=blob.lastModified;
-    }catch(_){ var _size=0, _mtime=0; }
+    }catch(_){ var _size=0, _mtime=0, _director=''; }
     if(!title){ // fall back to filename "Artist - Title"
       const base=f.path.split('/').pop().replace(/\.[^.]+$/,'');
       const parts=base.split(' - ');
@@ -366,7 +367,7 @@ async function scanFiles(files, fsapi){
       else { title=base.trim(); }
     }
     const isVid = extVid || (maybeMp4 && detectedVid) || detectedVid;
-    newLib.push({title,artist,path:f.path,video:isVid,size:_size,mtime:_mtime});
+    newLib.push({title,artist,director:_director||'',path:f.path,video:isVid,size:_size,mtime:_mtime});
     done++; tick();
   }
   function tick(){
@@ -400,7 +401,7 @@ async function scanFiles(files, fsapi){
    Reads ID3v2 (TIT2/TPE1) from the file head and ID3v1 from the last 128 bytes.
    Only reads the bytes it needs, so it's fast and never hangs. */
 async function readTags(blob){
-  const out={title:'',artist:''};
+  const out={title:'',artist:'',director:''};
   try{
     // Read a tiny head first — most ID3v2 and MP4 tags are within the first few KB.
     let head=new Uint8Array(await blob.slice(0, 16*1024).arrayBuffer());
@@ -430,14 +431,16 @@ async function readTags(blob){
       let mp4=parseMp4Tags(head);
       out.title=out.title||mp4.title;
       out.artist=out.artist||mp4.artist;
+      out.director=out.director||mp4.director;
       // If the small head missed it, try a slightly larger head (moov near front but >16KB).
-      if((!out.title||!out.artist||out.video===undefined) && blob.size>head.length){
+      if((!out.title||!out.artist||!out.director||out.video===undefined) && blob.size>head.length){
         try{
           const bigHead=new Uint8Array(await blob.slice(0, 256*1024).arrayBuffer());
           if(out.video===undefined && mp4HasVideoTrack(bigHead)) out.video=true;
           const mp4h=parseMp4Tags(bigHead);
           out.title=out.title||mp4h.title;
           out.artist=out.artist||mp4h.artist;
+          out.director=out.director||mp4h.director;
         }catch(_){}
       }
       // moov can be at the end. Only pay for a tail read if still missing
@@ -449,6 +452,7 @@ async function readTags(blob){
           const mp4b=parseMp4Tags(tailBuf);
           out.title=out.title||mp4b.title;
           out.artist=out.artist||mp4b.artist;
+          out.director=out.director||mp4b.director;
         }catch(_){}
       }
     }
@@ -481,12 +485,12 @@ function mp4HasVideoTrack(buf){
    whose payload (after an 8-byte header) is the UTF-8 string. We scan the buffer
    for these 4-byte atom names directly — robust without walking the full box tree. */
 function parseMp4Tags(buf){
-  const res={title:'',artist:''};
+  const res={title:'',artist:'',director:''};
   const dec=new TextDecoder('utf-8');
   const u32=(o)=>((buf[o]<<24)|(buf[o+1]<<16)|(buf[o+2]<<8)|buf[o+3])>>>0;
   // atom name bytes: © is 0xA9 in the classic MP4 metadata keys
   const A9='\u00A9';
-  const wanted={ [A9+'nam']:'title', [A9+'ART']:'artist', 'aART':'artist' };
+  const wanted={ [A9+'nam']:'title', [A9+'ART']:'artist', 'aART':'artist', [A9+'dir']:'director' };
   for(let i=0;i+8<buf.length;i++){
     // read a 4-char atom name at i
     const name=String.fromCharCode(buf[i],buf[i+1],buf[i+2],buf[i+3]);
@@ -551,13 +555,14 @@ function parseITunes(xml){
   const out=[]; const doc=new DOMParser().parseFromString(xml,'application/xml');
   // iTunes / Music / TV Library.xml: <dict> entries with <key>Name</key><string>… etc.
   doc.querySelectorAll('dict').forEach(d=>{
-    let name='',artist='',loc='',hasVideo=false,kind='';
+    let name='',artist='',loc='',hasVideo=false,kind='',director='';
     const kids=[...d.children];
     for(let i=0;i<kids.length-1;i++){
       if(kids[i].tagName==='key'){
         const k=kids[i].textContent, valNode=kids[i+1], v=valNode.textContent;
         if(k==='Name')name=v;
         else if(k==='Artist')artist=v;
+        else if(k==='Director')director=v;
         else if(k==='Location')loc=v;
         else if(k==='Kind')kind=v;
         else if(k==='Has Video'||k==='Movie'||k==='Music Video'||k==='HD'){ if(valNode.tagName==='true')hasVideo=true; }
@@ -565,7 +570,7 @@ function parseITunes(xml){
     }
     // Also treat obvious video file extensions / kinds as video.
     const isVideo = hasVideo || /video/i.test(kind) || /\.(m4v|mov|mp4|avi|mkv)(\?|$)/i.test(loc);
-    if(name){ out.push({title:name,artist,path:decodeURIComponent((loc||'').replace(/^file:\/\/+/,'/')), video:isVideo}); }
+    if(name){ out.push({title:name,artist,director,path:decodeURIComponent((loc||'').replace(/^file:\/\/+/,'/')), video:isVideo}); }
   });
   return dedupe(out);
 }
@@ -636,16 +641,17 @@ function renderResults(){
       }else if(cands.length>1){
         const opts=cands.map(c=>{
           const val=(c.track.title||'').trim().toLowerCase()+'|'+(c.track.artist||'').trim().toLowerCase();
-          // Derive artist/title with filename fallback so every version reads clearly.
+          // Derive title with filename fallback.
           const fname=c.track.path?c.track.path.split(/[\\/]/).pop():'';
           const base=fname.replace(/\.[^.]+$/,'');
           const fnParts=base.split(' - ');
           let art=c.track.artist||''; if(!art && fnParts.length>=2)art=fnParts[0].trim(); if(!art)art=r.s.artist||'';
           let ti=c.track.title||''; if(!ti)ti=(fnParts.length>=2?fnParts.slice(1).join(' - '):base).trim();
-          // Keep option labels compact so the dropdown stays narrow (Safari sizes it to the widest option).
           const short=(s,n)=>{ s=(s||'').trim(); return s.length>n?s.slice(0,n-1).trim()+'…':s; };
-          let label=(c.track.video?'🎬 ':'')+short((art?art+' - ':'')+ti, 46);
-          if(base){ label+='  ·  '+short(base, 30); }
+          // Videos: "director - title" (fall back to artist if no director). Audio: "artist - title".
+          let who = c.track.video ? (c.track.director || art) : art;
+          const prefix = c.track.video ? '🎬 ' : '';
+          let label = prefix + short((who?who+' - ':'')+ti, 54);
           const sel=(c===chosen)?'selected':'';
           return `<option value="${esc(val)}" ${sel}>${esc(label)}</option>`;
         }).join('');
@@ -656,7 +662,9 @@ function renderResults(){
         const fnParts=base.split(' - ');
         let art=chosen.track.artist||''; if(!art && fnParts.length>=2)art=fnParts[0].trim(); if(!art)art=r.s.artist||'';
         let ti=chosen.track.title||''; if(!ti)ti=(fnParts.length>=2?fnParts.slice(1).join(' - '):base).trim();
-        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((art?art+' - ':'')+ti)}</span>`;
+        // Videos: director (or artist fallback). Audio: artist.
+        let who = chosen.track.video ? (chosen.track.director || art) : art;
+        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((who?who+' - ':'')+ti)}</span>`;
       }
       return `<div class="song">
         <span class="dot ok"></span>
@@ -673,7 +681,13 @@ function renderResults(){
     </div>`;
   }).join('');
 
+  const relWarn = libPathsAreRelative()
+    ? `<div class="panel" style="border-color:rgba(255,180,80,.4);background:rgba(255,180,80,.08);margin-bottom:10px">
+         <p style="margin:0;font-size:.86rem;color:#ffcf8a"><b>Heads up:</b> this library was scanned in the browser, which can't see your files' full folder paths — so these .m3u playlists may import empty into your DJ software. For .m3u files that load correctly, scan your library with the <b>Spinlist desktop app</b> (it reads the real file locations). You can still use the matches above as a reference.</p>
+       </div>`
+    : '';
   el.innerHTML=`<h2>Matches <span class="stat">(${totFound} of ${totReq} requests found in your library)</span></h2>
+    ${relWarn}
     <div class="row" style="margin-bottom:10px"><button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button></div>
     ${html}`;
 }
@@ -701,6 +715,7 @@ document.getElementById('find-file-input').onchange=async(e)=>{
   renderResults();
 };
 
+function isAbsolutePath(p){ return /^([a-zA-Z]:[\\/]|\/|\\\\)/.test(p||''); }   // /unix, C:\win, \\unc
 function m3uForBlock(b){
   let out='#EXTM3U\n';
   (b.songs||[]).forEach(s=>{
@@ -710,6 +725,14 @@ function m3uForBlock(b){
     }
   });
   return out;
+}
+// True if the current library has only relative paths (i.e. built by a browser folder scan,
+// which can't see absolute paths). Such M3Us won't resolve in DJ software.
+function libPathsAreRelative(){
+  const withPath=LIB.filter(t=>t.path);
+  if(!withPath.length) return false;
+  const abs=withPath.filter(t=>isAbsolutePath(t.path)).length;
+  return abs < withPath.length*0.5;   // majority are relative
 }
 function download(name,text){
   try{
