@@ -43,6 +43,7 @@
       items.push(['Host', '/index.html#dashboard', 'dashboard']);
       if (multiOp) items.push(['My DJs', '/team.html', 'team']);
       if (planner) items.push(['Wedding Planner', '/wedding.html', 'wedding']);
+      items.push(['Apps', '/apps.html', 'apps']);
       items.push(['Contact', '/contact.html', 'contact']);
     }
 
@@ -52,6 +53,7 @@
     var activeKey = '';
     if (path.indexOf('team.html') > -1) activeKey = 'team';
     else if (path.indexOf('wedding.html') > -1) activeKey = 'wedding';
+    else if (path.indexOf('apps.html') > -1) activeKey = 'apps';
     else if (path.indexOf('contact.html') > -1) activeKey = 'contact';
     else if (path.indexOf('index.html') > -1 || path === '/' || path === '') activeKey = hash || 'home';
 
