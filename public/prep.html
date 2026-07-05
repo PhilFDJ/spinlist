@@ -32,13 +32,13 @@
   .block .bhead h3{margin:0;font-size:1rem}
   .block .bhead .meta{font-size:.82rem;color:var(--muted)}
   .block .body{padding:4px 14px 12px}
-  .song{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:.9rem}
+  .song{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:.9rem}
   .song:last-child{border-bottom:none}
   .song .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
   .song .dot.ok{background:var(--ok)} .song .dot.miss{background:var(--miss)}
-  .song .req{flex:1;min-width:0}
+  .song .req{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .song .req b{color:#fff;font-weight:600}
-  .song .found{font-size:.8rem;color:var(--muted);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .song .found{font-size:.8rem;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pill{font-size:.72rem;font-weight:800;padding:2px 8px;border-radius:20px}
   .pill.ok{background:rgba(57,217,138,.15);color:var(--ok)}
   .pill.miss{background:rgba(255,107,94,.15);color:var(--miss)}
@@ -48,9 +48,10 @@
   .note{font-size:.82rem;color:var(--muted);margin-top:8px}
   .bar{height:6px;background:var(--paper);border-radius:6px;overflow:hidden;margin-top:6px}
   .bar > i{display:block;height:100%;background:var(--neon)}
-  .pickwrap{display:flex;align-items:center;gap:4px;max-width:52%;justify-content:flex-end}
-  .verpick{max-width:100%;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:.82rem}
-  .findbtn{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:4px 8px;font:inherit;font-size:.78rem;cursor:pointer;white-space:nowrap}
+  .pickwrap{display:flex;align-items:center;gap:4px;min-width:0;justify-content:flex-end}
+  .verpick{min-width:0;width:auto;max-width:240px;flex:0 1 auto;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:.82rem}
+  @media(max-width:560px){ .verpick{max-width:150px} .song .found{max-width:130px} }
+  .findbtn{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:4px 8px;font:inherit;font-size:.78rem;cursor:pointer;white-space:nowrap;flex-shrink:0}
   .findbtn:hover{color:var(--ink);border-color:var(--plum)}
 </style>
 </head>
@@ -641,7 +642,10 @@ function renderResults(){
           const fnParts=base.split(' - ');
           let art=c.track.artist||''; if(!art && fnParts.length>=2)art=fnParts[0].trim(); if(!art)art=r.s.artist||'';
           let ti=c.track.title||''; if(!ti)ti=(fnParts.length>=2?fnParts.slice(1).join(' - '):base).trim();
-          const label=(c.track.video?'🎬 ':'')+(art?art+' - ':'')+ti+(fname?'  ·  '+fname:'');
+          // Keep option labels compact so the dropdown stays narrow (Safari sizes it to the widest option).
+          const short=(s,n)=>{ s=(s||'').trim(); return s.length>n?s.slice(0,n-1).trim()+'…':s; };
+          let label=(c.track.video?'🎬 ':'')+short((art?art+' - ':'')+ti, 46);
+          if(base){ label+='  ·  '+short(base, 30); }
           const sel=(c===chosen)?'selected':'';
           return `<option value="${esc(val)}" ${sel}>${esc(label)}</option>`;
         }).join('');
@@ -708,9 +712,22 @@ function m3uForBlock(b){
   return out;
 }
 function download(name,text){
-  const blob=new Blob([text],{type:'audio/x-mpegurl'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
-  document.body.appendChild(a); a.click(); a.remove();
+  try{
+    const blob=new Blob([text],{type:'audio/x-mpegurl'});
+    // Safari (esp. older) supports the download attribute inconsistently; use msSaveBlob if present,
+    // otherwise an object URL with a delayed revoke so Safari has time to start the download.
+    if(window.navigator && window.navigator.msSaveOrOpenBlob){ window.navigator.msSaveOrOpenBlob(blob,name); return; }
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=name; a.rel='noopener'; a.style.display='none';
+    document.body.appendChild(a);
+    a.click();
+    // Keep the element + URL alive briefly so Safari completes the download, then clean up.
+    setTimeout(()=>{ try{ document.body.removeChild(a); }catch(_){} URL.revokeObjectURL(url); }, 4000);
+  }catch(e){
+    // Last-resort fallback: open the playlist as text so the DJ can save it manually.
+    try{ const w=window.open('','_blank'); if(w){ w.document.title=name; w.document.body.innerText=text; } }catch(_){}
+  }
 }
 function safeName(s){ return (s||'block').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'-'); }
 function exportBlock(id){
@@ -718,9 +735,11 @@ function exportBlock(id){
   download(safeName(WED.coupleNames||WED.name)+' - '+safeName(b.name)+'.m3u', m3uForBlock(b));
 }
 function exportAll(){
-  (WED.blocks||[]).filter(b=>(b.songs||[]).length).forEach((b,i)=>{
-    setTimeout(()=>exportBlock(b.id), i*250);   // stagger so browsers allow multiple downloads
-  });
+  // Safari blocks downloads not tied to the click gesture, so fire them synchronously
+  // within this handler (no setTimeout) — most browsers allow a short burst this way.
+  const blocks=(WED.blocks||[]).filter(b=>(b.songs||[]).length);
+  blocks.forEach(b=>exportBlock(b.id));
+  if(blocks.length>1){ showLibStatus('Exported '+blocks.length+' playlists. If your browser only saved one, allow multiple downloads for this site, or use each block\u2019s own “Export .m3u”.'); }
 }
 
 /* ---------- load wedding ---------- */
