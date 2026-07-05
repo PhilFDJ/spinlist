@@ -115,11 +115,16 @@ async function savePick(key, chosen){
 }
 // Save the scanned library to the account (compact keys) so it syncs across devices.
 async function saveLibrary(name){
+  if(!LIB.length){ showLibStatus('Nothing to save yet — scan a folder first.'); return; }
+  showLibStatus('Saving your library…');
   try{
     const payload={library:{name:name||'library', tracks:LIB.map(t=>({t:t.title,a:t.artist,p:t.path}))}};
     const r=await fetch('/api/prep/library',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});
-    if(r.ok){ const d=await r.json(); showLibStatus('Saved '+d.count+' tracks to your account.'); }
-  }catch(e){}
+    if(r.ok){ const d=await r.json(); showLibStatus('✓ Saved '+d.count+' tracks to your account (syncs across your devices).'); }
+    else if(r.status===401||r.status===403){ showLibStatus('Not saved — please log in on the main site, then reopen Prep.'); }
+    else if(r.status===413){ showLibStatus('Not saved — your library is very large. Tell us and we can raise the limit.'); }
+    else { let m=''; try{ m=(await r.json()).error||''; }catch(_){ } showLibStatus('Not saved ('+r.status+(m?': '+m:'')+'). Please try again.'); }
+  }catch(e){ showLibStatus('Not saved — connection problem. Your scan still works for this session.'); }
 }
 async function loadSavedLibrary(){
   try{
