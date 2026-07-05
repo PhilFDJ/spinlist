@@ -45,6 +45,11 @@
 <div class="wrap" id="root"><p style="margin-top:40px;color:var(--muted)">Loading…</p></div>
 
 <script>
+// ======================================================================
+//  Mac app download link. When your download page is live, paste its URL
+//  here (the ONLY place you need to change it). Until then it shows a note.
+const MAC_APP_URL = 'https://github.com/PhilFDJ/spinlist/releases/download/Spinlist-Music-Manager/Spinlist.Music.Manager-1.0.0-mac.zip';
+// ======================================================================
 async function boot(){
   // Handle return from Spotify OAuth
   const sp=new URLSearchParams(location.search).get('spotify');
@@ -182,9 +187,9 @@ async function boot(){
     ${d.user.prepAccess ? `
       <div class="panel">
         <h2>Music library</h2>
-        <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">Set up your music library once — scan a folder or import a library file (iTunes/Music, Rekordbox, Serato/M3U). It's saved to your account and used automatically to match songs and export playlists whenever you open Prep inside a wedding.</p>
-        <a class="btn btn-primary" href="/prep.html?setup=1" target="_blank" style="text-decoration:none">🎧 Set up in browser</a>
-        <p style="color:var(--muted);font-size:.82rem;margin-top:12px"><b>Big library?</b> A desktop app (Mac &amp; Windows) scans much faster than the browser and syncs to your account the same way — ideal for large collections. <span id="desktop-link">Download coming soon.</span></p>
+        <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">Set up your music library with the Spinlist Mac app — it scans your folder fast and reads your files' real locations, so the playlists you export drop straight into your DJ software. It syncs to your account automatically, then Prep uses it inside every wedding.</p>
+        <a class="btn btn-primary" id="mac-app-btn" href="${MAC_APP_URL || '#'}" ${MAC_APP_URL ? 'target="_blank" rel="noopener"' : 'onclick="return false"'} style="text-decoration:none">⬇ Download the Mac app</a>
+        <p id="mac-app-note" style="color:var(--muted);font-size:.82rem;margin-top:10px">${MAC_APP_URL ? 'Requires macOS. Unzip it, then move Spinlist Music Manager to your Applications folder. First launch: right-click the app and choose Open.' : 'Download link coming soon — the app is on its way.'}</p>
         <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.03)">
           <p style="margin:0;font-size:.82rem;color:var(--ink)">🔒 <b>Your privacy:</b> we store your track list and file locations (titles, artists, file paths) — never your actual music files. Nothing is copied off your computer, and your songs stay exactly where they are.</p>
         </div>

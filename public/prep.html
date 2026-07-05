@@ -66,38 +66,27 @@
   <p class="lead" id="intro-lead">Match the couple's song requests against your own music library, then export a playlist (.m3u) for each block to drop straight into your DJ software. Your music files stay on your computer — we only save the track list and file locations to your account, never the songs themselves.</p>
 
   <div class="panel">
-    <div class="tabs">
-      <div class="tab on" data-src="folder" onclick="setSrc('folder')">📁 Scan a folder</div>
-      <div class="tab" data-src="library" onclick="setSrc('library')">🎚️ Import a library file</div>
+    <h2 style="margin-top:0">Set up your music library</h2>
+    <p class="lead" style="margin-top:0">The <b>Spinlist Mac app</b> scans your music folder and reads the real file locations, so the playlists you export here load straight into your DJ software. It syncs to your account automatically.</p>
+    <div class="row">
+      <a class="btn" id="mac-app-btn" href="#" style="text-decoration:none">⬇ Download the Mac app</a>
     </div>
+    <p class="note" id="mac-app-note"></p>
 
-    <div id="src-folder">
-      <p class="lead" style="margin-top:0">Point Spinlist at the folder your music lives in. It reads the tags (title &amp; artist) from your MP3/MP4/M4A files to find matches.</p>
-      <div class="row">
-        <button class="btn" id="pick-folder">Choose music folder</button>
-        <button class="btn ghost" id="rescan-folder" style="display:none">🔄 Rescan <span id="rescan-name"></span></button>
-        <input type="file" id="folder-input" webkitdirectory directory multiple accept="audio/*,video/*,.mp3,.m4a,.mp4,.m4v,.mov,.aac,.flac,.wav">
-        <span class="stat" id="folder-stat"></span>
-      </div>
-      <div class="bar" id="scan-bar" style="display:none"><i style="width:0%"></i></div>
-      <p class="note">Folder scanning works best in Chrome or Edge. Music videos (.mp4, .m4v, .mov) are picked up too and labelled 🎬 — point this at your video folder (e.g. ~/Movies) to include them.</p>
-      <p class="note" id="safari-note" style="display:none;color:var(--muted)"></p>
-      <p class="note" id="lib-status" style="color:var(--neon)"></p>
-      <p class="note"><a href="#" onclick="clearSavedLibrary();return false" style="color:var(--muted)">Forget my saved library</a></p>
-    </div>
-
-    <div id="src-library" style="display:none">
-      <p class="lead" style="margin-top:0">Export your library from your DJ app, then load the file here:</p>
+    <div style="border-top:1px solid var(--line);margin:16px 0 0;padding-top:14px">
+      <p class="lead" style="margin:0 0 8px;font-size:.9rem">Already keep your library in a DJ app? You can import it instead — these keep the real file paths, so exports still work:</p>
       <ul class="lead" style="margin-top:0;font-size:.88rem">
         <li><b>iTunes / Music:</b> File › Library › Export Library… (an .xml file)</li>
         <li><b>Rekordbox:</b> File › Export Collection in xml format</li>
         <li><b>Serato / other:</b> export or save a crate as .m3u / .m3u8</li>
       </ul>
       <div class="row">
-        <button class="btn" id="pick-library">Choose library file</button>
+        <button class="btn ghost" id="pick-library">Import a library file</button>
         <input type="file" id="library-input" accept=".xml,.m3u,.m3u8,.txt">
         <span class="stat" id="library-stat"></span>
       </div>
+      <p class="note" id="lib-status" style="color:var(--neon)"></p>
+      <p class="note"><a href="#" onclick="clearSavedLibrary();return false" style="color:var(--muted)">Forget my saved library</a></p>
     </div>
   </div>
 
@@ -107,6 +96,8 @@
 </div>
 
 <script>
+// Mac app download link — paste your download page URL here when it's live (only place to change).
+const MAC_APP_URL = 'https://github.com/PhilFDJ/spinlist/releases/download/Spinlist-Music-Manager/Spinlist.Music.Manager-1.0.0-mac.zip';
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
 const SETUP=!WID && (params.get('setup')==='1' || params.get('setup')==='');
@@ -119,7 +110,7 @@ async function savePick(key, chosen){
 }
 // Save the scanned library to the account (compact keys) so it syncs across devices.
 async function saveLibrary(name){
-  if(!LIB.length){ showLibStatus('Nothing to save yet — scan a folder first.'); return; }
+  if(!LIB.length){ showLibStatus('Nothing to save yet.'); return; }
   showLibStatus('Saving your library…');
   try{
     const payload={library:{name:name||'library', tracks:LIB.map(t=>{ const o={t:t.title,a:t.artist,p:t.path}; if(t.video)o.v=1; if(t.director)o.d=t.director; if(t.size)o.s=t.size; if(t.mtime)o.m=t.mtime; return o; })}};
@@ -145,16 +136,12 @@ async function loadSavedLibrary(){
 function showLibStatus(msg){ const el=document.getElementById('lib-status'); if(el)el.textContent=msg; }
 function invalidateLibIndex(){ LIB_INDEXED=false; }
 async function clearSavedLibrary(){
-  if(!confirm('Forget your saved library? You can re-scan a folder to build a new one.'))return;
+  if(!confirm('Forget your saved library? You can set it up again with the Mac app or a library import.'))return;
   try{ await fetch('/api/prep/library',{method:'DELETE',credentials:'same-origin'}); }catch(e){}
   LIB=[]; LIB_NAME=''; invalidateLibIndex(); showLibStatus('Saved library cleared.'); renderResults();
 }
 
-function setSrc(s){ SRC=s;
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.src===s));
-  document.getElementById('src-folder').style.display = s==='folder'?'block':'none';
-  document.getElementById('src-library').style.display = s==='library'?'block':'none';
-}
+function setSrc(s){ SRC=s; }   // (source tabs removed — library import is always visible)
 
 /* ---------- normalisation & matching ---------- */
 // Common DJ/edit descriptors to ignore when matching (bracketed OR loose).
@@ -288,18 +275,20 @@ async function scanFromHandle(dir){
   if(dir.queryPermission){
     let perm=await dir.queryPermission({mode:'read'});
     if(perm!=='granted' && dir.requestPermission) perm=await dir.requestPermission({mode:'read'});
-    if(perm!=='granted'){ document.getElementById('folder-stat').textContent='Permission needed to read that folder.'; return; }
+    if(perm!=='granted'){ const fs=document.getElementById('folder-stat'); if(fs)fs.textContent='Permission needed to read that folder.'; return; }
   }
   const files=await collectFromHandle(dir);
   await scanFiles(files, true);
 }
 function showRescan(name){
   const b=document.getElementById('rescan-folder');
-  if(name){ document.getElementById('rescan-name').textContent=name; b.style.display='inline-flex'; }
+  if(!b)return;
+  if(name){ const n=document.getElementById('rescan-name'); if(n)n.textContent=name; b.style.display='inline-flex'; }
   else b.style.display='none';
 }
 
-document.getElementById('pick-folder').onclick=async()=>{
+const _pickFolderBtn=document.getElementById('pick-folder');
+if(_pickFolderBtn) _pickFolderBtn.onclick=async()=>{
   if(window.showDirectoryPicker){
     try{
       const dir=await window.showDirectoryPicker();
@@ -308,14 +297,14 @@ document.getElementById('pick-folder').onclick=async()=>{
       showRescan(dir.name);
       await scanFromHandle(dir);
       return;
-    }catch(e){ if(e && e.name==='AbortError')return; /* fall through to input */ }
+    }catch(e){ if(e && e.name==='AbortError')return; }
   }
-  document.getElementById('folder-input').click();
+  const fi=document.getElementById('folder-input'); if(fi)fi.click();
 };
-document.getElementById('rescan-folder').onclick=async()=>{
-  if(DIR_HANDLE){ await scanFromHandle(DIR_HANDLE); }
-};
-document.getElementById('folder-input').onchange=async(e)=>{
+const _rescanBtn=document.getElementById('rescan-folder');
+if(_rescanBtn) _rescanBtn.onclick=async()=>{ if(DIR_HANDLE){ await scanFromHandle(DIR_HANDLE); } };
+const _folderInput=document.getElementById('folder-input');
+if(_folderInput) _folderInput.onchange=async(e)=>{
   const files=[...e.target.files].filter(f=>/\.(mp3|m4a|mp4|m4v|mov|avi|mkv|aac|flac|wav|aiff?)$/i.test(f.name))
     .map(f=>({file:f, path:f.webkitRelativePath||f.name}));
   await scanFiles(files,false);
@@ -328,9 +317,10 @@ function fmtTime(secs){
   return s?(m+'m '+s+'s'):(m+'m');
 }
 async function scanFiles(files, fsapi){
-  const stat=document.getElementById('folder-stat');
-  const bar=document.getElementById('scan-bar'); bar.style.display='block';
-  const barI=bar.querySelector('i');
+  const stat=document.getElementById('folder-stat')||{};
+  const bar=document.getElementById('scan-bar');
+  if(bar) bar.style.display='block';
+  const barI=bar?bar.querySelector('i'):null;
   const newLib=[];
   let done=0, reused=0, readCount=0;
   const total=files.length;
@@ -372,7 +362,7 @@ async function scanFiles(files, fsapi){
   }
   function tick(){
     if(done%50===0||done===total){
-      barI.style.width=Math.round(done/total*100)+'%';
+      if(barI) barI.style.width=Math.round(done/total*100)+'%';
       // ETA from the actual read rate applied to how many files still need reading.
       const elapsed=(Date.now()-t0)/1000;
       const readRate=readCount/Math.max(0.001,elapsed);   // files read per second
@@ -392,7 +382,7 @@ async function scanFiles(files, fsapi){
   LIB=newLib; invalidateLibIndex();
   PREV_LIB=newLib;
   stat.textContent=LIB.length+' tracks'+(reused?' ('+reused+' unchanged, '+readCount+' newly read)':'');
-  bar.style.display='none';
+  if(bar) bar.style.display='none';
   renderResults();
   saveLibrary(LIB_NAME || (DIR_HANDLE && DIR_HANDLE.name) || 'library');   // sync to account
 }
@@ -604,7 +594,7 @@ function renderResults(){
   const el=document.getElementById('results');
   // Setup mode (no wedding): show a library summary instead of match results.
   if(SETUP){
-    if(!LIB.length){ el.innerHTML='<div class="panel"><p class="status">No music loaded yet. Scan a folder or import a library file above to build your library.</p></div>'; return; }
+    if(!LIB.length){ el.innerHTML='<div class="panel"><p class="status">No music loaded yet. Set up your library with the Mac app (or import a library file) above.</p></div>'; return; }
     const vids=LIB.filter(t=>t.video).length;
     el.innerHTML='<div class="panel"><h2 style="margin-top:0">Your music library</h2>'+
       '<p class="lead"><b>'+LIB.length.toLocaleString()+'</b> tracks saved'+(vids?(' · <b>'+vids+'</b> music videos 🎬'):'')+'.</p>'+
@@ -779,12 +769,11 @@ async function loadWed(){
   if(SETUP){
     document.getElementById('wed-name').textContent='music library setup';
     document.title='Music library · Spinlist';
-    const lead=document.getElementById('intro-lead'); if(lead)lead.textContent='Set up your music library once here — scan a folder or import a library file. It\u2019s saved to your account and used automatically whenever you open Prep inside a wedding. Your music files stay on your computer — we only save the track list and file locations, never the songs themselves.';
+    const lead=document.getElementById('intro-lead'); if(lead)lead.textContent='Set up your music library once here — download the Spinlist Mac app to scan your music, or import a library file from your DJ app. It\u2019s saved to your account and used automatically whenever you open Prep inside a wedding. Your music files stay on your computer — we only save the track list and file locations, never the songs themselves.';
     try{ await loadPicks(); }catch(e){}
     const hadSaved=await loadSavedLibrary();
     renderResults();
-    if(hadSaved){ document.getElementById('folder-stat').textContent='Loaded your saved library ('+LIB.length+' tracks). Rescan a folder to update it.'; showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
-    try{ const saved=await idbGet('dirHandle'); if(saved){ DIR_HANDLE=saved; showRescan(saved.name); } }catch(e){}
+    if(hadSaved){ showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
     return;
   }
   if(!WID){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">No wedding specified. Open Prep from a wedding in your planner.</p></div>'; return; }
@@ -802,7 +791,7 @@ async function loadWed(){
     document.getElementById('wed-name').textContent=WED.coupleNames||WED.name||'wedding';
     document.title='Prep · '+(WED.coupleNames||WED.name||'Spinlist');
     renderResults();
-    if(window.__hadSaved){ document.getElementById('folder-stat').textContent='Loaded your saved library ('+LIB.length+' tracks). Rescan a folder to update it.'; showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
+    if(window.__hadSaved){ showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
     // If we remembered a folder from a previous session, offer a one-click rescan.
     try{
       const saved=await idbGet('dirHandle');
@@ -810,6 +799,17 @@ async function loadWed(){
     }catch(e){}
   }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the wedding.</p></div>'; }
 }
+// Wire the "Download the Mac app" button (setup panel).
+(function(){
+  const btn=document.getElementById('mac-app-btn');
+  const note=document.getElementById('mac-app-note');
+  if(btn){
+    if(MAC_APP_URL){ btn.href=MAC_APP_URL; btn.target='_blank'; btn.rel='noopener';
+      if(note)note.textContent='Requires macOS. Unzip it, then move Spinlist Music Manager to Applications. First launch: right-click the app and choose Open.'; }
+    else { btn.href='#'; btn.onclick=(e)=>{e.preventDefault();};
+      if(note)note.textContent='Download link coming soon — the app is on its way.'; }
+  }
+})();
 loadWed();
 // Let Safari users know folder scanning is slower there (Safari lacks the fast file API).
 (function(){
