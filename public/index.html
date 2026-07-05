@@ -789,7 +789,7 @@ function renderEventGig(){
   const seg=(id,label)=>`<span onclick="setEvGigSort('${id}')" style="flex:1;text-align:center;padding:7px 4px;font-size:.76rem;font-weight:700;cursor:pointer;border-bottom:2px solid ${EV_GIG_SORT===id?'var(--neon)':'transparent'};color:${EV_GIG_SORT===id?'#fff':'#8b93a7'}">${label}</span>`;
   gw.innerHTML=`
     <div id="ev-gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
-      <b style="font-size:.95rem;display:flex;align-items:center;gap:8px"><img src="/img/spinlist-mark-white.png" alt="Spinlist" style="height:20px;width:auto"><span>📺 ${esc(EVENT.name||'Event')}</span></b>
+      <b style="font-size:.95rem;display:flex;align-items:center;gap:8px"><img src="/img/spinlist-mark-navy.png" alt="Spinlist" style="height:20px;width:auto"><span>📺 ${esc(EVENT.name||'Event')}</span></b>
       <div style="display:flex;gap:8px">
         <span onclick="popOutEventGig()" title="Pop out" style="cursor:pointer;font-weight:800">⤢</span>
         <span onclick="renderEventGig()" title="Refresh" style="cursor:pointer;font-weight:800">⟳</span>
