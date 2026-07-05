@@ -274,6 +274,7 @@
           <button class="btn btn-ghost" onclick="downloadSongCSV()">⬇ Export CSV</button>
           <button class="btn btn-neon" id="playlist-btn" onclick="openExportModal()" style="display:none">🎵 Export playlist ▸</button>
           <button class="btn btn-neon" id="spotify-btn" onclick="exportSpotify()" style="display:none">Export to Spotify ▸</button>
+          <a class="btn btn-ghost" id="dash-prep-btn" target="_blank" style="display:none;text-decoration:none">🎧 Prep</a>
           <button class="btn btn-ghost" onclick="toggleDeadline()" id="close-btn">Close voting now</button>
           <button class="btn btn-ghost" onclick="openEditModal(EVENT.id)">✎ Edit event</button>
         </div>
@@ -844,6 +845,12 @@ function renderDashboard(){
   // Spotify export is Studio-only
   const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
   const pb=document.getElementById('playlist-btn');if(pb)pb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
+  // Prep button — available to all tiers except Basic (and not couples).
+  const prepBtn=document.getElementById('dash-prep-btn');
+  if(prepBtn){
+    if(ME&&ME.prepAccess){ prepBtn.style.display='inline-flex'; prepBtn.href='/prep.html?e='+encodeURIComponent(EVENT.id); }
+    else prepBtn.style.display='none';
+  }
   const closed=EVENT.closed||EVENT.locked||(EVENT.deadline&&Date.now()>EVENT.deadline);
   const st=document.getElementById('dash-status');
   st.textContent=closed?'Voting closed':'Voting open';
