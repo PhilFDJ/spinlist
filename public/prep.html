@@ -284,6 +284,13 @@ document.getElementById('folder-input').onchange=async(e)=>{
     .map(f=>({file:f, path:f.webkitRelativePath||f.name}));
   await scanFiles(files,false);
 };
+// Format seconds as "Xm Ys" (or "Ys" under a minute).
+function fmtTime(secs){
+  secs=Math.max(0,Math.round(secs));
+  if(secs<60) return secs+'s';
+  const m=Math.floor(secs/60), s=secs%60;
+  return s?(m+'m '+s+'s'):(m+'m');
+}
 async function scanFiles(files, fsapi){
   const stat=document.getElementById('folder-stat');
   const bar=document.getElementById('scan-bar'); bar.style.display='block';
@@ -316,7 +323,7 @@ async function scanFiles(files, fsapi){
       barI.style.width=Math.round(done/total*100)+'%';
       const rate=done/Math.max(1,(Date.now()-t0)/1000);
       const eta=rate>0?Math.round((total-done)/rate):0;
-      stat.textContent=done+' / '+total+' files'+(eta>2?'  ·  ~'+eta+'s left':'');
+      stat.textContent=done+' / '+total+' files'+(eta>2?'  ·  ~'+fmtTime(eta)+' left':'');
     }
   }
   for(let i=0;i<files.length;i+=CONCURRENCY){
