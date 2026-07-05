@@ -196,9 +196,10 @@ function gigMusicRows(){
   if(!blocks.length)return '<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No music blocks yet.</div>';
   return blocks.map(b=>{
     const songs=(b.songs||[]);
-    const songHtml=songs.length?songs.map(s=>`<div onclick="toggleGigPlayed('${b.id}','${s.id}',${s.played?0:1})" style="display:flex;gap:8px;align-items:baseline;padding:6px 0;cursor:pointer">
-      <span style="color:${s.played?'var(--neon)':'#3a4560'};font-weight:800;width:16px">${s.played?'✓':'○'}</span>
-      <span style="color:${s.played?'#8b93a7':'#fff'};font-size:.9rem;${s.played?'text-decoration:line-through':''}">${esc(s.title||'')}${s.artist?` <span style="color:#8b93a7">· ${esc(s.artist)}</span>`:''}</span>
+    const songHtml=songs.length?songs.map(s=>`<div style="display:flex;gap:8px;align-items:center;padding:6px 0">
+      <span onclick="toggleGigPlayed('${b.id}','${s.id}',${s.played?0:1})" style="color:${s.played?'var(--neon)':'#3a4560'};font-weight:800;width:16px;cursor:pointer;flex-shrink:0">${s.played?'✓':'○'}</span>
+      <span onclick="toggleGigPlayed('${b.id}','${s.id}',${s.played?0:1})" style="flex:1;color:${s.played?'#8b93a7':'#fff'};font-size:.9rem;cursor:pointer;${s.played?'text-decoration:line-through':''}">${esc(s.title||'')}${s.artist?` <span style="color:#8b93a7">· ${esc(s.artist)}</span>`:''}</span>
+      <span onclick="copyGigSong(this,${JSON.stringify((s.title||'')+(s.artist?' '+s.artist:'')).replace(/"/g,'&quot;')})" title="Copy title & artist" style="cursor:pointer;font-size:.85rem;flex-shrink:0;opacity:.7">📋</span>
     </div>`).join(''):'<div style="color:#5b6479;font-size:.85rem;font-style:italic;padding:4px 0">No songs chosen</div>';
     return `<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
       <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);font-weight:700;margin-bottom:4px">${esc(b.name||'Block')} <span style="color:#8b93a7">(${songs.filter(s=>s.played).length}/${songs.length} played)</span></div>
@@ -211,6 +212,12 @@ async function toggleGigPlayed(blockId,songId,played){
     const d=await api('/api/weddings/'+CURRENT.id+'/played',{method:'POST',body:JSON.stringify({blockId,songId,played:!!played})});
     CURRENT=d.wedding; renderGigWindow();
   }catch(e){ toast('Could not update: '+e.message); }
+}
+async function copyGigSong(el,text){
+  try{ await navigator.clipboard.writeText(text); }
+  catch(e){ const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}document.body.removeChild(ta); }
+  if(el){ const o=el.textContent; el.textContent='✓'; setTimeout(()=>{el.textContent=o;},900); }
+  toast('Copied: '+text);
 }
 function renderGigWindow(){
   const gw=document.getElementById('gig-window');if(!gw||!CURRENT)return;

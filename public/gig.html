@@ -27,9 +27,12 @@
   .row.tl{display:flex;gap:12px;align-items:baseline}
   .row.tl .time{color:var(--neon);font-weight:800;font-size:1rem;min-width:70px}
   .row.tl .lbl{color:#fff;font-size:1rem}
-  .song{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:1rem;color:#fff}
-  .song .tick{width:16px;color:#3a4560;font-weight:800}
+  .song{display:flex;gap:8px;align-items:center;padding:5px 0;font-size:1rem;color:#fff}
+  .song .tick{width:16px;color:#3a4560;font-weight:800;flex-shrink:0}
   .song .tick.done{color:var(--neon)}
+  .song .stitle{flex:1}
+  .song .copybtn{cursor:pointer;opacity:.7;flex-shrink:0;font-size:.9rem}
+  .song .copybtn:hover{opacity:1}
   .song .art{color:#8b93a7}
   .song .pl{color:#8b93a7;text-decoration:line-through}
   .song.empty{color:#5b6479;font-style:italic;font-size:.9rem}
@@ -83,7 +86,14 @@ function musicHtml(){
   if(!blocks.length)return '<div class="status">No music blocks yet.</div>';
   return blocks.map(b=>{
     const songs=(b.songs||[]);
-    const list=songs.length?songs.map(s=>'<div class="song" onclick="togglePlayed(\''+esc(b.id)+'\',\''+esc(s.id)+'\','+(s.played?0:1)+')" style="cursor:pointer"><span class="tick '+(s.played?'done':'')+'">'+(s.played?'✓':'○')+'</span><span'+(s.played?' class="pl"':'')+'>'+esc(s.title||'')+(s.artist?' <span class="art">· '+esc(s.artist)+'</span>':'')+'</span></div>').join(''):'<div class="song empty">No songs chosen</div>';
+    const list=songs.length?songs.map(s=>{
+      const copyTxt=(s.title||'')+(s.artist?' '+s.artist:'');
+      return '<div class="song">'+
+        '<span class="tick '+(s.played?'done':'')+'" onclick="togglePlayed(\''+esc(b.id)+'\',\''+esc(s.id)+'\','+(s.played?0:1)+')" style="cursor:pointer">'+(s.played?'✓':'○')+'</span>'+
+        '<span class="stitle'+(s.played?' pl':'')+'" onclick="togglePlayed(\''+esc(b.id)+'\',\''+esc(s.id)+'\','+(s.played?0:1)+')" style="cursor:pointer">'+esc(s.title||'')+(s.artist?' <span class="art">· '+esc(s.artist)+'</span>':'')+'</span>'+
+        '<span class="copybtn" title="Copy title & artist" onclick="copySong(this,\''+esc(copyTxt).replace(/'/g,"\\'")+'\')">📋</span>'+
+      '</div>';
+    }).join(''):'<div class="song empty">No songs chosen</div>';
     return '<div class="row"><div class="q">'+esc(b.name||'Block')+' <span class="art">('+songs.filter(s=>s.played).length+'/'+songs.length+' played)</span></div>'+list+'</div>';
   }).join('');
 }
@@ -93,6 +103,12 @@ async function togglePlayed(blockId,songId,played){
     if(r.ok){ const d=await r.json(); if(d&&d.wedding){ WED=d.wedding; renderBody(); document.getElementById('updated').textContent='Saved '+new Date().toLocaleTimeString(); } }
     else{ document.getElementById('updated').textContent='Save failed'; }
   }catch(e){ document.getElementById('updated').textContent='Save failed'; }
+}
+async function copySong(el,text){
+  try{ await navigator.clipboard.writeText(text); }
+  catch(e){ const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}document.body.removeChild(ta); }
+  if(el){ const o=el.textContent; el.textContent='✓'; setTimeout(()=>{el.textContent=o;},900); }
+  document.getElementById('updated').textContent='Copied: '+text;
 }
 function renderBody(){
   document.getElementById('main').innerHTML = TAB==='timeline'?timelineHtml() : TAB==='music'?musicHtml() : infoHtml();
