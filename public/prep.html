@@ -75,7 +75,7 @@
       <div class="row">
         <button class="btn" id="pick-folder">Choose music folder</button>
         <button class="btn ghost" id="rescan-folder" style="display:none">🔄 Rescan <span id="rescan-name"></span></button>
-        <input type="file" id="folder-input" webkitdirectory directory multiple accept="audio/*,video/mp4,.mp3,.m4a,.mp4,.aac,.flac,.wav">
+        <input type="file" id="folder-input" webkitdirectory directory multiple accept="audio/*,video/*,.mp3,.m4a,.mp4,.m4v,.mov,.aac,.flac,.wav">
         <span class="stat" id="folder-stat"></span>
       </div>
       <div class="bar" id="scan-bar" style="display:none"><i style="width:0%"></i></div>
@@ -88,7 +88,7 @@
       <p class="lead" style="margin-top:0">Export your library from your DJ app, then load the file here:</p>
       <ul class="lead" style="margin-top:0;font-size:.88rem">
         <li><b>iTunes / Music:</b> File › Library › Export Library… (an .xml file)</li>
-        <li><b>Apple TV app (music videos):</b> File › Library › Export Library… — video results are labelled 🎬</li>
+        <li><b>Apple TV app (music videos):</b> the TV app can't export XML and its .tvlibrary file can't be read directly — instead use “Scan a folder” above and point it at where your video files live (e.g. ~/Movies). Videos are labelled 🎬.</li>
         <li><b>Rekordbox:</b> File › Export Collection in xml format</li>
         <li><b>Serato / other:</b> export or save a crate as .m3u / .m3u8</li>
       </ul>
@@ -102,7 +102,7 @@
 
   <div id="results"></div>
 
-  <input type="file" id="find-file-input" accept="audio/*,video/mp4,.mp3,.m4a,.mp4,.aac,.flac,.wav">
+  <input type="file" id="find-file-input" accept="audio/*,video/*,.mp3,.m4a,.mp4,.m4v,.mov,.aac,.flac,.wav">
 </div>
 
 <script>
@@ -241,7 +241,7 @@ async function collectFromHandle(dir){
   async function walk(handle,prefix){
     for await (const [name,h] of handle.entries()){
       if(h.kind==='directory'){ await walk(h, prefix+name+'/'); }
-      else if(/\.(mp3|m4a|mp4|aac|flac|wav|aiff?)$/i.test(name)){ files.push({handle:h, path:prefix+name}); }
+      else if(/\.(mp3|m4a|mp4|m4v|mov|avi|mkv|aac|flac|wav|aiff?)$/i.test(name)){ files.push({handle:h, path:prefix+name}); }
     }
   }
   await walk(dir,'');
@@ -280,7 +280,7 @@ document.getElementById('rescan-folder').onclick=async()=>{
   if(DIR_HANDLE){ await scanFromHandle(DIR_HANDLE); }
 };
 document.getElementById('folder-input').onchange=async(e)=>{
-  const files=[...e.target.files].filter(f=>/\.(mp3|m4a|mp4|aac|flac|wav|aiff?)$/i.test(f.name))
+  const files=[...e.target.files].filter(f=>/\.(mp3|m4a|mp4|m4v|mov|avi|mkv|aac|flac|wav|aiff?)$/i.test(f.name))
     .map(f=>({file:f, path:f.webkitRelativePath||f.name}));
   await scanFiles(files,false);
 };
@@ -304,7 +304,8 @@ async function scanFiles(files, fsapi){
       if(parts.length>=2){ artist=artist||parts[0].trim(); title=parts.slice(1).join(' - ').trim(); }
       else { title=base.trim(); }
     }
-    LIB.push({title,artist,path:f.path});
+    const isVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);   // clearly-video types (.mp4 is often audio, leave unflagged)
+    LIB.push({title,artist,path:f.path,video:isVid});
     done++;
     if(done%5===0||done===files.length){ barI.style.width=Math.round(done/files.length*100)+'%'; stat.textContent=done+' / '+files.length+' files read'; await new Promise(r=>setTimeout(r)); }
   }
