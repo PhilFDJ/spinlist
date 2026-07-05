@@ -313,7 +313,8 @@ async function scanFiles(files, fsapi){
 async function readTags(blob){
   const out={title:'',artist:''};
   try{
-    const head=new Uint8Array(await blob.slice(0, 256*1024).arrayBuffer());
+    const head=new Uint8Array(await blob.slice(0, 512*1024).arrayBuffer());
+    // ---- MP3 / ID3v2 ----
     if(head[0]===0x49&&head[1]===0x44&&head[2]===0x33){ // "ID3" v2
       const size=((head[6]&0x7f)<<21)|((head[7]&0x7f)<<14)|((head[8]&0x7f)<<7)|(head[9]&0x7f);
       const end=Math.min(10+size, head.length);
@@ -329,7 +330,25 @@ async function readTags(blob){
         i+=10+fsz;
       }
     }
-    if(!out.title||!out.artist){ // try ID3v1 tail
+    // ---- MP4 / M4A / MP4 video (atoms) ----
+    // ftyp box near the start signals an ISO-BMFF (MP4) container.
+    const isMp4 = head.length>12 && head[4]===0x66&&head[5]===0x74&&head[6]===0x79&&head[7]===0x70; // "ftyp"
+    if((!out.title||!out.artist) && isMp4){
+      const mp4=parseMp4Tags(head);
+      out.title=out.title||mp4.title;
+      out.artist=out.artist||mp4.artist;
+      // moov (and its tags) may live at the END of the file — check the tail too.
+      if((!out.title||!out.artist) && blob.size>head.length){
+        try{
+          const tailBuf=new Uint8Array(await blob.slice(Math.max(0, blob.size-2*1024*1024)).arrayBuffer());
+          const mp4b=parseMp4Tags(tailBuf);
+          out.title=out.title||mp4b.title;
+          out.artist=out.artist||mp4b.artist;
+        }catch(_){}
+      }
+    }
+    // ---- ID3v1 tail fallback (MP3) ----
+    if(!out.title||!out.artist){
       const tail=new Uint8Array(await blob.slice(Math.max(0,blob.size-128)).arrayBuffer());
       if(tail.length>=128 && tail[0]===0x54&&tail[1]===0x41&&tail[2]===0x47){ // "TAG"
         const rd=(s,e)=>{let str='';for(let k=s;k<e;k++){if(tail[k]===0)break;str+=String.fromCharCode(tail[k]);}return str.trim();};
@@ -338,6 +357,47 @@ async function readTags(blob){
     }
   }catch(_){}
   return out;
+}
+/* Parse MP4/M4A metadata atoms. Looks for the iTunes-style tags inside 'ilst':
+   ©nam = title, ©ART = artist, aART = album artist. Each holds a 'data' sub-atom
+   whose payload (after an 8-byte header) is the UTF-8 string. We scan the buffer
+   for these 4-byte atom names directly — robust without walking the full box tree. */
+function parseMp4Tags(buf){
+  const res={title:'',artist:''};
+  const dec=new TextDecoder('utf-8');
+  const u32=(o)=>((buf[o]<<24)|(buf[o+1]<<16)|(buf[o+2]<<8)|buf[o+3])>>>0;
+  // atom name bytes: © is 0xA9 in the classic MP4 metadata keys
+  const A9='\u00A9';
+  const wanted={ [A9+'nam']:'title', [A9+'ART']:'artist', 'aART':'artist' };
+  for(let i=0;i+8<buf.length;i++){
+    // read a 4-char atom name at i
+    const name=String.fromCharCode(buf[i],buf[i+1],buf[i+2],buf[i+3]);
+    const which=wanted[name];
+    if(!which) continue;
+    // the atom size is the 4 bytes BEFORE the name
+    const atomStart=i-4;
+    if(atomStart<0) continue;
+    const atomSize=u32(atomStart);
+    if(atomSize<16 || atomStart+atomSize>buf.length) continue;
+    // inside: expect a 'data' sub-atom: [size(4)][ 'data'(4) ][type(4)][locale(4)][payload...]
+    // find 'data' within this atom
+    let j=i+4;
+    const atomEnd=atomStart+atomSize;
+    while(j+8<atomEnd){
+      if(buf[j]===0x64&&buf[j+1]===0x61&&buf[j+2]===0x74&&buf[j+3]===0x61){ // "data"
+        const dataSize=u32(j-4);
+        const payloadStart=j+4+8;   // skip 'data' + type(4) + locale(4)
+        const payloadEnd=Math.min(j-4+dataSize, atomEnd);
+        if(payloadEnd>payloadStart){
+          try{ const val=dec.decode(buf.subarray(payloadStart,payloadEnd)).replace(/\u0000+$/,'').trim();
+               if(val && !res[which]) res[which]=val; }catch(_){}
+        }
+        break;
+      }
+      j++;
+    }
+  }
+  return res;
 }
 function decodeFrame(bytes){
   if(!bytes.length)return '';
@@ -442,13 +502,24 @@ function renderResults(){
       }else if(cands.length>1){
         const opts=cands.map(c=>{
           const val=(c.track.title||'').trim().toLowerCase()+'|'+(c.track.artist||'').trim().toLowerCase();
-          const label=(c.track.artist?c.track.artist+' - ':'')+(c.track.title||'')+(c.track.path?'  ·  '+c.track.path.split(/[\\/]/).pop():'');
+          // Derive artist/title with filename fallback so every version reads clearly.
+          const fname=c.track.path?c.track.path.split(/[\\/]/).pop():'';
+          const base=fname.replace(/\.[^.]+$/,'');
+          const fnParts=base.split(' - ');
+          let art=c.track.artist||''; if(!art && fnParts.length>=2)art=fnParts[0].trim(); if(!art)art=r.s.artist||'';
+          let ti=c.track.title||''; if(!ti)ti=(fnParts.length>=2?fnParts.slice(1).join(' - '):base).trim();
+          const label=(art?art+' - ':'')+ti+(fname?'  ·  '+fname:'');
           const sel=(c===chosen)?'selected':'';
           return `<option value="${esc(val)}" ${sel}>${esc(label)}</option>`;
         }).join('');
         picker=`<select class="verpick" data-key="${esc(key)}" onchange="pickVersion(this)">${opts}</select>${remembered?'<span class="pill ok" style="margin-left:6px">saved</span>':`<span class="stat" style="margin-left:6px">${cands.length} versions</span>`}`;
       }else{
-        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((chosen.track.artist?chosen.track.artist+' - ':'')+(chosen.track.title||''))}</span>`;
+        const fname=chosen.track.path?chosen.track.path.split(/[\\/]/).pop():'';
+        const base=fname.replace(/\.[^.]+$/,'');
+        const fnParts=base.split(' - ');
+        let art=chosen.track.artist||''; if(!art && fnParts.length>=2)art=fnParts[0].trim(); if(!art)art=r.s.artist||'';
+        let ti=chosen.track.title||''; if(!ti)ti=(fnParts.length>=2?fnParts.slice(1).join(' - '):base).trim();
+        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((art?art+' - ':'')+ti)}</span>`;
       }
       return `<div class="song">
         <span class="dot ok"></span>
