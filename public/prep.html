@@ -79,7 +79,7 @@
         <span class="stat" id="folder-stat"></span>
       </div>
       <div class="bar" id="scan-bar" style="display:none"><i style="width:0%"></i></div>
-      <p class="note">Folder scanning works best in Chrome or Edge. Music videos (.m4v, .mov) are picked up too and labelled 🎬 — point this at your video folder (e.g. ~/Movies) to include them.</p>
+      <p class="note">Folder scanning works best in Chrome or Edge. Music videos (.mp4, .m4v, .mov) are picked up too and labelled 🎬 — point this at your video folder (e.g. ~/Movies) to include them.</p>
       <p class="note" id="safari-note" style="display:none;color:var(--muted)"></p>
       <p class="note" id="lib-status" style="color:var(--neon)"></p>
       <p class="note"><a href="#" onclick="clearSavedLibrary();return false" style="color:var(--muted)">Forget my saved library</a></p>
@@ -307,20 +307,22 @@ async function scanFiles(files, fsapi){
   const isSafari=/^((?!chrome|android|crios|edg).)*safari/i.test(navigator.userAgent);
   const CONCURRENCY = isSafari ? 48 : 24;
   async function handleOne(f){
-    const isVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);
-    let title='', artist='';
+    const extVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);   // unambiguous video extensions
+    const maybeMp4=/\.mp4$/i.test(f.path);               // .mp4 could be audio OR video — detect from content
+    let title='', artist='', detectedVid=false;
     try{
       const blob = fsapi ? await f.handle.getFile() : f.file;   // cheap: gives us size + lastModified
       const prev=prevByPath[f.path];
       // INCREMENTAL: if we've seen this exact file before (same size + modified time), reuse its tags.
       if(prev && prev.size===blob.size && prev.mtime===blob.lastModified){
-        newLib.push({title:prev.title,artist:prev.artist,path:f.path,video:isVid,size:blob.size,mtime:blob.lastModified});
+        newLib.push({title:prev.title,artist:prev.artist,path:f.path,video:!!prev.video,size:blob.size,mtime:blob.lastModified});
         reused++; done++; tick(); return;
       }
       const tags = await readTags(blob);      // only read tags for new/changed files
       readCount++;
       title=(tags.title||'').trim();
       artist=(tags.artist||'').trim();
+      if(tags.video) detectedVid=true;        // MP4 with a real video track
       var _size=blob.size, _mtime=blob.lastModified;
     }catch(_){ var _size=0, _mtime=0; }
     if(!title){ // fall back to filename "Artist - Title"
@@ -329,6 +331,7 @@ async function scanFiles(files, fsapi){
       if(parts.length>=2){ artist=artist||parts[0].trim(); title=parts.slice(1).join(' - ').trim(); }
       else { title=base.trim(); }
     }
+    const isVid = extVid || (maybeMp4 && detectedVid) || detectedVid;
     newLib.push({title,artist,path:f.path,video:isVid,size:_size,mtime:_mtime});
     done++; tick();
   }
@@ -381,14 +384,17 @@ async function readTags(blob){
     }
     // ---- MP4 / M4A / MP4 video (atoms) ----
     const isMp4 = head.length>12 && head[4]===0x66&&head[5]===0x74&&head[6]===0x79&&head[7]===0x70; // "ftyp"
-    if((!out.title||!out.artist) && isMp4){
+    if((!out.title||!out.artist||out.video===undefined) && isMp4){
+      // Detect a video track: MP4 stores an 'hdlr' atom with handler type 'vide' for video.
+      if(mp4HasVideoTrack(head)) out.video=true;
       let mp4=parseMp4Tags(head);
       out.title=out.title||mp4.title;
       out.artist=out.artist||mp4.artist;
       // If the small head missed it, try a slightly larger head (moov near front but >16KB).
-      if((!out.title||!out.artist) && blob.size>head.length){
+      if((!out.title||!out.artist||out.video===undefined) && blob.size>head.length){
         try{
           const bigHead=new Uint8Array(await blob.slice(0, 256*1024).arrayBuffer());
+          if(out.video===undefined && mp4HasVideoTrack(bigHead)) out.video=true;
           const mp4h=parseMp4Tags(bigHead);
           out.title=out.title||mp4h.title;
           out.artist=out.artist||mp4h.artist;
@@ -399,6 +405,7 @@ async function readTags(blob){
       if((!out.title||!out.artist) && blob.size>256*1024 && blob.size < 200*1024*1024){
         try{
           const tailBuf=new Uint8Array(await blob.slice(Math.max(0, blob.size-512*1024)).arrayBuffer());
+          if(out.video===undefined && mp4HasVideoTrack(tailBuf)) out.video=true;
           const mp4b=parseMp4Tags(tailBuf);
           out.title=out.title||mp4b.title;
           out.artist=out.artist||mp4b.artist;
@@ -415,6 +422,19 @@ async function readTags(blob){
     }
   }catch(_){}
   return out;
+}
+/* Detect whether an MP4 buffer contains a video track. MP4 declares each track's
+   type in an 'hdlr' atom; a video track's handler type is 'vide'. We scan for the
+   'vide' handler that appears shortly after an 'hdlr' marker. */
+function mp4HasVideoTrack(buf){
+  for(let i=0;i+16<buf.length;i++){
+    if(buf[i]===0x68&&buf[i+1]===0x64&&buf[i+2]===0x6c&&buf[i+3]===0x72){ // "hdlr"
+      // layout after 'hdlr': version/flags(4) + pre_defined(4) + handler_type(4)
+      const h=i+12;
+      if(h+4<=buf.length && buf[h]===0x76&&buf[h+1]===0x69&&buf[h+2]===0x64&&buf[h+3]===0x65) return true; // "vide"
+    }
+  }
+  return false;
 }
 /* Parse MP4/M4A metadata atoms. Looks for the iTunes-style tags inside 'ilst':
    ©nam = title, ©ART = artist, aART = album artist. Each holds a 'data' sub-atom
