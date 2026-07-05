@@ -108,7 +108,7 @@
 <script>
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
-let WED=null, LIB=[], SRC='folder', PICKS={}, LIB_NAME='';   // LIB = [{title,artist,path}]; PICKS = remembered versions
+let WED=null, LIB=[], SRC='folder', PICKS={}, LIB_NAME='', PREV_LIB=[];   // PREV_LIB = last saved lib (with size/mtime) for incremental rescans
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function loadPicks(){ try{ const d=await (await fetch('/api/prep/picks',{credentials:'same-origin'})).json(); PICKS=d.picks||{}; }catch(e){ PICKS={}; } }
 async function savePick(key, chosen){
@@ -120,7 +120,7 @@ async function saveLibrary(name){
   if(!LIB.length){ showLibStatus('Nothing to save yet — scan a folder first.'); return; }
   showLibStatus('Saving your library…');
   try{
-    const payload={library:{name:name||'library', tracks:LIB.map(t=>{ const o={t:t.title,a:t.artist,p:t.path}; if(t.video)o.v=1; return o; })}};
+    const payload={library:{name:name||'library', tracks:LIB.map(t=>{ const o={t:t.title,a:t.artist,p:t.path}; if(t.video)o.v=1; if(t.size)o.s=t.size; if(t.mtime)o.m=t.mtime; return o; })}};
     const r=await fetch('/api/prep/library',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});
     if(r.ok){ const d=await r.json(); showLibStatus('✓ Saved '+d.count+' tracks to your account (syncs across your devices).'); }
     else if(r.status===401||r.status===403){ showLibStatus('Not saved — please log in on the main site, then reopen Prep.'); }
@@ -132,7 +132,8 @@ async function loadSavedLibrary(){
   try{
     const d=await (await fetch('/api/prep/library',{credentials:'same-origin'})).json();
     if(d.library && Array.isArray(d.library.tracks) && d.library.tracks.length){
-      LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',path:t.p||'',video:!!t.v}));
+      LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',path:t.p||'',video:!!t.v,size:t.s||0,mtime:t.m||0}));
+      PREV_LIB=LIB.slice();   // remember for incremental rescan
       LIB_NAME=d.library.name||'library';
       return true;
     }
@@ -295,42 +296,57 @@ async function scanFiles(files, fsapi){
   const stat=document.getElementById('folder-stat');
   const bar=document.getElementById('scan-bar'); bar.style.display='block';
   const barI=bar.querySelector('i');
-  LIB=[];
-  let done=0;
+  const newLib=[];
+  let done=0, reused=0, readCount=0;
   const total=files.length;
   const t0=Date.now();
-  // Safari's file reads carry more per-call overhead, so push concurrency higher there.
+  // Build a lookup of the previously-saved library by path, so unchanged files can be reused.
+  const prevByPath={};
+  for(const t of (PREV_LIB||[])){ if(t.path) prevByPath[t.path]=t; }
   const isSafari=/^((?!chrome|android|crios|edg).)*safari/i.test(navigator.userAgent);
   const CONCURRENCY = isSafari ? 48 : 24;
   async function handleOne(f){
+    const isVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);
     let title='', artist='';
     try{
-      const blob = fsapi ? await f.handle.getFile() : f.file;
-      const tags = await readTags(blob);
+      const blob = fsapi ? await f.handle.getFile() : f.file;   // cheap: gives us size + lastModified
+      const prev=prevByPath[f.path];
+      // INCREMENTAL: if we've seen this exact file before (same size + modified time), reuse its tags.
+      if(prev && prev.size===blob.size && prev.mtime===blob.lastModified){
+        newLib.push({title:prev.title,artist:prev.artist,path:f.path,video:isVid,size:blob.size,mtime:blob.lastModified});
+        reused++; done++; tick(); return;
+      }
+      const tags = await readTags(blob);      // only read tags for new/changed files
+      readCount++;
       title=(tags.title||'').trim();
       artist=(tags.artist||'').trim();
-    }catch(_){}
+      var _size=blob.size, _mtime=blob.lastModified;
+    }catch(_){ var _size=0, _mtime=0; }
     if(!title){ // fall back to filename "Artist - Title"
       const base=f.path.split('/').pop().replace(/\.[^.]+$/,'');
       const parts=base.split(' - ');
       if(parts.length>=2){ artist=artist||parts[0].trim(); title=parts.slice(1).join(' - ').trim(); }
       else { title=base.trim(); }
     }
-    const isVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);
-    LIB.push({title,artist,path:f.path,video:isVid});
-    done++;
+    newLib.push({title,artist,path:f.path,video:isVid,size:_size,mtime:_mtime});
+    done++; tick();
+  }
+  function tick(){
     if(done%50===0||done===total){
       barI.style.width=Math.round(done/total*100)+'%';
-      const rate=done/Math.max(1,(Date.now()-t0)/1000);
-      const eta=rate>0?Math.round((total-done)/rate):0;
-      stat.textContent=done+' / '+total+' files'+(eta>2?'  ·  ~'+fmtTime(eta)+' left':'');
+      const rate=readCount/Math.max(0.001,(Date.now()-t0)/1000);   // ETA based on files actually read
+      const remainingReads=total-done;   // upper bound; reused files are near-instant
+      const eta=rate>0?Math.round(remainingReads/Math.max(rate, remainingReads/60)):0;
+      stat.textContent=done+' / '+total+' files'+(reused?'  ·  '+reused+' unchanged':'')+(eta>2&&readCount>5?'  ·  ~'+fmtTime(eta)+' left':'');
     }
   }
   for(let i=0;i<files.length;i+=CONCURRENCY){
     await Promise.all(files.slice(i,i+CONCURRENCY).map(handleOne));
     if(i % (CONCURRENCY*4) === 0) await new Promise(r=>setTimeout(r));   // yield occasionally so the bar paints
   }
-  stat.textContent=LIB.length+' tracks in your library';
+  LIB=newLib;
+  PREV_LIB=newLib;
+  stat.textContent=LIB.length+' tracks'+(reused?' ('+reused+' unchanged, '+readCount+' newly read)':'');
   bar.style.display='none';
   renderResults();
   saveLibrary(LIB_NAME || (DIR_HANDLE && DIR_HANDLE.name) || 'library');   // sync to account
