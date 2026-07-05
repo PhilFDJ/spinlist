@@ -71,6 +71,7 @@
       <p class="lead" style="margin-top:0">Point Spinlist at the folder your music lives in. It reads the tags (title &amp; artist) from your MP3/MP4/M4A files to find matches.</p>
       <div class="row">
         <button class="btn" id="pick-folder">Choose music folder</button>
+        <button class="btn ghost" id="rescan-folder" style="display:none">🔄 Rescan <span id="rescan-name"></span></button>
         <input type="file" id="folder-input" webkitdirectory directory multiple accept="audio/*,video/mp4,.mp3,.m4a,.mp4,.aac,.flac,.wav">
         <span class="stat" id="folder-stat"></span>
       </div>
@@ -165,24 +166,54 @@ function chosenFor(req){
 }
 
 /* ---------- folder scan ---------- */
+/* ---- persist the chosen directory handle (Chrome/Edge) in IndexedDB ---- */
+let DIR_HANDLE=null;
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('spinlist-prep',1); r.onupgradeneeded=()=>r.result.createObjectStore('kv'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbSet(k,v){ try{ const db=await idb(); return await new Promise((res)=>{ const t=db.transaction('kv','readwrite'); t.objectStore('kv').put(v,k); t.oncomplete=()=>res(); t.onerror=()=>res(); }); }catch(e){} }
+async function idbGet(k){ try{ const db=await idb(); return await new Promise((res)=>{ const t=db.transaction('kv','readonly'); const rq=t.objectStore('kv').get(k); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>res(null); }); }catch(e){ return null; } }
+
+async function collectFromHandle(dir){
+  const files=[];
+  async function walk(handle,prefix){
+    for await (const [name,h] of handle.entries()){
+      if(h.kind==='directory'){ await walk(h, prefix+name+'/'); }
+      else if(/\.(mp3|m4a|mp4|aac|flac|wav|aiff?)$/i.test(name)){ files.push({handle:h, path:prefix+name}); }
+    }
+  }
+  await walk(dir,'');
+  return files;
+}
+async function scanFromHandle(dir){
+  // Ensure we still have read permission (re-prompts once if needed).
+  if(dir.queryPermission){
+    let perm=await dir.queryPermission({mode:'read'});
+    if(perm!=='granted' && dir.requestPermission) perm=await dir.requestPermission({mode:'read'});
+    if(perm!=='granted'){ document.getElementById('folder-stat').textContent='Permission needed to read that folder.'; return; }
+  }
+  const files=await collectFromHandle(dir);
+  await scanFiles(files, true);
+}
+function showRescan(name){
+  const b=document.getElementById('rescan-folder');
+  if(name){ document.getElementById('rescan-name').textContent=name; b.style.display='inline-flex'; }
+  else b.style.display='none';
+}
+
 document.getElementById('pick-folder').onclick=async()=>{
-  // Prefer File System Access API (Chrome/Edge) for clean paths; fallback to input.
   if(window.showDirectoryPicker){
     try{
       const dir=await window.showDirectoryPicker();
-      const files=[];
-      async function walk(handle,prefix){
-        for await (const [name,h] of handle.entries()){
-          if(h.kind==='directory'){ await walk(h, prefix+name+'/'); }
-          else if(/\.(mp3|m4a|mp4|aac|flac|wav|aiff?)$/i.test(name)){ files.push({handle:h, path:prefix+name}); }
-        }
-      }
-      await walk(dir,'');
-      await scanFiles(files, true);
+      DIR_HANDLE=dir;
+      await idbSet('dirHandle', dir);           // remember across sessions
+      showRescan(dir.name);
+      await scanFromHandle(dir);
       return;
     }catch(e){ if(e && e.name==='AbortError')return; /* fall through to input */ }
   }
   document.getElementById('folder-input').click();
+};
+document.getElementById('rescan-folder').onclick=async()=>{
+  if(DIR_HANDLE){ await scanFromHandle(DIR_HANDLE); }
 };
 document.getElementById('folder-input').onchange=async(e)=>{
   const files=[...e.target.files].filter(f=>/\.(mp3|m4a|mp4|aac|flac|wav|aiff?)$/i.test(f.name))
@@ -379,6 +410,11 @@ async function loadWed(){
     document.title='Prep · '+(WED.coupleNames||WED.name||'Spinlist');
     await loadPicks();
     renderResults();
+    // If we remembered a folder from a previous session, offer a one-click rescan.
+    try{
+      const saved=await idbGet('dirHandle');
+      if(saved){ DIR_HANDLE=saved; showRescan(saved.name); document.getElementById('folder-stat').textContent='Tap “Rescan” to reload “'+saved.name+'”.'; }
+    }catch(e){}
   }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the wedding.</p></div>'; }
 }
 loadWed();
