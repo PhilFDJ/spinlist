@@ -30,6 +30,7 @@
   .row.tl .lbl{color:#fff;font-size:1rem}
   .song{display:flex;gap:8px;align-items:center;padding:5px 0;font-size:1rem;color:#fff}
   .song .tick{width:16px;color:#3a4560;font-weight:800;flex-shrink:0}
+  .song .pos{flex-shrink:0}
   .song .tick.done{color:var(--neon)}
   .song .stitle{flex:1}
   .song .copybtn{cursor:pointer;opacity:.7;flex-shrink:0;font-size:.9rem}
@@ -59,6 +60,7 @@
 <script>
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
+const EID=params.get('e');
 let LAST_ANSWERS={};
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 let WED=null, TAB='info';
@@ -132,6 +134,7 @@ async function saveAnswer(qid,val){
   }catch(e){ document.getElementById('updated').textContent='Save failed'; }
 }
 async function load(){
+  if(EID){ return loadEvent(); }
   const main=document.getElementById('main');
   // Prefer seeded data handed over by the opener (always matches the in-page window).
   if(window.__SEED_WEDDING){ try{ paint(window.__SEED_WEDDING); }catch(e){} }
@@ -143,6 +146,56 @@ async function load(){
     const d=await r.json();
     if(d&&d.wedding)paint(d.wedding);
   }catch(e){ if(!window.__SEED_WEDDING)main.innerHTML='<div class="status">Connection problem — will retry.</div>'; }
+}
+
+/* ---- Event mode (voted song list) ---- */
+let EV=null, EV_SORT='voted';
+function setEvSort(m){ EV_SORT=m; document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('on',el.dataset.tab===m)); renderEvent(); }
+function evTracks(){
+  const list=(EV.tracks||[]).slice();
+  if(EV_SORT==='newest')return list.sort((a,b)=>(b.addedAt||0)-(a.addedAt||0));
+  if(EV_SORT==='oldest')return list.sort((a,b)=>(a.addedAt||0)-(b.addedAt||0));
+  return list.sort((a,b)=>b.votes-a.votes);
+}
+function renderEvent(){
+  const main=document.getElementById('main');
+  const list=evTracks();
+  if(!list.length){ main.innerHTML='<div class="status">No songs voted yet.</div>'; return; }
+  main.innerHTML=list.map((t,i)=>{
+    const copyTxt=(t.title||'')+(t.artist?' '+t.artist:'');
+    return '<div class="song">'+
+      '<span class="pos" style="color:#8b93a7;font-weight:800;width:20px;text-align:right;font-size:.8rem;flex-shrink:0">'+(EV_SORT==='voted'?(i+1):'•')+'</span>'+
+      '<span class="tick '+(t.played?'done':'')+'" onclick="evPlayed(\''+esc(t.id)+'\','+(t.played?0:1)+')" style="cursor:pointer">'+(t.played?'✓':'○')+'</span>'+
+      '<span class="stitle'+(t.played?' pl':'')+'" onclick="evPlayed(\''+esc(t.id)+'\','+(t.played?0:1)+')" style="cursor:pointer">'+esc(t.title||'')+(t.artist?' <span class="art">· '+esc(t.artist)+'</span>':'')+'</span>'+
+      '<span class="art" style="color:var(--neon);font-weight:700;font-size:.8rem">'+t.votes+'</span>'+
+      '<span class="copybtn" title="Copy title & artist" onclick="copySong(this,\''+esc(copyTxt).replace(/\'/g,"\\'")+'\')">📋</span>'+
+    '</div>';
+  }).join('');
+  document.getElementById('updated').textContent='Updated '+new Date().toLocaleTimeString();
+}
+async function evPlayed(id,played){
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EID)+'/played',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({trackId:id,played:!!played})});
+    if(r.ok){ const d=await r.json(); if(d&&d.event){ EV=d.event; renderEvent(); document.getElementById('updated').textContent='Saved '+new Date().toLocaleTimeString(); } }
+    else{ document.getElementById('updated').textContent='Save failed'; }
+  }catch(e){ document.getElementById('updated').textContent='Save failed'; }
+}
+async function loadEvent(){
+  const main=document.getElementById('main');
+  // Swap the tab bar to sort options (once).
+  const tabs=document.querySelector('.tabs');
+  if(tabs && !tabs.dataset.ev){ tabs.dataset.ev='1';
+    tabs.innerHTML='<span class="tab on" data-tab="voted" onclick="setEvSort(\'voted\')">Top voted</span>'+
+      '<span class="tab" data-tab="newest" onclick="setEvSort(\'newest\')">Newest</span>'+
+      '<span class="tab" data-tab="oldest" onclick="setEvSort(\'oldest\')">Oldest</span>';
+  }
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EID),{credentials:'same-origin'});
+    if(r.status===401||r.status===403){ main.innerHTML='<div class="status">Please <a href="/" style="color:var(--neon)">log in</a> on the main site, then reopen this window.</div>'; return; }
+    if(!r.ok){ main.innerHTML='<div class="status">Could not load this event.</div>'; return; }
+    const d=await r.json();
+    if(d&&d.event){ EV=d.event; document.getElementById('wed-name').textContent=EV.name||'Event'; document.getElementById('wed-date').textContent=''; document.title='📺 '+(EV.name||'Event')+' · Spinlist'; renderEvent(); }
+  }catch(e){ main.innerHTML='<div class="status">Connection problem — will retry.</div>'; }
 }
 load();
 setInterval(load,30000);   // auto-refresh every 30s

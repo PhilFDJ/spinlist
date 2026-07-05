@@ -257,7 +257,11 @@
       </div>
       <div class="panel">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-          <h3 style="font-size:1.2rem">Live leaderboard</h3><span style="color:var(--muted);font-size:.85rem" id="total-votes"></span>
+          <h3 style="font-size:1.2rem">Live leaderboard</h3>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="color:var(--muted);font-size:.85rem" id="total-votes"></span>
+            <button class="btn btn-ghost" style="padding:7px 14px;font-size:.82rem" onclick="openEventGig()">📺 Gig window</button>
+          </div>
         </div>
         <div id="sort-toggle" style="display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;margin-bottom:14px;width:fit-content">
           <button class="seg-btn on" data-s="voted" onclick="setSort('voted')">Top voted</button>
@@ -398,6 +402,7 @@
   </div>
 </div>
 <footer class="wrap">Spinlist — search is powered by the live Spotify Web API via your backend proxy.<br>Voting state here is per-browser; add a shared backend store to sync guests in real time.</footer>
+<div id="ev-gig-window" style="display:none;position:fixed;top:90px;right:20px;width:360px;max-width:calc(100vw - 40px);max-height:75vh;background:#0b1020;border:2px solid var(--neon);border-radius:16px;box-shadow:0 16px 50px rgba(0,0,0,.6);z-index:290;flex-direction:column;overflow:hidden"></div>
 
 <script>
 /* ============================================================
@@ -748,6 +753,64 @@ function sortTracks(){
 }
 function setSort(m){sortMode=m;renderLeaderboard('leaderboard');
   document.querySelectorAll('#sort-toggle button').forEach(b=>b.classList.toggle('on',b.dataset.s===m));}
+
+/* ---------- Event Gig Window ---------- */
+let EV_GIG_SORT='voted';
+function eventGigTracks(){
+  const list=Object.values(EVENT.tracks);
+  if(EV_GIG_SORT==='newest')return list.sort((a,b)=>(b.addedAt||0)-(a.addedAt||0));
+  if(EV_GIG_SORT==='oldest')return list.sort((a,b)=>(a.addedAt||0)-(b.addedAt||0));
+  return list.sort((a,b)=>b.votes-a.votes);
+}
+function setEvGigSort(m){EV_GIG_SORT=m;renderEventGig();}
+function openEventGig(){ if(!EVENT)return; renderEventGig(); document.getElementById('ev-gig-window').style.display='flex'; }
+function renderEventGig(){
+  const gw=document.getElementById('ev-gig-window');if(!gw||!EVENT)return;
+  const list=eventGigTracks();
+  const rows=list.length?list.map((t,i)=>`<div style="display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
+      <span style="color:#8b93a7;font-weight:800;width:20px;text-align:right;font-size:.8rem;flex-shrink:0">${EV_GIG_SORT==='voted'?(i+1):'•'}</span>
+      <span onclick="evGigPlayed('${t.id}')" title="Mark played" style="color:${t.played?'var(--neon)':'#3a4560'};font-weight:800;width:16px;cursor:pointer;flex-shrink:0">${t.played?'✓':'○'}</span>
+      <span onclick="evGigPlayed('${t.id}')" style="flex:1;color:${t.played?'#8b93a7':'#fff'};font-size:.9rem;cursor:pointer;${t.played?'text-decoration:line-through':''}">${esc(t.title||'')}${t.artist?` <span style="color:#8b93a7">· ${esc(t.artist)}</span>`:''}</span>
+      <span style="color:var(--neon);font-size:.78rem;font-weight:700;flex-shrink:0">${t.votes}</span>
+      <span onclick="evGigCopy(this,${JSON.stringify((t.title||'')+(t.artist?' '+t.artist:'')).replace(/"/g,'&quot;')})" title="Copy title & artist" style="cursor:pointer;font-size:.85rem;flex-shrink:0;opacity:.7">📋</span>
+    </div>`).join(''):'<div style="padding:24px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No songs voted yet.</div>';
+  const seg=(id,label)=>`<span onclick="setEvGigSort('${id}')" style="flex:1;text-align:center;padding:7px 4px;font-size:.76rem;font-weight:700;cursor:pointer;border-bottom:2px solid ${EV_GIG_SORT===id?'var(--neon)':'transparent'};color:${EV_GIG_SORT===id?'#fff':'#8b93a7'}">${label}</span>`;
+  gw.innerHTML=`
+    <div id="ev-gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
+      <b style="font-size:.95rem;display:flex;align-items:center;gap:8px"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" style="height:18px;width:auto"><span>📺 ${esc(EVENT.name||'Event')}</span></b>
+      <div style="display:flex;gap:8px">
+        <span onclick="popOutEventGig()" title="Pop out" style="cursor:pointer;font-weight:800">⤢</span>
+        <span onclick="renderEventGig()" title="Refresh" style="cursor:pointer;font-weight:800">⟳</span>
+        <span onclick="document.getElementById('ev-gig-window').style.display='none'" title="Close" style="cursor:pointer;font-weight:800">✕</span>
+      </div>
+    </div>
+    <div style="display:flex;background:#0a1020;border-bottom:1px solid rgba(255,255,255,.08)">${seg('voted','Top voted')}${seg('newest','Newest')}${seg('oldest','Oldest')}</div>
+    <div style="overflow:auto">${rows}</div>`;
+  makeEvGigDraggable();
+}
+async function evGigPlayed(id){ await togglePlayed(id); renderEventGig(); }
+async function evGigCopy(el,text){
+  try{ await navigator.clipboard.writeText(text); }
+  catch(e){ const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}document.body.removeChild(ta); }
+  if(el){ const o=el.textContent; el.textContent='✓'; setTimeout(()=>{el.textContent=o;},900); }
+  toast('Copied: '+text);
+}
+function popOutEventGig(){
+  if(!EVENT)return;
+  const w=window.open('/gig.html?e='+encodeURIComponent(EVENT.id),'evgig_'+EVENT.id,'width=420,height=640');
+  if(!w){ toast('Pop-up blocked — showing here. Allow pop-ups for a separate window.'); return; }
+  const gw=document.getElementById('ev-gig-window');if(gw)gw.style.display='none';
+  w.focus();
+}
+function makeEvGigDraggable(){
+  const gw=document.getElementById('ev-gig-window');const head=document.getElementById('ev-gig-head');if(!gw||!head)return;
+  let dx=0,dy=0,drag=false;
+  const down=e=>{drag=true;const p=e.touches?e.touches[0]:e;const r=gw.getBoundingClientRect();dx=p.clientX-r.left;dy=p.clientY-r.top;gw.style.right='auto';e.preventDefault();};
+  const move=e=>{if(!drag)return;const p=e.touches?e.touches[0]:e;gw.style.left=Math.max(0,Math.min(window.innerWidth-60,p.clientX-dx))+'px';gw.style.top=Math.max(0,Math.min(window.innerHeight-40,p.clientY-dy))+'px';};
+  const up=()=>{drag=false;};
+  head.onmousedown=down;document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+  head.ontouchstart=down;document.addEventListener('touchmove',move,{passive:false});document.addEventListener('touchend',up);
+}
 
 /* ---------- DASHBOARD ---------- */
 let cdTimer;
