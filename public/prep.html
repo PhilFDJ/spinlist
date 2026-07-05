@@ -42,6 +42,7 @@
   .pill{font-size:.72rem;font-weight:800;padding:2px 8px;border-radius:20px}
   .pill.ok{background:rgba(57,217,138,.15);color:var(--ok)}
   .pill.miss{background:rgba(255,107,94,.15);color:var(--miss)}
+  .pill.vid{background:rgba(123,108,255,.18);color:var(--plum);margin-left:6px;white-space:nowrap}
   .status{color:var(--muted);font-size:.9rem;padding:8px 0}
   input[type=file]{display:none}
   .note{font-size:.82rem;color:var(--muted);margin-top:8px}
@@ -87,6 +88,7 @@
       <p class="lead" style="margin-top:0">Export your library from your DJ app, then load the file here:</p>
       <ul class="lead" style="margin-top:0;font-size:.88rem">
         <li><b>iTunes / Music:</b> File › Library › Export Library… (an .xml file)</li>
+        <li><b>Apple TV app (music videos):</b> File › Library › Export Library… — video results are labelled 🎬</li>
         <li><b>Rekordbox:</b> File › Export Collection in xml format</li>
         <li><b>Serato / other:</b> export or save a crate as .m3u / .m3u8</li>
       </ul>
@@ -118,7 +120,7 @@ async function saveLibrary(name){
   if(!LIB.length){ showLibStatus('Nothing to save yet — scan a folder first.'); return; }
   showLibStatus('Saving your library…');
   try{
-    const payload={library:{name:name||'library', tracks:LIB.map(t=>({t:t.title,a:t.artist,p:t.path}))}};
+    const payload={library:{name:name||'library', tracks:LIB.map(t=>{ const o={t:t.title,a:t.artist,p:t.path}; if(t.video)o.v=1; return o; })}};
     const r=await fetch('/api/prep/library',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});
     if(r.ok){ const d=await r.json(); showLibStatus('✓ Saved '+d.count+' tracks to your account (syncs across your devices).'); }
     else if(r.status===401||r.status===403){ showLibStatus('Not saved — please log in on the main site, then reopen Prep.'); }
@@ -130,7 +132,7 @@ async function loadSavedLibrary(){
   try{
     const d=await (await fetch('/api/prep/library',{credentials:'same-origin'})).json();
     if(d.library && Array.isArray(d.library.tracks) && d.library.tracks.length){
-      LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',path:t.p||''}));
+      LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',path:t.p||'',video:!!t.v}));
       LIB_NAME=d.library.name||'library';
       return true;
     }
@@ -435,18 +437,23 @@ document.getElementById('library-input').onchange=async(e)=>{
 };
 function parseITunes(xml){
   const out=[]; const doc=new DOMParser().parseFromString(xml,'application/xml');
-  // iTunes Library.xml: <dict> entries with <key>Name</key><string>… and <key>Artist</key>…
-  const dicts=doc.querySelectorAll('dict > dict, plist > dict > dict');
+  // iTunes / Music / TV Library.xml: <dict> entries with <key>Name</key><string>… etc.
   doc.querySelectorAll('dict').forEach(d=>{
-    let name='',artist='',loc='';
+    let name='',artist='',loc='',hasVideo=false,kind='';
     const kids=[...d.children];
     for(let i=0;i<kids.length-1;i++){
       if(kids[i].tagName==='key'){
-        const k=kids[i].textContent, v=kids[i+1].textContent;
-        if(k==='Name')name=v; else if(k==='Artist')artist=v; else if(k==='Location')loc=v;
+        const k=kids[i].textContent, valNode=kids[i+1], v=valNode.textContent;
+        if(k==='Name')name=v;
+        else if(k==='Artist')artist=v;
+        else if(k==='Location')loc=v;
+        else if(k==='Kind')kind=v;
+        else if(k==='Has Video'||k==='Movie'||k==='Music Video'||k==='HD'){ if(valNode.tagName==='true')hasVideo=true; }
       }
     }
-    if(name){ out.push({title:name,artist,path:decodeURIComponent((loc||'').replace(/^file:\/\/+/,'/'))}); }
+    // Also treat obvious video file extensions / kinds as video.
+    const isVideo = hasVideo || /video/i.test(kind) || /\.(m4v|mov|mp4|avi|mkv)(\?|$)/i.test(loc);
+    if(name){ out.push({title:name,artist,path:decodeURIComponent((loc||'').replace(/^file:\/\/+/,'/')), video:isVideo}); }
   });
   return dedupe(out);
 }
@@ -500,6 +507,7 @@ function renderResults(){
         </div>`;
       }
       const {chosen,cands,remembered,manual}=r.cf;
+      const vidBadge = (chosen && chosen.track && chosen.track.video) ? '<span class="pill vid" title="Music video">🎬 video</span>' : '';
       // Build a dropdown of all candidate versions if more than one.
       let picker;
       if(manual){
@@ -513,7 +521,7 @@ function renderResults(){
           const fnParts=base.split(' - ');
           let art=c.track.artist||''; if(!art && fnParts.length>=2)art=fnParts[0].trim(); if(!art)art=r.s.artist||'';
           let ti=c.track.title||''; if(!ti)ti=(fnParts.length>=2?fnParts.slice(1).join(' - '):base).trim();
-          const label=(art?art+' - ':'')+ti+(fname?'  ·  '+fname:'');
+          const label=(c.track.video?'🎬 ':'')+(art?art+' - ':'')+ti+(fname?'  ·  '+fname:'');
           const sel=(c===chosen)?'selected':'';
           return `<option value="${esc(val)}" ${sel}>${esc(label)}</option>`;
         }).join('');
@@ -529,7 +537,7 @@ function renderResults(){
       return `<div class="song">
         <span class="dot ok"></span>
         <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
-        <span class="pickwrap">${picker}<button class="findbtn" title="Choose a different file" onclick="findFile('${esc(key)}')">📂</button></span>
+        <span class="pickwrap">${picker}${vidBadge}<button class="findbtn" title="Choose a different file" onclick="findFile('${esc(key)}')">📂</button></span>
       </div>`;
     }).join('');
     return `<div class="block">
