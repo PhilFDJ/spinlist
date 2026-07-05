@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DJ &amp; Host Guide · Spinlist</title>
+<link rel="icon" href="/img/favicon-32.png" sizes="32x32">
+<style>
+  :root{--ink:#eaf0ff;--ink-2:#b6c2e0;--paper:#0a1228;--paper-2:#121d3d;--surface:#16234a;--neon:#c6f24e;--neon-dim:#a8d63f;--plum:#5b8cff;--coral:#ff6b5e;--muted:#7e8db5;--line:rgba(180,200,255,.16)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6}
+  .wrap{max-width:820px;margin:0 auto;padding:0 22px}
+  header.bar{background:rgba(10,18,40,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50}
+  .bar .wrap{display:flex;align-items:center;justify-content:space-between;height:74px;max-width:1080px;gap:12px}
+  .logo{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+  .logo-img{height:54px;width:auto;display:block}
+  .bar nav a{color:var(--ink);text-decoration:none;font-weight:600;font-size:.9rem;margin-left:14px}
+  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:11px 20px;cursor:pointer;font-size:.9rem;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:transform .15s}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-neon{background:var(--neon);color:#0a1228}
+  .hero{padding:52px 0 8px}
+  .eyebrow{font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  h1{font-size:2.4rem;margin:10px 0;letter-spacing:-.02em}
+  .lead{color:var(--ink-2);font-size:1.05rem;max-width:640px}
+  .toc{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 26px;margin:28px 0}
+  .toc h2{font-size:.82rem;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+  .toc ol{list-style:none;counter-reset:t;columns:2;column-gap:32px}
+  .toc li{counter-increment:t;margin-bottom:7px;font-size:.94rem}
+  .toc li::before{content:counter(t) ".";color:var(--neon-dim);font-weight:800;margin-right:8px}
+  .toc a{color:var(--ink);text-decoration:none}
+  .toc a:hover{color:var(--neon)}
+  section.sec{padding:30px 0;border-top:1px solid var(--line)}
+  section.sec h2{font-size:1.5rem;margin-bottom:6px;letter-spacing:-.01em}
+  section.sec h3{font-size:1.02rem;margin:18px 0 6px;color:#fff}
+  section.sec p{color:var(--ink-2);margin:8px 0}
+  ul.b,ol.s{margin:8px 0 8px 2px;padding-left:0;list-style:none}
+  ul.b li{position:relative;padding-left:20px;margin:6px 0;color:var(--ink-2)}
+  ul.b li::before{content:"•";color:var(--plum);position:absolute;left:2px;font-weight:800}
+  ol.s{counter-reset:st}
+  ol.s li{counter-increment:st;position:relative;padding-left:26px;margin:6px 0;color:var(--ink-2)}
+  ol.s li::before{content:counter(st);position:absolute;left:0;top:0;color:#0a1228;background:var(--neon);width:19px;height:19px;border-radius:50%;font-size:.72rem;font-weight:800;display:flex;align-items:center;justify-content:center}
+  b,strong{color:var(--ink)}
+  .tip{background:rgba(198,242,78,.08);border-left:3px solid var(--neon);border-radius:8px;padding:12px 16px;margin:14px 0}
+  .tip b{color:#fff}
+  .tip p{margin:2px 0;color:var(--ink-2);font-size:.94rem}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.92rem}
+  th{background:var(--paper-2);text-align:left;padding:10px 12px;color:#fff;font-size:.86rem}
+  td{padding:10px 12px;border-top:1px solid var(--line);color:var(--ink-2);vertical-align:top}
+  td b{color:#fff}
+  .foot{padding:40px 0 60px;color:var(--muted);border-top:1px solid var(--line);margin-top:20px;text-align:center}
+  .foot a{color:var(--neon)}
+  @media(max-width:640px){.toc ol{columns:1}h1{font-size:1.9rem}}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
+  <div id="spinlist-nav"></div>
+  <nav><a href="/account.html">Account</a></nav>
+</div></header>
+<script src="/js/nav.js"></script>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="eyebrow">DJ &amp; Host Guide</div>
+    <h1>Everything Spinlist can do</h1>
+    <p class="lead">Live song voting, music prep, the wedding planner, DJ teams and the gig window — all in one place. Prefer a printable copy? <a href="/downloads/Spinlist-DJ-Guide.pdf" target="_blank" style="color:var(--neon);font-weight:700">Download the PDF →</a></p>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <h2>What's inside</h2>
+    <ol>
+      <li><a href="#s1">Getting started</a></li>
+      <li><a href="#s2">Your plan &amp; billing</a></li>
+      <li><a href="#s3">Running an event</a></li>
+      <li><a href="#s4">Exporting your setlist</a></li>
+      <li><a href="#s5">Branding your events</a></li>
+      <li><a href="#s6">The Wedding Planner</a></li>
+      <li><a href="#s7">Song-choice deadlines</a></li>
+      <li><a href="#s8">The questionnaire</a></li>
+      <li><a href="#s9">Notifications</a></li>
+      <li><a href="#s10">The Gig Window</a></li>
+      <li><a href="#s11">Music Prep &amp; the desktop app</a></li>
+      <li><a href="#s12">Your DJ team</a></li>
+      <li><a href="#s13">Email invites</a></li>
+      <li><a href="#s14">Troubleshooting</a></li>
+    </ol>
+  </nav>
+
+  <section class="sec" id="s1">
+    <h2>1. Getting started</h2>
+    <p>Spinlist lets your guests vote for the songs they want to hear, live, from their phones — and gives you a ranked list to play from. It also includes a full wedding planner and a music-prep tool that matches requests against your own library.</p>
+    <h3>Create your account</h3>
+    <ol class="s">
+      <li>Go to www.spinlist.co.uk and sign up with your email and a password.</li>
+      <li>You start on a free trial that lets you create up to two events so you can try everything.</li>
+      <li>When you're ready, choose a plan from the Pricing page.</li>
+    </ol>
+    <div class="tip"><p><b>Tip</b></p><p>Everything you make — events, weddings, branding, your music library — lives under your account. Log in from any device to pick up where you left off.</p></div>
+  </section>
+
+  <section class="sec" id="s2">
+    <h2>2. Your plan &amp; billing</h2>
+    <p>Spinlist has four paid tiers. You can upgrade, downgrade or cancel any time from Account › Manage billing.</p>
+    <table>
+      <tr><th>Plan</th><th>Best for</th><th>Key features</th></tr>
+      <tr><td><b>BASIC</b></td><td>Solo DJs starting out</td><td>Custom branding · PDF setlist export</td></tr>
+      <tr><td><b>PRO</b></td><td>Working DJs</td><td>Everything in Basic · CSV export · Spotify export · <b>Music Prep</b></td></tr>
+      <tr><td><b>PRO WEDDING</b></td><td>Wedding DJs</td><td>Everything in Pro · Full wedding planner · Email invites</td></tr>
+      <tr><td><b>PRO WEDDING MULTI-OP</b></td><td>DJ agencies / teams</td><td>Everything in Pro Wedding · Add &amp; assign sub-DJs</td></tr>
+    </table>
+    <p style="font-size:.9rem;color:var(--muted)">Payments are handled securely by Stripe. Music Prep is included on every paid tier except Basic.</p>
+  </section>
+
+  <section class="sec" id="s3">
+    <h2>3. Running an event (live song voting)</h2>
+    <h3>Create the event</h3>
+    <ol class="s">
+      <li>From the home screen, tap Create an event.</li>
+      <li>Give it a name, pick the type (wedding, birthday, party, etc.) and set the date.</li>
+      <li>Choose how many votes each guest gets and, if you like, a voting deadline.</li>
+      <li>Save — you'll land on the host dashboard for that event.</li>
+    </ol>
+    <h3>Get guests voting</h3>
+    <ul class="b">
+      <li>Share the event's QR code or link — guests scan it, no app or login needed.</li>
+      <li>Guests search live from Spotify's catalogue and vote for the tracks they want.</li>
+      <li>Your leaderboard ranks songs by votes in real time, so you always know the room.</li>
+    </ul>
+    <h3>On the night</h3>
+    <ul class="b">
+      <li>Work down the ranked list, marking songs played as you go.</li>
+      <li>Guests can keep requesting throughout — the list stays live.</li>
+      <li>Lock or close voting whenever you want the list to stop changing.</li>
+    </ul>
+    <div class="tip"><p><b>Guest requests</b></p><p>Turn on live guest requests so people can suggest tracks on the fly. You'll see who requested what, and can mark requests played once you drop them.</p></div>
+  </section>
+
+  <section class="sec" id="s4">
+    <h2>4. Exporting your setlist</h2>
+    <ul class="b">
+      <li><b>PDF setlist</b> — a clean, branded run-sheet of the voted songs (all paid tiers).</li>
+      <li><b>CSV export</b> — a spreadsheet of the setlist for your records (Pro and above).</li>
+      <li><b>Spotify export</b> — push the voted songs straight into a new Spotify playlist (Pro and above; connect Spotify under Account first).</li>
+    </ul>
+    <div class="tip"><p><b>Branded PDFs</b></p><p>Your event PDF automatically uses your brand colour, logo and tagline in the header. If a sub-DJ runs the event, it still uses your company branding.</p></div>
+  </section>
+
+  <section class="sec" id="s5">
+    <h2>5. Branding your events</h2>
+    <p>Under Account › Branding you can set:</p>
+    <ul class="b">
+      <li>Your logo (shown on guest pages and PDF exports).</li>
+      <li>An accent colour that themes your guest voting page and PDF headers.</li>
+      <li>A short tagline.</li>
+    </ul>
+    <p style="font-size:.9rem;color:var(--muted)">Branding is available on all paid tiers and follows the event owner — so your whole team produces consistently branded material.</p>
+  </section>
+
+  <section class="sec" id="s6">
+    <h2>6. The Wedding Planner</h2>
+    <p>Available on the Pro Wedding tiers, the planner gives you and the couple a shared space to build their day's music.</p>
+    <h3>Set up a wedding</h3>
+    <ol class="s">
+      <li>Create a wedding plan and give it the couple's names and wedding date.</li>
+      <li>Build music blocks (e.g. Ceremony, First Dance, Evening Party), each with a song capacity.</li>
+      <li>Add a timeline of the day and attach a questionnaire from your templates.</li>
+      <li>Share the invite code or link with the couple so they can log in and choose their songs.</li>
+    </ol>
+    <h3>The three tabs</h3>
+    <ul class="b">
+      <li><b>Music</b> — song choices per block, searchable from Spotify.</li>
+      <li><b>Timeline</b> — the running order of the day.</li>
+      <li><b>Questionnaire</b> — key details you need from the couple.</li>
+    </ul>
+    <h3>Handy tools</h3>
+    <ul class="b">
+      <li><b>Preview couple's view</b> — see exactly what the couple sees, read-only.</li>
+      <li><b>Edit answers</b> — fill in the questionnaire on the couple's behalf.</li>
+      <li><b>PDF run-sheet</b> — a branded schedule for the day, in your accent colour with your logo.</li>
+      <li><b>Your DJ card</b> — shows the couple who's DJing, with your photo, bio and links.</li>
+      <li><b>Per-block Spotify export</b> — push a single block's songs to its own playlist.</li>
+      <li><b>Prep</b> — match the couple's chosen songs against your own library (see section 11).</li>
+    </ul>
+    <div class="tip"><p><b>Couples get their own login</b></p><p>Couples sign up with your invite code and see a simple, focused version of the planner — just their music, timeline and questionnaire. No DJ tools, no clutter.</p></div>
+  </section>
+
+  <section class="sec" id="s7">
+    <h2>7. Song-choice deadlines (lock dates)</h2>
+    <p>Give yourself time to prepare by setting a deadline after which the couple can no longer change their choices.</p>
+    <ul class="b">
+      <li>Set a Song choice deadline on the wedding. By default it's 14 days before the wedding.</li>
+      <li>You can override it with your own date, or clear it entirely.</li>
+      <li>After the deadline the couple can't edit songs, timeline or answers — but you always can.</li>
+      <li>The couple sees a friendly reminder before, and a locked notice after.</li>
+      <li>The deadline is included automatically when you copy the invite.</li>
+    </ul>
+  </section>
+
+  <section class="sec" id="s8">
+    <h2>8. The questionnaire</h2>
+    <p>Build reusable questionnaire templates (up to five) under Manage templates. Question types include text, yes/no, single choice, checklist, and section headers.</p>
+    <ul class="b">
+      <li>Attach a template to a wedding and the couple fills it in.</li>
+      <li>Tick <b>Gig window</b> on any question to surface its answer in your live gig window.</li>
+      <li>You can edit the couple's answers yourself at any time.</li>
+    </ul>
+    <div class="tip"><p><b>Re-using templates</b></p><p>Changing a template's gig-window ticks updates your existing weddings automatically — no need to re-apply it to each one.</p></div>
+  </section>
+
+  <section class="sec" id="s9">
+    <h2>9. Notifications</h2>
+    <p>Stay on top of what your couples are doing. When a couple updates their songs, timeline or answers, you're notified.</p>
+    <ul class="b">
+      <li>A bell icon in the planner shows a running history of couple activity.</li>
+      <li>You'll also get a quick pop-up when you open the planner if there's new activity.</li>
+      <li>Notifications go to the wedding's owner account, so log in as the account that owns the wedding to see them.</li>
+    </ul>
+  </section>
+
+  <section class="sec" id="s10">
+    <h2>10. The Gig Window</h2>
+    <p>The gig window is your at-a-glance control panel for the night — the key details, the running order and the music, all in one floating window you can keep beside your decks.</p>
+    <h3>Opening it</h3>
+    <ul class="b">
+      <li>In a wedding, tap <b>Gig window</b> — it opens as its own pop-out window you can drag to a second screen.</li>
+      <li>It stays logged in and refreshes itself during the night.</li>
+    </ul>
+    <h3>Three tabs</h3>
+    <ul class="b">
+      <li><b>Info</b> — the questionnaire answers you flagged for the gig. Tap any field to fill in details you learn on the night.</li>
+      <li><b>Timeline</b> — the running order.</li>
+      <li><b>Music</b> — each block's songs. Tap a song to mark it played, and use the copy button to copy the title &amp; artist into your DJ software.</li>
+    </ul>
+    <div class="tip"><p><b>Keeping it on top</b></p><p>In Chrome or Edge, use Float on top for a true always-on-top window. In Safari it opens as a normal pop-out — use a free Mac utility such as WindowPin or Floaty to pin it above your DJ software.</p></div>
+  </section>
+
+  <section class="sec" id="s11">
+    <h2>11. Music Prep &amp; the desktop app</h2>
+    <p>Prep matches the songs your guests and couples request against your <b>own</b> music library, so you know exactly what you already own and what you still need to find — then exports a playlist for your DJ software. It's included on every paid tier except Basic, and sub-DJs can use it on the weddings and events they're assigned.</p>
+    <h3>Where to find it</h3>
+    <ul class="b">
+      <li>On any event or wedding <b>card</b> in My Events, tap the <b>🎧 Prep</b> button.</li>
+      <li>Inside an open event (the host dashboard) or an open wedding, tap <b>Prep</b> in the action buttons.</li>
+    </ul>
+    <h3>Set up your music library (once)</h3>
+    <p>Prep needs to know what's in your collection. You set this up one time with the free Spinlist desktop app, which scans your music folder and reads each file's real location — so the playlists you export load straight into your DJ software.</p>
+    <ol class="s">
+      <li>From the Prep or Account page, download the desktop app — <b>Download for Mac</b> or <b>Download for Windows</b>.</li>
+      <li>Install it, open it, and log in with your Spinlist email and password.</li>
+      <li>Choose your music folder. The app scans it and syncs the track list to your account.</li>
+      <li>That's it — every event and wedding now matches against your library automatically.</li>
+    </ol>
+    <div class="tip"><p><b>Your privacy</b></p><p>The app only sends your track list and file locations (titles, artists, file paths) to your account — never your actual music files. Your songs never leave your computer.</p></div>
+    <h3>Matching &amp; exporting</h3>
+    <ul class="b">
+      <li>Prep shows each requested song as Found (with the matched file) or missing, so you can fill gaps before the gig.</li>
+      <li>Where you own several versions of a track, pick your go-to version — Prep remembers it for next time.</li>
+      <li>Music videos are detected and labelled, and the director is shown where available.</li>
+      <li><b>Export a .m3u playlist</b> — for a whole wedding block or an event — to drop into Serato, rekordbox, Traktor and more.</li>
+    </ul>
+    <div class="tip"><p><b>Why the desktop app?</b></p><p>A web browser can't see the real folder location of your files, so playlists built in the browser import empty. The desktop app reads the true file paths, which is what your DJ software needs — so exported playlists actually load.</p></div>
+    <h3>Keeping it up to date</h3>
+    <ul class="b">
+      <li>Added new music? Open the app and re-scan — it only reads what's changed, so it's quick.</li>
+      <li>Your custom tag edits (titles, artists) are always preserved — Prep reads your real file tags, never guesses from the filename.</li>
+    </ul>
+  </section>
+
+  <section class="sec" id="s12">
+    <h2>12. Your DJ team (multi-operator)</h2>
+    <p>On the Pro Wedding Multi-Op tier you can add other DJs to your team and assign them events and weddings.</p>
+    <h3>Two ways to add a DJ</h3>
+    <ul class="b">
+      <li><b>Create a login for them</b> — set a temporary password and Spinlist makes them a managed sub-account. Great for DJs who don't have their own account.</li>
+      <li><b>Link an existing account</b> — just enter their email and they're linked to your team; assigned jobs appear in their own events list.</li>
+    </ul>
+    <h3>Managing the team</h3>
+    <ul class="b">
+      <li>Give each DJ a profile — photo, bio, website links and a YouTube link — shown on the couple's Your DJ card.</li>
+      <li>Assign a wedding or event to a team DJ; it appears in their account and any run-sheet PDF still carries your company branding.</li>
+      <li>Assigned DJs get Music Prep on their jobs too — they set up their own library, and it's covered by your plan.</li>
+      <li>Copy invite or Email invite to send a DJ their login details (find these inside Edit on each DJ).</li>
+    </ul>
+    <div class="tip"><p><b>Sub-accounts vs independent DJs</b></p><p>A managed sub-account can only run jobs you assign — it can't create its own events. If a DJ needs to run their own events too, ask us to make their account independent (they keep any plan and stay on your team).</p></div>
+  </section>
+
+  <section class="sec" id="s13">
+    <h2>13. Email invites (Resend)</h2>
+    <p>On the wedding tiers you can send invite emails to couples, and login details to your DJs, from your own address by connecting a Resend account under Account › Email invites.</p>
+    <ul class="b">
+      <li>Add your Resend API key and a verified from address. Your key is stored securely and never shown again.</li>
+      <li>Send a test email to check it's working.</li>
+      <li>If you haven't connected Resend, the invite buttons simply open your own email app instead.</li>
+    </ul>
+    <p style="font-size:.9rem;color:var(--muted)">Setting up your own sending domain in Resend (verifying DNS records) is a one-time task done in your Resend dashboard.</p>
+  </section>
+
+  <section class="sec" id="s14">
+    <h2>14. Quick troubleshooting</h2>
+    <table>
+      <tr><th>If…</th><th>Try this</th></tr>
+      <tr><td><b>A guest can't vote</b></td><td>Check voting isn't locked or past its deadline, and that they're on the current link/QR.</td></tr>
+      <tr><td><b>Branding isn't on my PDF</b></td><td>Make sure your logo and colour are set under Account › Branding.</td></tr>
+      <tr><td><b>The gig window is empty</b></td><td>Tick Gig window on your questionnaire questions and save the template.</td></tr>
+      <tr><td><b>I'm not getting notifications</b></td><td>Log in as the account that owns the wedding — notifications go to the owner.</td></tr>
+      <tr><td><b>A DJ can't create events</b></td><td>Sub-accounts only run assigned jobs. Ask us to make them independent.</td></tr>
+      <tr><td><b>I can't see the Prep button</b></td><td>Prep is on every paid tier except Basic. Open an event or wedding to find it.</td></tr>
+      <tr><td><b>My exported playlist imports empty</b></td><td>Set up your library with the desktop app — the browser can't read real file paths.</td></tr>
+      <tr><td><b>The app scan seems slow</b></td><td>Re-open the app and re-scan; make sure you're on the latest version from the download link.</td></tr>
+      <tr><td><b>Can't send email invites</b></td><td>Connect Resend under Account, or the button will use your own email app.</td></tr>
+    </table>
+  </section>
+
+  <div class="foot">
+    <p>Need a hand? Get in touch through the <a href="/contact.html">Contact page</a>.</p>
+    <p style="margin-top:8px"><a href="/downloads/Spinlist-DJ-Guide.pdf" target="_blank" class="btn btn-neon" style="margin-top:12px">⬇ Download the PDF guide</a></p>
+    <p style="margin-top:20px;font-size:.85rem">Spinlist · www.spinlist.co.uk</p>
+  </div>
+</div>
+</body>
+</html>
