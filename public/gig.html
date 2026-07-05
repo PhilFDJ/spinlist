@@ -11,6 +11,7 @@
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
   header{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;background:var(--neon);color:#0a1228}
   header .title{font-weight:800;font-size:1.15rem;display:flex;align-items:center;gap:8px;min-width:0}
+  header .title .logo{height:20px;width:auto;flex-shrink:0}
   header .title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   header .meta{font-size:.8rem;font-weight:700;opacity:.75;white-space:nowrap}
   main{padding:8px 0 40px}
@@ -45,7 +46,7 @@
 </head>
 <body>
   <header>
-    <div class="title">📺 <span id="wed-name">Gig window</span></div>
+    <div class="title"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo">📺 <span id="wed-name">Gig window</span></div>
     <div class="meta" id="wed-date"></div>
   </header>
   <div class="tabs">
