@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spinlist — Your DJ team</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png"><link rel="apple-touch-icon" sizes="180x180" href="/img/favicon-180.png">
+<style>
+  :root{--ink:#eaf0ff;--ink-2:#b6c2e0;--paper:#0a1228;--paper-2:#121d3d;--surface:#16234a;--neon:#c6f24e;--neon-dim:#a8d63f;--plum:#5b8cff;--coral:#ff6b5e;--muted:#7e8db5;--line:rgba(180,200,255,.16);--shadow:0 18px 50px -22px rgba(0,0,0,.7)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink)}
+  .wrap{max-width:860px;margin:0 auto;padding:0 22px}
+  header.bar{background:rgba(10,18,40,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .bar .wrap{display:flex;align-items:center;justify-content:space-between;height:74px;max-width:1080px}
+  .logo{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+  .logo-img{height:54px;width:auto;display:block}
+  .bar nav a{color:var(--ink);text-decoration:none;font-weight:600;font-size:.9rem;margin-left:14px}
+  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:12px 22px;cursor:pointer;font-size:.92rem;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:transform .15s}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-primary{background:var(--ink);color:var(--paper);box-shadow:var(--shadow)}
+  .btn-neon{background:var(--neon);color:#0a1228}
+  .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+  .btn-sm{padding:8px 14px;font-size:.82rem}
+  .btn-danger{background:transparent;color:var(--coral);border:1.5px solid var(--coral)}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin-top:20px}
+  h1{font-size:2.2rem;margin-top:30px}
+  .eyebrow{font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .sub{color:var(--muted);margin-top:6px}
+  .field{display:block;margin-bottom:14px}
+  .field span{display:block;font-size:.82rem;color:var(--muted);margin-bottom:6px;font-weight:700}
+  .field input,.field textarea{width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)}
+  .field textarea{min-height:140px;resize:vertical;line-height:1.5}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:560px){.grid-2{grid-template-columns:1fr}}
+  .dj-card{background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  .dj-card h3{font-size:1.15rem}
+  .dj-meta{color:var(--muted);font-size:.86rem;margin-top:3px}
+  .dj-profile{margin-top:10px;font-size:.92rem;color:var(--ink-2);white-space:pre-wrap}
+  .dj-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .empty{text-align:center;color:var(--muted);padding:30px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:100px;font-weight:700;opacity:0;transition:.3s;z-index:50}
+  .toast.show{opacity:1}
+  .signed-out{text-align:center;padding:80px 20px;color:var(--muted)}
+  .err{color:var(--coral);font-size:.86rem;margin-top:6px;min-height:1em}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
+  <nav><a href="/">Home</a><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+</div></header>
+
+<div class="wrap" id="root"><p style="margin-top:40px;color:var(--muted)">Loading…</p></div>
+<div class="toast" id="toast"></div>
+
+<script>
+let ME=null, DJS=[];
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function api(path,opts){
+  opts=opts||{};
+  const isForm=opts.body instanceof FormData;
+  const headers=isForm?{}:{'Content-Type':'application/json'};
+  const r=await fetch(path,Object.assign({headers},opts));
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.error||'Something went wrong');
+  return d;
+}
+async function logout(){try{await fetch('/api/logout',{method:'POST'});}catch(e){}location.href='/';}
+
+async function boot(){
+  try{const d=await api('/api/me');ME=d.user;}catch(e){ME=null;}
+  if(!ME){
+    document.getElementById('root').innerHTML='<div class="signed-out"><h1>Your DJ team</h1><p>Please <a href="/pricing.html" style="color:var(--plum);font-weight:700">sign in</a>.</p></div>';
+    return;
+  }
+  if(!ME.multiOp){
+    document.getElementById('root').innerHTML=`<div class="signed-out"><h1>Your DJ team</h1>
+      <p>Managing a team of DJs is part of the <b>PRO WEDDING MULTI-OP</b> plan.</p>
+      <p style="margin-top:16px"><a class="btn btn-neon" href="/pricing.html">See plans ▸</a></p></div>`;
+    return;
+  }
+  render();
+  loadTeam();
+}
+
+function render(){
+  document.getElementById('root').innerHTML=`
+    <div class="eyebrow" style="margin-top:34px">Multi-operator</div>
+    <h1>Your DJ team</h1>
+    <p class="sub">Create an account for each DJ on your team. They sign in with the email and password you set, and only see the events &amp; weddings you assign to them.</p>
+
+    <div class="panel">
+      <h2 style="font-size:1.2rem;margin-bottom:4px">Add a DJ</h2>
+      <p class="sub" style="margin-bottom:16px">If they already have a Spinlist account, just enter their email to link them — assigned jobs appear in their own events tab. Otherwise, set a temporary password to create them a login.</p>
+      <div class="grid-2">
+        <label class="field"><span>DJ name</span><input id="n-name" placeholder="e.g. DJ Marco" maxlength="80"></label>
+        <label class="field"><span>Login email</span><input id="n-email" type="email" placeholder="marco@example.com"></label>
+      </div>
+      <label class="field"><span>Temporary password <span style="font-weight:400">(only needed for a brand-new account)</span></span><input id="n-pass" type="text" placeholder="Leave blank to link an existing account" minlength="6"></label>
+      <label class="field"><span>Profile / bio (optional)</span><textarea id="n-profile" placeholder="A short note about this DJ — their style, experience, etc."></textarea></label>
+      <div class="err" id="n-err"></div>
+      <button class="btn btn-neon" onclick="createDj()">+ Add DJ</button>
+      <div id="n-created" style="display:none;margin-top:16px;border:1.5px solid var(--neon);border-radius:12px;padding:14px;background:rgba(193,255,47,.06)">
+        <div style="font-weight:800;margin-bottom:8px">✓ Account created — login details</div>
+        <div style="font-family:ui-monospace,monospace;font-size:.9rem;line-height:1.7" id="n-created-text"></div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn btn-neon btn-sm" onclick="copyLoginDetails()">Copy login details</button>
+          <button class="btn btn-ghost btn-sm" onclick="emailLoginDetails()">Email these</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('n-created').style.display='none'">Dismiss</button>
+        </div>
+        <p class="sub" style="margin-top:10px">Copy these now — the password isn't stored in readable form and can't be shown again (you can always reset it later).</p>
+      </div>
+    </div>
+
+    <h2 style="font-size:1.3rem;margin-top:34px">Your DJs (<span id="dj-count">0</span>)</h2>
+    <div id="dj-list"><p class="empty">Loading…</p></div>
+  `;
+}
+
+async function loadTeam(){
+  try{
+    const d=await api('/api/team');
+    DJS=d.djs||[];
+    renderList();
+  }catch(e){ document.getElementById('dj-list').innerHTML='<p class="empty">Could not load your team.</p>'; }
+}
+
+function renderList(){
+  document.getElementById('dj-count').textContent=DJS.length;
+  const el=document.getElementById('dj-list');
+  if(!DJS.length){el.innerHTML='<p class="empty">No DJs yet. Add your first one above.</p>';return;}
+  el.innerHTML=DJS.map(dj=>{
+    if(editingId===dj.id){
+      // Inline edit form. Owner's own profile + linked DJs have no password field.
+      const noPass=dj.isMe||dj.linked;
+      const hint=dj.linked?'<p class="sub" style="margin:-4px 0 12px">This sets how they appear <b>in your team</b> only — it won\'t change their own account.</p>':'';
+      return `<div class="dj-card">
+        ${hint}
+        <label class="field"><span>DJ name${dj.linked?' (as shown in your team)':''}</span><input id="e-name-${dj.id}" value="${esc(dj.name||'')}" maxlength="80"></label>
+        <label class="field"><span>Profile / bio</span><textarea id="e-profile-${dj.id}">${esc(dj.profile||'')}</textarea></label>
+        <label class="field"><span>Website link (optional)</span><input id="e-web-${dj.id}" value="${esc(dj.website||'')}" placeholder="https://…" maxlength="200"></label>
+        <label class="field"><span>Second website link (optional)</span><input id="e-web2-${dj.id}" value="${esc(dj.website2||'')}" placeholder="https://…" maxlength="200"></label>
+        <label class="field"><span>YouTube link (optional)</span><input id="e-yt-${dj.id}" value="${esc(dj.youtube||'')}" placeholder="https://youtube.com/…" maxlength="200"></label>
+        <label class="field"><span>Photo (optional)</span>${dj.photo?`<div style="margin-bottom:8px"><img src="${esc(dj.photo)}" alt="" style="width:64px;height:64px;border-radius:12px;object-fit:cover"></div>`:''}<input id="e-photo-${dj.id}" type="file" accept="image/*" style="font-size:.85rem"></label>
+        ${noPass?'':`<label class="field"><span>New password <span style="font-weight:400">(leave blank to keep current)</span></span><input id="e-pass-${dj.id}" type="text" placeholder="Set a new temporary password" minlength="6"></label>`}
+        <div class="err" id="e-err-${dj.id}"></div>
+        <div class="dj-actions" style="justify-content:space-between">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-neon btn-sm" onclick="saveDj('${dj.id}',${noPass})">Save</button>
+            <button class="btn btn-ghost btn-sm" onclick="cancelEdit()">Cancel</button>
+          </div>
+          ${dj.isMe?'':`<button class="btn btn-danger btn-sm" onclick="removeDj('${dj.id}','${esc(dj.name||dj.email)}',${dj.linked})">${dj.linked?'Unlink':'Remove'}</button>`}
+        </div>
+      </div>`;
+    }
+    const badge=dj.isMe
+      ? '<span style="font-size:.7rem;font-weight:800;background:var(--neon);color:#0a1228;padding:3px 9px;border-radius:100px;vertical-align:middle">YOU</span>'
+      : (dj.linked?'<span style="font-size:.7rem;font-weight:800;background:var(--plum);color:#fff;padding:3px 9px;border-radius:100px;vertical-align:middle">LINKED</span>':'');
+    const overrideNote=(dj.linked&&dj.hasOverride)?' <span class="muted" style="font-size:.74rem">(custom team profile)</span>':'';
+    return `<div class="dj-card">
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        ${dj.photo?`<img src="${esc(dj.photo)}" alt="" style="width:60px;height:60px;border-radius:12px;object-fit:cover;flex-shrink:0">`:''}
+        <div style="flex:1">
+          <h3>${esc(dj.name||'(no name)')} ${badge}</h3>
+          <div class="dj-meta">${esc(dj.email)}${dj.isMe?' · account owner':(dj.linked?' · their own account'+overrideNote:'')}</div>
+          ${dj.profile?`<div class="dj-profile">${esc(dj.profile)}</div>`:(dj.isMe?'<div class="dj-profile" style="color:var(--muted);font-style:italic">No profile yet — add one so it shows alongside your team.</div>':'')}
+          ${dj.website?`<div style="margin-top:6px"><a href="${esc(dj.website)}" target="_blank" rel="noopener" style="color:var(--plum);font-size:.86rem">${esc(dj.website)}</a></div>`:''}
+          ${dj.website2?`<div style="margin-top:3px"><a href="${esc(dj.website2)}" target="_blank" rel="noopener" style="color:var(--plum);font-size:.86rem">${esc(dj.website2)}</a></div>`:''}
+          ${dj.youtube?`<div style="margin-top:3px"><a href="${esc(dj.youtube)}" target="_blank" rel="noopener" style="color:var(--plum);font-size:.86rem">▶ YouTube</a></div>`:''}
+        </div>
+      </div>
+      <div class="dj-actions">
+        ${(dj.isMe||dj.linked)?'':`<button class="btn btn-ghost btn-sm" onclick="inviteDj('${dj.id}','${esc(dj.name||dj.email)}','${esc(dj.email)}')">Copy invite</button>
+        ${ME.emailInvites?`<button class="btn btn-ghost btn-sm" onclick="emailInviteDj('${dj.id}','${esc(dj.email)}')">✉ Email invite</button>`:''}`}
+        <button class="btn btn-ghost btn-sm" onclick="startEdit('${dj.id}')">Edit${dj.linked?' team profile':''}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+let editingId=null;
+function startEdit(id){ editingId=id; renderList(); }
+function cancelEdit(){ editingId=null; renderList(); }
+async function saveDj(id,isMe){
+  const name=document.getElementById('e-name-'+id).value.trim();
+  const profile=document.getElementById('e-profile-'+id).value.trim();
+  const website=document.getElementById('e-web-'+id).value.trim();
+  const website2=document.getElementById('e-web2-'+id).value.trim();
+  const youtube=document.getElementById('e-yt-'+id).value.trim();
+  const photoEl=document.getElementById('e-photo-'+id);
+  const passEl=document.getElementById('e-pass-'+id);
+  const password=passEl?passEl.value:'';
+  const err=document.getElementById('e-err-'+id);err.textContent='';
+  if(password&&password.length<6){err.textContent='Password must be at least 6 characters (or leave blank).';return;}
+  const badLink=[website,website2,youtube].find(u=>u&&!/^https?:\/\//i.test(u));
+  if(badLink){err.textContent='Links must start with http:// or https://';return;}
+  const fd=new FormData();
+  fd.append('name',name);fd.append('profile',profile);fd.append('website',website);
+  fd.append('website2',website2);fd.append('youtube',youtube);
+  if(password)fd.append('password',password);
+  if(photoEl&&photoEl.files&&photoEl.files[0])fd.append('photo',photoEl.files[0]);
+  try{
+    await api('/api/team/'+id,{method:'POST',body:fd});
+    toast(password?'Saved · password updated ✓':'Saved ✓');
+    editingId=null;
+    loadTeam();
+  }catch(e){ err.textContent=e.message; }
+}
+
+async function createDj(){
+  const name=document.getElementById('n-name').value.trim();
+  const email=document.getElementById('n-email').value.trim();
+  const password=document.getElementById('n-pass').value;
+  const profile=document.getElementById('n-profile').value.trim();
+  const err=document.getElementById('n-err');err.textContent='';
+  if(!email){err.textContent='Enter a login email.';return;}
+  try{
+    const d=await api('/api/team',{method:'POST',body:JSON.stringify({name,email,password,profile})});
+    if(d.linked){
+      toast('Existing DJ linked ✓');
+      document.getElementById('n-created').style.display='none';
+    }else{
+      toast('DJ account created ✓');
+      // Stash + show the login details so the host can pass them on.
+      LAST_LOGIN={name:name||email,email,password:password||'(the password you set)',url:location.origin};
+      document.getElementById('n-created-text').innerHTML=
+        'Login page: '+esc(LAST_LOGIN.url)+'<br>Email: '+esc(email)+'<br>Password: '+esc(LAST_LOGIN.password);
+      document.getElementById('n-created').style.display='block';
+    }
+    document.getElementById('n-name').value='';document.getElementById('n-email').value='';
+    document.getElementById('n-pass').value='';document.getElementById('n-profile').value='';
+    loadTeam();
+  }catch(e){ err.textContent=e.message; }
+}
+let LAST_LOGIN=null;
+function loginDetailsText(){
+  if(!LAST_LOGIN)return '';
+  return `Here are your Spinlist login details:\n\nLogin page: ${LAST_LOGIN.url}\nEmail: ${LAST_LOGIN.email}\nPassword: ${LAST_LOGIN.password}\n\nSign in there to see the events and weddings assigned to you.`;
+}
+async function copyLoginDetails(){
+  const txt=loginDetailsText();if(!txt)return;
+  try{ await navigator.clipboard.writeText(txt); toast('Login details copied ✓'); }
+  catch(e){
+    // Fallback: select a temporary textarea.
+    const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');toast('Login details copied ✓');}catch(_){toast('Could not copy — select the text manually');}
+    document.body.removeChild(ta);
+  }
+}
+function emailLoginDetails(){
+  if(!LAST_LOGIN)return;
+  const subject=encodeURIComponent('Your Spinlist DJ login');
+  const body=encodeURIComponent(loginDetailsText());
+  window.location.href=`mailto:${encodeURIComponent(LAST_LOGIN.email)}?subject=${subject}&body=${body}`;
+}
+// Invite an existing sub-DJ later (no password — it's hashed and can't be shown again).
+function inviteText(email){
+  return `You've been added as a DJ on Spinlist.\n\nLogin page: ${location.origin}\nEmail: ${email}\n\nUse the password you were given when your account was set up. If you don't have it, ask for a password reset and a new one will be provided.\n\nSign in to see the events and weddings assigned to you.`;
+}
+async function inviteDj(id,label,email){
+  const txt=inviteText(email);
+  try{ await navigator.clipboard.writeText(txt); toast('Invite for '+label+' copied ✓'); }
+  catch(e){
+    const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');toast('Invite for '+label+' copied ✓');}catch(_){toast('Could not copy — select the text manually');}
+    document.body.removeChild(ta);
+  }
+}
+// Email a sub-DJ their login. Uses the owner's Resend account if connected,
+// otherwise falls back to the owner's own email app.
+async function emailInviteDj(id,email){
+  try{
+    await api('/api/team/'+id+'/email-invite',{method:'POST',body:JSON.stringify({})});
+    toast('Login emailed to '+email+' ✓');
+  }catch(e){
+    if(/connect resend|set up/i.test(e.message)){
+      toast('Opening your email app (connect Resend in Account to send directly)');
+      window.location.href='mailto:'+encodeURIComponent(email)+'?subject='+encodeURIComponent('Your Spinlist DJ login')+'&body='+encodeURIComponent(inviteText(email));
+    }else{ toast(e.message); }
+  }
+}
+function removeDj(id,label,linked){
+  const verb=linked?'Unlink':'Remove';
+  const msg=linked
+    ? 'Unlink '+label+'? They keep their own account; their assigned jobs from you will be unassigned.'
+    : 'Remove '+label+'? Their account and assigned jobs will be removed.';
+  if(!confirm(msg))return;
+  api('/api/team/'+id,{method:'DELETE'})
+    .then(()=>{toast(linked?'DJ unlinked':'DJ removed');loadTeam();})
+    .catch(e=>toast(e.message));
+}
+
+boot();
+</script>
+</body>
+</html>
