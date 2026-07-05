@@ -1441,6 +1441,21 @@ app.post('/api/prep/picks', auth.requireAuth, (req, res) => {
   res.json({ ok: true, picks });
 });
 
+// Prep tool: saved music-library snapshot (auto-loads across devices).
+app.get('/api/prep/library', auth.requireAuth, (req, res) => {
+  res.json({ library: db.getPrepLibrary(req.user.id) });
+});
+app.post('/api/prep/library', auth.requireAuth, (req, res) => {
+  const lib = (req.body || {}).library;
+  if (!lib || !Array.isArray(lib.tracks)) return res.status(400).json({ error: 'library.tracks required' });
+  const saved = db.setPrepLibrary(req.user.id, lib);
+  res.json({ ok: true, count: saved ? saved.tracks.length : 0 });
+});
+app.delete('/api/prep/library', auth.requireAuth, (req, res) => {
+  db.setPrepLibrary(req.user.id, null);
+  res.json({ ok: true });
+});
+
 /* =========================================================
    RESEND EMAIL (subscriber connects their own Resend key)
    ========================================================= */

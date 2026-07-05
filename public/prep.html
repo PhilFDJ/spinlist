@@ -79,6 +79,8 @@
       </div>
       <div class="bar" id="scan-bar" style="display:none"><i style="width:0%"></i></div>
       <p class="note">Folder scanning works best in Chrome or Edge. In Safari, use "Import a library file" instead.</p>
+      <p class="note" id="lib-status" style="color:var(--neon)"></p>
+      <p class="note"><a href="#" onclick="clearSavedLibrary();return false" style="color:var(--muted)">Forget my saved library</a></p>
     </div>
 
     <div id="src-library" style="display:none">
@@ -101,16 +103,40 @@
   <input type="file" id="find-file-input" accept="audio/*,video/mp4,.mp3,.m4a,.mp4,.aac,.flac,.wav">
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/music-metadata-browser/2.5.10/music-metadata-browser.min.js"></script>
 <script>
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
-let WED=null, LIB=[], SRC='folder', PICKS={};   // LIB = [{title,artist,path,file?}]; PICKS = remembered versions
+let WED=null, LIB=[], SRC='folder', PICKS={}, LIB_NAME='';   // LIB = [{title,artist,path}]; PICKS = remembered versions
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function loadPicks(){ try{ const d=await (await fetch('/api/prep/picks',{credentials:'same-origin'})).json(); PICKS=d.picks||{}; }catch(e){ PICKS={}; } }
 async function savePick(key, chosen){
   if(chosen)PICKS[key]=chosen; else delete PICKS[key];
   try{ await fetch('/api/prep/picks',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({key,chosen:chosen||null})}); }catch(e){}
+}
+// Save the scanned library to the account (compact keys) so it syncs across devices.
+async function saveLibrary(name){
+  try{
+    const payload={library:{name:name||'library', tracks:LIB.map(t=>({t:t.title,a:t.artist,p:t.path}))}};
+    const r=await fetch('/api/prep/library',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});
+    if(r.ok){ const d=await r.json(); showLibStatus('Saved '+d.count+' tracks to your account.'); }
+  }catch(e){}
+}
+async function loadSavedLibrary(){
+  try{
+    const d=await (await fetch('/api/prep/library',{credentials:'same-origin'})).json();
+    if(d.library && Array.isArray(d.library.tracks) && d.library.tracks.length){
+      LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',path:t.p||''}));
+      LIB_NAME=d.library.name||'library';
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+function showLibStatus(msg){ const el=document.getElementById('lib-status'); if(el)el.textContent=msg; }
+async function clearSavedLibrary(){
+  if(!confirm('Forget your saved library? You can re-scan a folder to build a new one.'))return;
+  try{ await fetch('/api/prep/library',{method:'DELETE',credentials:'same-origin'}); }catch(e){}
+  LIB=[]; LIB_NAME=''; showLibStatus('Saved library cleared.'); renderResults();
 }
 
 function setSrc(s){ SRC=s;
@@ -236,17 +262,14 @@ async function scanFiles(files, fsapi){
   const bar=document.getElementById('scan-bar'); bar.style.display='block';
   const barI=bar.querySelector('i');
   LIB=[];
-  const mm=window.musicMetadata;
   let done=0;
   for(const f of files){
     let title='', artist='';
     try{
-      if(mm){
-        const blob = fsapi ? await (await f.handle.getFile()) : f.file;
-        const meta = await mm.parseBlob(blob, {duration:false, skipCovers:true});
-        title=(meta.common.title||'').trim();
-        artist=(meta.common.artist||meta.common.albumartist||'').trim();
-      }
+      const blob = fsapi ? await f.handle.getFile() : f.file;
+      const tags = await readTags(blob);        // lightweight, self-contained
+      title=(tags.title||'').trim();
+      artist=(tags.artist||'').trim();
     }catch(_){}
     if(!title){ // fall back to filename "Artist - Title"
       const base=f.path.split('/').pop().replace(/\.[^.]+$/,'');
@@ -255,11 +278,58 @@ async function scanFiles(files, fsapi){
       else { title=base.trim(); }
     }
     LIB.push({title,artist,path:f.path});
-    done++; if(done%10===0||done===files.length){ barI.style.width=Math.round(done/files.length*100)+'%'; stat.textContent=done+' / '+files.length+' files read'; await new Promise(r=>setTimeout(r)); }
+    done++;
+    if(done%5===0||done===files.length){ barI.style.width=Math.round(done/files.length*100)+'%'; stat.textContent=done+' / '+files.length+' files read'; await new Promise(r=>setTimeout(r)); }
   }
   stat.textContent=LIB.length+' tracks in your library';
   bar.style.display='none';
   renderResults();
+  saveLibrary(LIB_NAME || (DIR_HANDLE && DIR_HANDLE.name) || 'library');   // sync to account
+}
+
+/* Lightweight, dependency-free tag reader.
+   Reads ID3v2 (TIT2/TPE1) from the file head and ID3v1 from the last 128 bytes.
+   Only reads the bytes it needs, so it's fast and never hangs. */
+async function readTags(blob){
+  const out={title:'',artist:''};
+  try{
+    const head=new Uint8Array(await blob.slice(0, 256*1024).arrayBuffer());
+    if(head[0]===0x49&&head[1]===0x44&&head[2]===0x33){ // "ID3" v2
+      const size=((head[6]&0x7f)<<21)|((head[7]&0x7f)<<14)|((head[8]&0x7f)<<7)|(head[9]&0x7f);
+      const end=Math.min(10+size, head.length);
+      let i=10;
+      while(i+10<end){
+        const id=String.fromCharCode(head[i],head[i+1],head[i+2],head[i+3]);
+        const fsz=(head[i+4]<<24)|(head[i+5]<<16)|(head[i+6]<<8)|head[i+7];
+        if(fsz<=0||i+10+fsz>head.length)break;
+        if(id==='TIT2'||id==='TPE1'||id==='TT2'||id==='TP1'){
+          const val=decodeFrame(head.subarray(i+10, i+10+fsz));
+          if(id[1]==='I'||id==='TT2') out.title=out.title||val; else out.artist=out.artist||val;
+        }
+        i+=10+fsz;
+      }
+    }
+    if(!out.title||!out.artist){ // try ID3v1 tail
+      const tail=new Uint8Array(await blob.slice(Math.max(0,blob.size-128)).arrayBuffer());
+      if(tail.length>=128 && tail[0]===0x54&&tail[1]===0x41&&tail[2]===0x47){ // "TAG"
+        const rd=(s,e)=>{let str='';for(let k=s;k<e;k++){if(tail[k]===0)break;str+=String.fromCharCode(tail[k]);}return str.trim();};
+        out.title=out.title||rd(3,33); out.artist=out.artist||rd(33,63);
+      }
+    }
+  }catch(_){}
+  return out;
+}
+function decodeFrame(bytes){
+  if(!bytes.length)return '';
+  const enc=bytes[0]; const body=bytes.subarray(1);
+  try{
+    if(enc===1||enc===2){ // UTF-16
+      return new TextDecoder('utf-16').decode(body).replace(/\u0000+$/,'').trim();
+    }
+    if(enc===3){ return new TextDecoder('utf-8').decode(body).replace(/\u0000+$/,'').trim(); }
+    // 0 = ISO-8859-1 (latin1)
+    let s=''; for(const b of body){ if(b===0)break; s+=String.fromCharCode(b); } return s.trim();
+  }catch(_){ return ''; }
 }
 
 /* ---------- library file import ---------- */
@@ -274,7 +344,9 @@ document.getElementById('library-input').onchange=async(e)=>{
     LIB = parseM3U(text);
   }
   stat.textContent=LIB.length+' tracks imported';
+  LIB_NAME=f.name.replace(/\.[^.]+$/,'');
   renderResults();
+  saveLibrary(LIB_NAME);   // sync imported library to account too
 };
 function parseITunes(xml){
   const out=[]; const doc=new DOMParser().parseFromString(xml,'application/xml');
@@ -390,10 +462,7 @@ function findFile(key){ _findKey=key; document.getElementById('find-file-input')
 document.getElementById('find-file-input').onchange=async(e)=>{
   const f=e.target.files[0]; if(!f||!_findKey)return;
   let title='',artist='';
-  try{
-    const mm=window.musicMetadata;
-    if(mm){ const meta=await mm.parseBlob(f,{duration:false,skipCovers:true}); title=(meta.common.title||'').trim(); artist=(meta.common.artist||meta.common.albumartist||'').trim(); }
-  }catch(_){}
+  try{ const tags=await readTags(f); title=(tags.title||'').trim(); artist=(tags.artist||'').trim(); }catch(_){}
   if(!title){ const base=f.name.replace(/\.[^.]+$/,''); const parts=base.split(' - '); if(parts.length>=2){artist=artist||parts[0].trim();title=parts.slice(1).join(' - ').trim();} else title=base.trim(); }
   const path=f.webkitRelativePath||f.name;
   // Add to the in-memory library so it exports + shows immediately.
@@ -441,11 +510,13 @@ async function loadWed(){
     document.getElementById('wed-name').textContent=WED.coupleNames||WED.name||'wedding';
     document.title='Prep · '+(WED.coupleNames||WED.name||'Spinlist');
     await loadPicks();
+    const hadSaved=await loadSavedLibrary();   // auto-load account library across devices
     renderResults();
+    if(hadSaved){ document.getElementById('folder-stat').textContent='Loaded your saved library ('+LIB.length+' tracks). Rescan a folder to update it.'; showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
     // If we remembered a folder from a previous session, offer a one-click rescan.
     try{
       const saved=await idbGet('dirHandle');
-      if(saved){ DIR_HANDLE=saved; showRescan(saved.name); document.getElementById('folder-stat').textContent='Tap “Rescan” to reload “'+saved.name+'”.'; }
+      if(saved){ DIR_HANDLE=saved; showRescan(saved.name); }
     }catch(e){}
   }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the wedding.</p></div>'; }
 }
