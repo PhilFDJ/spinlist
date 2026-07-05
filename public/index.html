@@ -561,10 +561,14 @@ async function renderEvents(){
       const archiveBtn=e.archived
         ? `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveEvent('${e.id}',false)">Restore</button>`
         : `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveEvent('${e.id}',true)">Archive</button>`;
+      const ePrepBtn=(ME&&ME.prepAccess)
+        ? `<a class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" href="/prep.html?e=${e.id}" target="_blank">🎧 Prep</a>`
+        : '';
       const actions=readOnly
-        ? `<button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>`
+        ? `<button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>${ePrepBtn}`
         : `<button class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" onclick="openEvent('${e.id}')">Open</button>
            <button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="openEditModal('${e.id}')">Edit</button>
+           ${ePrepBtn}
            ${archiveBtn}`;
       return `<div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
         <div>
@@ -582,9 +586,12 @@ async function renderEvents(){
       const wArchiveBtn=w.archived
         ? `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveWedding('${w.id}',false)">Restore</button>`
         : `<button class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" onclick="archiveWedding('${w.id}',true)">Archive</button>`;
+      const wPrepBtn=(ME&&ME.prepAccess)
+        ? `<a class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" href="/prep.html?w=${w.id}" target="_blank">🎧 Prep</a>`
+        : '';
       const wActions=readOnly
-        ? `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>`
-        : `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>${wArchiveBtn}`;
+        ? `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>${wPrepBtn}`
+        : `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>${wPrepBtn}${wArchiveBtn}`;
       cards.push({kind:'wedding',date:w.weddingDate||null,createdAt:w.createdAt||0,html:`
         <div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
           <div>

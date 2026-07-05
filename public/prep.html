@@ -105,7 +105,8 @@ const MAC_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/
 const WIN_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.2.0/Spinlist.Music.Manager.Setup.1.2.0.exe';
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
-const SETUP=!WID && (params.get('setup')==='1' || params.get('setup')==='');
+const EID=params.get('e');   // regular (non-wedding) event id
+const SETUP=!WID && !EID && (params.get('setup')==='1' || params.get('setup')==='');
 let WED=null, LIB=[], SRC='folder', PICKS={}, LIB_NAME='', PREV_LIB=[], LIB_TOKEN_INDEX=new Map();   // PREV_LIB = last saved lib for incremental rescans
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function loadPicks(){ try{ const d=await (await fetch('/api/prep/picks',{credentials:'same-origin'})).json(); PICKS=d.picks||{}; }catch(e){ PICKS={}; } }
@@ -781,7 +782,31 @@ async function loadWed(){
     if(hadSaved){ showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
     return;
   }
-  if(!WID){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">No wedding specified. Open Prep from a wedding in your planner.</p></div>'; return; }
+  // Event mode: a regular (non-wedding) voting event — match its voted songs against the library.
+  if(EID){
+    document.getElementById('results').innerHTML='<div class="panel"><p class="status">Loading your library and this event\u2019s songs…</p></div>';
+    try{
+      const [evRes] = await Promise.all([
+        fetch('/api/events/'+encodeURIComponent(EID),{credentials:'same-origin'}),
+        loadPicks(),
+        loadSavedLibrary().then(h=>{ window.__hadSaved=h; })
+      ]);
+      if(evRes.status===401||evRes.status===403){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Please <a href="/">log in</a> and open Prep from your events.</p></div>'; return; }
+      const d=await evRes.json();
+      const ev=d.event;
+      if(!ev){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the event.</p></div>'; return; }
+      // Adapt the event's voted tracks into the same shape Prep expects: one block of songs.
+      const songs=(ev.tracks||[]).map(t=>({ id:t.id, uri:t.uri, title:t.title, artist:t.artist, art:t.art, played:t.played?1:0 }));
+      WED={ id:ev.id, name:ev.name, coupleNames:'', blocks:[{ id:'all', name:'Requested songs', songs }] };
+      document.getElementById('wed-name').textContent=ev.name||'event';
+      document.title='Prep · '+(ev.name||'Spinlist');
+      const lead=document.getElementById('intro-lead'); if(lead)lead.textContent='Match the songs your guests voted for against your own music library, then export a playlist (.m3u) to drop straight into your DJ software.';
+      renderResults();
+      if(window.__hadSaved){ showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
+    }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the event.</p></div>'; }
+    return;
+  }
+  if(!WID){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">No event specified. Open Prep from an event or wedding in your planner.</p></div>'; return; }
   document.getElementById('results').innerHTML='<div class="panel"><p class="status">Loading your library and this wedding\u2019s songs…</p></div>';
   try{
     // Fetch the wedding, remembered picks, and saved library all at once (not one-after-another).
