@@ -21,6 +21,17 @@
   .a-input{width:100%;font-size:1.35rem;line-height:1.35;color:#fff;margin-top:6px;background:transparent;border:none;border-bottom:1px dashed transparent;padding:2px 0;font-family:inherit}
   .a-input::placeholder{color:#5b6479;font-style:italic;font-size:1.05rem}
   .a-input:focus{outline:none;border-bottom-color:var(--neon)}
+  .tabs{position:sticky;top:0;display:flex;background:var(--panel);border-bottom:1px solid var(--line);z-index:5}
+  .tab{flex:1;text-align:center;padding:11px 4px;font-size:.82rem;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent}
+  .tab.on{color:#fff;border-bottom-color:var(--neon)}
+  .row.tl{display:flex;gap:12px;align-items:baseline}
+  .row.tl .time{color:var(--neon);font-weight:800;font-size:1rem;min-width:70px}
+  .row.tl .lbl{color:#fff;font-size:1rem}
+  .song{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:1rem;color:#fff}
+  .song .tick{width:16px;color:#3a4560;font-weight:800}
+  .song .tick.done{color:var(--neon)}
+  .song .art{color:#8b93a7}
+  .song.empty{color:#5b6479;font-style:italic;font-size:.9rem}
   .status{padding:60px 22px;text-align:center;color:var(--muted)}
   .foot{position:fixed;bottom:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:var(--panel);border-top:1px solid var(--line);font-size:.72rem;color:var(--muted)}
   .foot button{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:5px 10px;font:inherit;font-size:.72rem;cursor:pointer}
@@ -33,6 +44,11 @@
     <div class="title">📺 <span id="wed-name">Gig window</span></div>
     <div class="meta" id="wed-date"></div>
   </header>
+  <div class="tabs">
+    <span class="tab on" data-tab="info" onclick="setTab('info')">ℹ️ Info</span>
+    <span class="tab" data-tab="timeline" onclick="setTab('timeline')">🕐 Timeline</span>
+    <span class="tab" data-tab="music" onclick="setTab('music')">🎵 Music</span>
+  </div>
   <main id="main"><div class="status">Loading…</div></main>
   <div class="foot"><span id="updated">—</span><button onclick="load()">Refresh now</button></div>
 <script>
@@ -40,30 +56,53 @@ const params=new URLSearchParams(location.search);
 const WID=params.get('w');
 let LAST_ANSWERS={};
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+let WED=null, TAB='info';
+function setTab(t){
+  TAB=t;
+  document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('on',el.dataset.tab===t));
+  if(WED)renderBody();
+}
+function infoHtml(){
+  const q=WED.questionnaire, answers=WED.answers||{};
+  const flagged=((q&&q.questions)||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
+  if(!flagged.length)return '<div class="status">No questions are flagged for the gig window yet.<br>Tick “📺 Gig window” on questions in your template, then save.</div>';
+  return flagged.map(qq=>{
+    const a=answers[qq.id]||'';
+    return '<div class="row"><div class="q">'+esc(qq.label)+'</div>'+
+      '<input class="a-input" value="'+esc(a)+'" placeholder="tap to add…" data-qid="'+esc(qq.id)+'" onchange="saveAnswer(this.dataset.qid,this.value)"></div>';
+  }).join('');
+}
+function timelineHtml(){
+  const tl=(WED.timeline||[]);
+  if(!tl.length)return '<div class="status">No timeline added yet.</div>';
+  return tl.map(t=>'<div class="row tl"><div class="time">'+esc(t.time||'')+'</div><div class="lbl">'+esc(t.label||'')+'</div></div>').join('');
+}
+function musicHtml(){
+  const blocks=(WED.blocks||[]);
+  if(!blocks.length)return '<div class="status">No music blocks yet.</div>';
+  return blocks.map(b=>{
+    const songs=(b.songs||[]);
+    const list=songs.length?songs.map(s=>'<div class="song"><span class="tick '+(s.played?'done':'')+'">'+(s.played?'✓':'○')+'</span><span>'+esc(s.title||'')+(s.artist?' <span class="art">· '+esc(s.artist)+'</span>':'')+'</span></div>').join(''):'<div class="song empty">No songs chosen</div>';
+    return '<div class="row"><div class="q">'+esc(b.name||'Block')+' <span class="art">('+songs.length+'/'+(b.capacity||songs.length)+')</span></div>'+list+'</div>';
+  }).join('');
+}
+function renderBody(){
+  document.getElementById('main').innerHTML = TAB==='timeline'?timelineHtml() : TAB==='music'?musicHtml() : infoHtml();
+}
 function paint(w){
-  const main=document.getElementById('main');
+  WED=w;
   document.getElementById('wed-name').textContent=w.coupleNames||w.name||'Gig window';
   document.getElementById('wed-date').textContent=w.weddingDate?new Date(w.weddingDate).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'';
   document.title='📺 '+(w.coupleNames||w.name||'Gig')+' · Spinlist';
-  const q=w.questionnaire, answers=w.answers||{};
-  LAST_ANSWERS=Object.assign({},answers);
-  const flagged=((q&&q.questions)||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
-  if(!flagged.length){
-    main.innerHTML='<div class="status">No questions are flagged for the gig window yet.<br>Tick “📺 Gig window” on questions in your template, then re-apply the template to this wedding (Edit ▸ questionnaire).</div>';
-  }else{
-    main.innerHTML=flagged.map(qq=>{
-      const a=answers[qq.id]||'';
-      return '<div class="row"><div class="q">'+esc(qq.label)+'</div>'+
-        '<input class="a-input" value="'+esc(a)+'" placeholder="tap to add…" data-qid="'+esc(qq.id)+'" onchange="saveAnswer(this.dataset.qid,this.value)"></div>';
-    }).join('');
-  }
+  LAST_ANSWERS=Object.assign({},w.answers||{});
+  renderBody();
   document.getElementById('updated').textContent='Updated '+new Date().toLocaleTimeString();
 }
 async function saveAnswer(qid,val){
   LAST_ANSWERS[qid]=val;
   try{
     const r=await fetch('/api/weddings/'+encodeURIComponent(WID)+'/answers',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({answers:LAST_ANSWERS})});
-    if(r.ok){ const d=await r.json(); if(d&&d.wedding){ LAST_ANSWERS=d.wedding.answers||LAST_ANSWERS; } document.getElementById('updated').textContent='Saved '+new Date().toLocaleTimeString(); }
+    if(r.ok){ const d=await r.json(); if(d&&d.wedding){ WED=d.wedding; LAST_ANSWERS=d.wedding.answers||LAST_ANSWERS; } document.getElementById('updated').textContent='Saved '+new Date().toLocaleTimeString(); }
     else{ document.getElementById('updated').textContent='Save failed'; }
   }catch(e){ document.getElementById('updated').textContent='Save failed'; }
 }

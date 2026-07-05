@@ -167,12 +167,13 @@ function openGigWindow(){
   renderGigWindow();
   gw.style.display='flex';
 }
-function renderGigWindow(){
-  const gw=document.getElementById('gig-window');if(!gw||!CURRENT)return;
-  const q=CURRENT.questionnaire;
-  const answers=CURRENT.answers||{};
+let GIG_TAB='info';
+function setGigTab(t){ GIG_TAB=t; renderGigWindow(); }
+function gigInfoRows(){
+  const q=CURRENT.questionnaire, answers=CURRENT.answers||{};
   const flagged=(q&&q.questions||[]).filter(qq=>qq.gigShow&&qq.type!=='header');
-  const rows=flagged.length?flagged.map(qq=>{
+  if(!flagged.length)return '<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template, then save.</div>';
+  return flagged.map(qq=>{
     const a=answers[qq.id]||'';
     return `<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
       <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);font-weight:700">${esc(qq.label)}</div>
@@ -180,7 +181,35 @@ function renderGigWindow(){
         style="width:100%;font-size:1rem;color:#fff;margin-top:3px;background:transparent;border:none;border-bottom:1px dashed transparent;padding:2px 0;font-family:inherit"
         onfocus="this.style.borderBottomColor='var(--neon)'" onblur="this.style.borderBottomColor='transparent'">
     </div>`;
-  }).join(''):'<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No questions are flagged for the gig window yet. Tick “📺 Gig window” on questions in your template, then save the template.</div>';
+  }).join('');
+}
+function gigTimelineRows(){
+  const tl=(CURRENT.timeline||[]);
+  if(!tl.length)return '<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No timeline added yet.</div>';
+  return tl.map(t=>`<div style="display:flex;gap:12px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
+    <div style="color:var(--neon);font-weight:800;font-size:.95rem;min-width:64px">${esc(t.time||'')}</div>
+    <div style="color:#fff;font-size:.95rem">${esc(t.label||'')}</div>
+  </div>`).join('');
+}
+function gigMusicRows(){
+  const blocks=(CURRENT.blocks||[]);
+  if(!blocks.length)return '<div style="padding:20px 14px;color:#8b93a7;font-size:.88rem;text-align:center">No music blocks yet.</div>';
+  return blocks.map(b=>{
+    const songs=(b.songs||[]);
+    const songHtml=songs.length?songs.map(s=>`<div style="display:flex;gap:8px;align-items:baseline;padding:4px 0">
+      <span style="color:${s.played?'var(--neon)':'#3a4560'};font-weight:800;width:14px">${s.played?'✓':'○'}</span>
+      <span style="color:#fff;font-size:.9rem">${esc(s.title||'')}${s.artist?` <span style="color:#8b93a7">· ${esc(s.artist)}</span>`:''}</span>
+    </div>`).join(''):'<div style="color:#5b6479;font-size:.85rem;font-style:italic;padding:4px 0">No songs chosen</div>';
+    return `<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
+      <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);font-weight:700;margin-bottom:4px">${esc(b.name||'Block')} <span style="color:#8b93a7">(${songs.length}/${b.capacity||songs.length})</span></div>
+      ${songHtml}
+    </div>`;
+  }).join('');
+}
+function renderGigWindow(){
+  const gw=document.getElementById('gig-window');if(!gw||!CURRENT)return;
+  const body=GIG_TAB==='timeline'?gigTimelineRows():GIG_TAB==='music'?gigMusicRows():gigInfoRows();
+  const tab=(id,label)=>`<span onclick="setGigTab('${id}')" style="flex:1;text-align:center;padding:8px 4px;font-size:.8rem;font-weight:700;cursor:pointer;border-bottom:2px solid ${GIG_TAB===id?'var(--neon)':'transparent'};color:${GIG_TAB===id?'#fff':'#8b93a7'}">${label}</span>`;
   gw.innerHTML=`
     <div id="gig-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--neon);color:#0a1228;cursor:move;user-select:none">
       <b style="font-size:.95rem">📺 ${esc(CURRENT.coupleNames||CURRENT.name||'Gig')}</b>
@@ -191,7 +220,8 @@ function renderGigWindow(){
         <span onclick="document.getElementById('gig-window').style.display='none'" title="Close" style="cursor:pointer;font-weight:800">✕</span>
       </div>
     </div>
-    <div style="overflow:auto">${rows}</div>`;
+    <div style="display:flex;background:#0a1020;border-bottom:1px solid rgba(255,255,255,.08)">${tab('info','ℹ️ Info')}${tab('timeline','🕐 Timeline')}${tab('music','🎵 Music')}</div>
+    <div style="overflow:auto">${body}</div>`;
   makeGigDraggable();
 }
 async function refreshGig(){
@@ -211,14 +241,18 @@ async function saveGigAnswer(qid,val){
 function popOutGig(){
   if(!CURRENT)return;
   const w=window.open('/gig.html?w='+encodeURIComponent(CURRENT.id),'gig_'+CURRENT.id,'width=420,height=640');
+  if(!w){
+    // Pop-up blocked by the browser — fall back to the in-page floating panel.
+    toast('Pop-up blocked — showing the gig window here. Allow pop-ups for a separate window.');
+    openGigWindow();
+    return;
+  }
   // Hand the child the exact data we already have, so it shows immediately and
   // always matches the in-page window — even if the stored snapshot differs.
-  if(w){
-    try{ w.__SEED_WEDDING=JSON.parse(JSON.stringify(CURRENT)); }catch(e){}
-  }
-  // Close the in-page floating panel since it's now popped out.
+  try{ w.__SEED_WEDDING=JSON.parse(JSON.stringify(CURRENT)); }catch(e){}
+  // Close the in-page floating panel if it was open.
   const gw=document.getElementById('gig-window');if(gw)gw.style.display='none';
-  if(w)w.focus();
+  w.focus();
 }
 // Float the gig window always-on-top using Document Picture-in-Picture (Chrome/Edge).
 // Falls back to the standalone pop-out window on browsers without support (e.g. Safari).
@@ -953,7 +987,7 @@ function renderPlan(){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
         <button class="btn btn-ghost btn-sm" onclick="exportWeddingPDF()">⬇ PDF run-sheet</button>
-        <button class="btn btn-ghost btn-sm" onclick="openGigWindow()">📺 Gig window</button>
+        <button class="btn btn-ghost btn-sm" onclick="popOutGig()">📺 Gig window</button>
         <button class="btn btn-ghost btn-sm" onclick="toggleCouplePreview()">👁 Preview couple's view</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
