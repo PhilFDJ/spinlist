@@ -179,6 +179,15 @@ async function boot(){
       </div>
     ` : ''}
 
+    ${d.user.prepAccess ? `
+      <div class="panel">
+        <h2>Music library</h2>
+        <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">Set up your music library once — scan a folder or import a library file (iTunes/Music, Rekordbox, Serato/M3U). It's saved to your account and used automatically to match songs and export playlists whenever you open Prep inside a wedding.</p>
+        <a class="btn btn-primary" href="/prep.html?setup=1" target="_blank" style="text-decoration:none">🎧 Set up music library</a>
+        <p style="color:var(--muted);font-size:.82rem;margin-top:10px">Folder scanning works best in Chrome or Edge. Your music files stay on your computer — nothing is uploaded; only the track list (titles, artists, file paths) is saved to your account.</p>
+      </div>
+    ` : ''}
+
     <div class="actions">
       <a class="btn btn-primary" href="/">Create an event</a>
       ${(noPlan||isComp||isTrial)

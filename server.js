@@ -632,6 +632,20 @@ function userHasPlannerAccess(user) {
   return planHasWeddingPlanner(user);
 }
 
+// Prep (music library + playlist export) is available to every logged-in DJ EXCEPT
+// Basic (internal id 'pro'), since Basic can't export playlists. Sub-DJs inherit from
+// their parent's plan. 'couple' role never gets Prep.
+function userHasPrepAccess(user) {
+  if (!user) return false;
+  if (user.role === 'couple') return false;
+  let planId = user.plan;
+  if (user.role === 'subdj' && user.parent_id) {
+    const parent = db.getUserById(user.parent_id);
+    planId = parent ? parent.plan : user.plan;
+  }
+  return planId !== 'pro';   // everyone except Basic
+}
+
 // Return the wedding's questionnaire with gig-window flags resolved LIVE from
 // templates (matched per-question by label). We consider BOTH the wedding owner's
 // templates AND the current viewer's templates, so a sub-DJ or co-DJ who ticked
@@ -1430,11 +1444,17 @@ app.post('/api/notifications/digest', auth.requireAuth, (req, res) => {
   res.json({ ok: true, dailyDigest: on });
 });
 
+// Guard: Prep endpoints require prep access (everyone except Basic).
+function requirePrep(req, res, next) {
+  if (!userHasPrepAccess(req.user)) return res.status(403).json({ error: 'Your plan doesn\u2019t include the music library. Upgrade to use Prep.' });
+  next();
+}
+
 // Prep tool: the DJ's remembered "go-to version" per song (across all weddings).
-app.get('/api/prep/picks', auth.requireAuth, (req, res) => {
+app.get('/api/prep/picks', auth.requireAuth, requirePrep, (req, res) => {
   res.json({ picks: db.getPrepPicks(req.user.id) });
 });
-app.post('/api/prep/picks', auth.requireAuth, (req, res) => {
+app.post('/api/prep/picks', auth.requireAuth, requirePrep, (req, res) => {
   const { key, chosen } = req.body || {};
   if (!key || typeof key !== 'string') return res.status(400).json({ error: 'key required' });
   const picks = db.setPrepPick(req.user.id, key, chosen || null);
@@ -1442,16 +1462,16 @@ app.post('/api/prep/picks', auth.requireAuth, (req, res) => {
 });
 
 // Prep tool: saved music-library snapshot (auto-loads across devices).
-app.get('/api/prep/library', auth.requireAuth, (req, res) => {
+app.get('/api/prep/library', auth.requireAuth, requirePrep, (req, res) => {
   res.json({ library: db.getPrepLibrary(req.user.id) });
 });
-app.post('/api/prep/library', auth.requireAuth, (req, res) => {
+app.post('/api/prep/library', auth.requireAuth, requirePrep, (req, res) => {
   const lib = (req.body || {}).library;
   if (!lib || !Array.isArray(lib.tracks)) return res.status(400).json({ error: 'library.tracks required' });
   const saved = db.setPrepLibrary(req.user.id, lib);
   res.json({ ok: true, count: saved ? saved.tracks.length : 0 });
 });
-app.delete('/api/prep/library', auth.requireAuth, (req, res) => {
+app.delete('/api/prep/library', auth.requireAuth, requirePrep, (req, res) => {
   db.setPrepLibrary(req.user.id, null);
   res.json({ ok: true });
 });
@@ -2045,7 +2065,7 @@ function shapeResults(json) {
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
   const p = PLANS[u.plan];
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u) };
 }
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public')));

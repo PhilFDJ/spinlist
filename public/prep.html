@@ -62,7 +62,7 @@
   </header>
 
   <h1>Prep <span style="color:var(--muted);font-weight:400">· <span id="wed-name">wedding</span></span></h1>
-  <p class="lead">Match the couple's song requests against your own music library, then export a playlist (.m3u) for each block to drop straight into your DJ software. Your files stay on your computer — nothing is uploaded.</p>
+  <p class="lead" id="intro-lead">Match the couple's song requests against your own music library, then export a playlist (.m3u) for each block to drop straight into your DJ software. Your files stay on your computer — nothing is uploaded.</p>
 
   <div class="panel">
     <div class="tabs">
@@ -108,6 +108,7 @@
 <script>
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
+const SETUP=!WID && (params.get('setup')==='1' || params.get('setup')==='');
 let WED=null, LIB=[], SRC='folder', PICKS={}, LIB_NAME='', PREV_LIB=[];   // PREV_LIB = last saved lib (with size/mtime) for incremental rescans
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function loadPicks(){ try{ const d=await (await fetch('/api/prep/picks',{credentials:'same-origin'})).json(); PICKS=d.picks||{}; }catch(e){ PICKS={}; } }
@@ -535,6 +536,15 @@ function dedupe(list){ const seen=new Set(); return list.filter(t=>{const k=norm
 /* ---------- results + export ---------- */
 function renderResults(){
   const el=document.getElementById('results');
+  // Setup mode (no wedding): show a library summary instead of match results.
+  if(SETUP){
+    if(!LIB.length){ el.innerHTML='<div class="panel"><p class="status">No music loaded yet. Scan a folder or import a library file above to build your library.</p></div>'; return; }
+    const vids=LIB.filter(t=>t.video).length;
+    el.innerHTML='<div class="panel"><h2 style="margin-top:0">Your music library</h2>'+
+      '<p class="lead"><b>'+LIB.length.toLocaleString()+'</b> tracks saved'+(vids?(' · <b>'+vids+'</b> music videos 🎬'):'')+'.</p>'+
+      '<p class="lead" style="font-size:.9rem;color:var(--muted)">This library is used automatically when you open Prep inside a wedding. Rescan to pick up new music, or forget it to start over.</p></div>';
+    return;
+  }
   if(!WED){ el.innerHTML='<p class="status">Loading wedding…</p>'; return; }
   const blocks=(WED.blocks||[]).filter(b=>(b.songs||[]).length);
   if(!blocks.length){ el.innerHTML='<div class="panel"><p class="status">This wedding has no song requests yet.</p></div>'; return; }
@@ -655,6 +665,18 @@ function exportAll(){
 
 /* ---------- load wedding ---------- */
 async function loadWed(){
+  // Setup mode: no wedding — just manage the library.
+  if(SETUP){
+    document.getElementById('wed-name').textContent='music library setup';
+    document.title='Music library · Spinlist';
+    const lead=document.getElementById('intro-lead'); if(lead)lead.textContent='Set up your music library once here — scan a folder or import a library file. It\u2019s saved to your account and used automatically whenever you open Prep inside a wedding. Your files stay on your computer — nothing is uploaded.';
+    try{ await loadPicks(); }catch(e){}
+    const hadSaved=await loadSavedLibrary();
+    renderResults();
+    if(hadSaved){ document.getElementById('folder-stat').textContent='Loaded your saved library ('+LIB.length+' tracks). Rescan a folder to update it.'; showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
+    try{ const saved=await idbGet('dirHandle'); if(saved){ DIR_HANDLE=saved; showRescan(saved.name); } }catch(e){}
+    return;
+  }
   if(!WID){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">No wedding specified. Open Prep from a wedding in your planner.</p></div>'; return; }
   try{
     const r=await fetch('/api/weddings/'+encodeURIComponent(WID),{credentials:'same-origin'});

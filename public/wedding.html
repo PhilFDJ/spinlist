@@ -1001,7 +1001,7 @@ function renderPlan(){
         ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
         <button class="btn btn-ghost btn-sm" onclick="exportWeddingPDF()">⬇ PDF run-sheet</button>
         <button class="btn btn-ghost btn-sm" onclick="popOutGig()">📺 Gig window</button>
-        <a class="btn btn-ghost btn-sm" href="/prep.html?w=${CURRENT.id}" target="_blank">🎧 Prep</a>
+        ${(ME&&ME.prepAccess)?`<a class="btn btn-ghost btn-sm" href="/prep.html?w=${CURRENT.id}" target="_blank">🎧 Prep</a>`:''}
         <button class="btn btn-ghost btn-sm" onclick="toggleCouplePreview()">👁 Preview couple's view</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
