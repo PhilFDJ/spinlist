@@ -127,7 +127,8 @@ async function boot(){
 
     <div class="panel">
       <h2>Hosts &amp; subscribers</h2>
-      <div id="users-summary" style="color:var(--muted);font-size:.9rem;margin:4px 0 14px"></div>
+      <div id="users-summary" style="color:var(--muted);font-size:.9rem;margin:4px 0 10px"></div>
+      <div id="users-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px"></div>
       <div id="users-list"><p style="color:var(--muted);font-size:.9rem;margin-top:8px">Loading…</p></div>
     </div>`;
   setKind('comp');
@@ -208,6 +209,71 @@ async function deleteCode(code){
   loadCodes();
 }
 
+let ALL_USERS=[];       // full list from the server
+let USER_FILTER='all';  // current filter key
+
+// Each filter: key, button label, and a test(u) that decides if a user matches.
+const USER_FILTERS=[
+  ['all','All',()=>true],
+  ['pro',planLabel('pro'),u=>u.plan==='pro'],
+  ['studio',planLabel('studio'),u=>u.plan==='studio'],
+  ['prowedding',planLabel('prowedding'),u=>u.plan==='prowedding'],
+  ['proweddingmulti',planLabel('proweddingmulti'),u=>u.plan==='proweddingmulti'],
+  ['trial','Trial',u=>u.plan==='trial'],
+  ['comp','Comp',u=>u.status==='comp'],
+  ['subdj','Sub-DJs',u=>u.role==='subdj'],
+  ['couple','Couples',u=>u.role==='couple'],
+  ['free','Free / none',u=>u.status==='free'||u.plan==='none'],
+];
+
+function renderUserFilters(){
+  const bar=document.getElementById('users-filters');
+  if(!bar)return;
+  bar.innerHTML=USER_FILTERS.map(([key,label])=>{
+    const count=ALL_USERS.filter(USER_FILTERS.find(f=>f[0]===key)[2]).length;
+    const active=key===USER_FILTER;
+    return `<button class="btn ${active?'btn-primary':'btn-ghost'}" style="padding:6px 12px;font-size:.8rem" onclick="setUserFilter('${key}')">${esc(label)} <span style="opacity:.65">${count}</span></button>`;
+  }).join('');
+}
+
+function setUserFilter(key){ USER_FILTER=key; renderUserFilters(); renderUsersTable(); }
+
+function renderUsersTable(){
+  const list=document.getElementById('users-list');
+  const test=(USER_FILTERS.find(f=>f[0]===USER_FILTER)||USER_FILTERS[0])[2];
+  const users=ALL_USERS.filter(test);
+  if(!users.length){ list.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:8px">No accounts match this filter.</p>'; return; }
+  const badge=st=>{
+    const map={paying:['Paying','paying'],trial:['Trial','trial'],'trial-ended':['Trial ended','free'],comp:['Comp','comp'],active:['Active','comp'],free:['Free','free']};
+    const [label,cls]=map[st]||['Free','free'];
+    return `<span class="badge ${cls}">${label}</span>`;
+  };
+  list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th>Events</th><th>Joined</th><th></th></tr></thead><tbody>${
+    users.map(u=>{
+      const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
+      const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';
+      let coupleInfo='';
+      if(u.role==='couple'&&u.couple){
+        const c=u.couple;
+        const wd=c.weddingDate?new Date(c.weddingDate).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'long',year:'numeric'}):'Not set';
+        const host=c.hostName?(esc(c.hostName)+(c.hostEmail?(' ('+esc(c.hostEmail)+')'):'')):(c.hostEmail?esc(c.hostEmail):'—');
+        const assigned=c.assignedName?(esc(c.assignedName)+(c.assignedEmail?(' ('+esc(c.assignedEmail)+')'):'')):'Not assigned';
+        coupleInfo=`<span class="info-badge">i<span class="tip"><b>Wedding:</b> ${esc(c.weddingName||c.coupleNames||'—')}<br><b>Date:</b> ${wd}<br><b>Host DJ:</b> ${host}<br><b>Assigned DJ:</b> ${assigned}</span></span>`;
+      }
+      const actions=u.isAdmin?'<span class="muted" style="font-size:.8rem">—</span>':`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="resetUserPass('${u.id}','${esc(u.email)}')">Reset password</button> ${u.role==='subdj'?`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="makeIndependent('${u.id}','${esc(u.email)}')">Make independent</button> `:''}<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteUser('${u.id}','${esc(u.email)}')">Delete</button>`;
+      return `<tr>
+        <td><code>${esc(u.email)}</code>${adminTag}${coupleInfo}</td>
+        <td>${esc(u.name||'—')}</td>
+        <td>${esc(u.planName)}</td>
+        <td>${badge(u.status)}</td>
+        <td>${u.eventsCreated}</td>
+        <td>${joined}</td>
+        <td style="white-space:nowrap">${actions}</td>
+      </tr>`;
+    }).join('')
+  }</tbody></table>`;
+}
+
 async function loadUsers(){
   const list=document.getElementById('users-list');
   try{
@@ -215,37 +281,10 @@ async function loadUsers(){
     if(!r.ok){list.innerHTML='<p style="color:var(--muted);font-size:.9rem">Could not load.</p>';return;}
     const s=d.summary||{};
     document.getElementById('users-summary').textContent=`${s.total||0} hosts · ${s.paying||0} paying · ${s.trial||0} on trial · ${s.comp||0} comp · ${s.free||0} free`;
-    if(!d.users||!d.users.length){list.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:8px">No hosts have signed up yet.</p>';return;}
-    const badge=st=>{
-      const map={paying:['Paying','paying'],trial:['Trial','trial'],'trial-ended':['Trial ended','free'],comp:['Comp','comp'],active:['Active','comp'],free:['Free','free']};
-      const [label,cls]=map[st]||['Free','free'];
-      return `<span class="badge ${cls}">${label}</span>`;
-    };
-    list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th>Events</th><th>Joined</th><th></th></tr></thead><tbody>${
-      d.users.map(u=>{
-        const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
-        const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';
-        // Couple accounts: hover info box with wedding date + host DJ.
-        let coupleInfo='';
-        if(u.role==='couple'&&u.couple){
-          const c=u.couple;
-          const wd=c.weddingDate?new Date(c.weddingDate).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'long',year:'numeric'}):'Not set';
-          const host=c.hostName?(esc(c.hostName)+(c.hostEmail?(' ('+esc(c.hostEmail)+')'):'')):(c.hostEmail?esc(c.hostEmail):'—');
-          const assigned=c.assignedName?(esc(c.assignedName)+(c.assignedEmail?(' ('+esc(c.assignedEmail)+')'):'')):'Not assigned';
-          coupleInfo=`<span class="info-badge">i<span class="tip"><b>Wedding:</b> ${esc(c.weddingName||c.coupleNames||'—')}<br><b>Date:</b> ${wd}<br><b>Host DJ:</b> ${host}<br><b>Assigned DJ:</b> ${assigned}</span></span>`;
-        }
-        const actions=u.isAdmin?'<span class="muted" style="font-size:.8rem">—</span>':`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="resetUserPass('${u.id}','${esc(u.email)}')">Reset password</button> ${u.role==='subdj'?`<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem" onclick="makeIndependent('${u.id}','${esc(u.email)}')">Make independent</button> `:''}<button class="btn btn-ghost" style="padding:5px 10px;font-size:.78rem;color:#ff6b5e;border-color:#ff6b5e" onclick="deleteUser('${u.id}','${esc(u.email)}')">Delete</button>`;
-        return `<tr>
-          <td><code>${esc(u.email)}</code>${adminTag}${coupleInfo}</td>
-          <td>${esc(u.name||'—')}</td>
-          <td>${esc(u.planName)}</td>
-          <td>${badge(u.status)}</td>
-          <td>${u.eventsCreated}</td>
-          <td>${joined}</td>
-          <td style="white-space:nowrap">${actions}</td>
-        </tr>`;
-      }).join('')
-    }</tbody></table>`;
+    ALL_USERS=d.users||[];
+    if(!ALL_USERS.length){document.getElementById('users-filters').innerHTML='';list.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:8px">No hosts have signed up yet.</p>';return;}
+    renderUserFilters();
+    renderUsersTable();
   }catch(e){ list.innerHTML='<p style="color:var(--muted);font-size:.9rem">Could not load hosts.</p>'; }
 }
 async function resetUserPass(id,email){
