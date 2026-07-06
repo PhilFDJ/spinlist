@@ -101,8 +101,8 @@
 <script>
 // Mac app download link — paste your download page URL here when it's live (only place to change).
 // Desktop app download links — paste new release URLs here when you rebuild (only place to change).
-const MAC_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.2.0/Spinlist.Music.Manager-1.2.0-arm64-mac.zip';
-const WIN_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.2.0/Spinlist.Music.Manager.Setup.1.2.0.exe';
+const MAC_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.3.0/Spinlist.Music.Manager-1.3.0-universal.dmg';
+const WIN_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.3.0/Spinlist.Music.Manager.Setup.1.3.0.exe';
 const params=new URLSearchParams(location.search);
 const WID=params.get('w');
 const EID=params.get('e');   // regular (non-wedding) event id
@@ -843,7 +843,7 @@ async function loadWed(){
   wire(winBtn, WIN_APP_URL);
   if(note){
     note.innerHTML =
-      '<b>Mac:</b> '+(MAC_APP_URL?'unzip it, move Spinlist Music Manager to Applications, then right-click the app → Open the first time.':'coming soon.')
+      '<b>Mac:</b> '+(MAC_APP_URL?'open the .dmg and drag Spinlist Music Manager into Applications, then open it — no security warning.':'coming soon.')
       +'<br><b>Windows:</b> '+(WIN_APP_URL?'run the installer; if Windows shows a “protected your PC” notice, click More info → Run anyway.':'coming soon.');
   }
 })();

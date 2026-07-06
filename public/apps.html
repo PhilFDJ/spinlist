@@ -108,10 +108,10 @@
   //  Download links — paste new release URLs here when you rebuild.
   //  Leave a URL blank ('') to show "coming soon" for that download.
   const APPS = {
-    mmMac: 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.2.0/Spinlist.Music.Manager-1.2.0-arm64-mac.zip',
-    mmWin: 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.2.0/Spinlist.Music.Manager.Setup.1.2.0.exe',
-    gwMac: 'https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/v1.0.0/spinlist-gig-macos-latest.zip',   // Gig Window Mac
-    gwWin: 'https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/v1.0.0/Spinlist.Gig.Window.Setup.1.0.0.exe',
+    mmMac: 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.3.0/Spinlist.Music.Manager-1.3.0-universal.dmg',
+    mmWin: 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.3.0/Spinlist.Music.Manager.Setup.1.3.0.exe',
+    gwMac: 'https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/v1.1.0/Spinlist.Gig.Window-1.1.0-universal.dmg',   // Gig Window Mac
+    gwWin: 'https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/v1.1.0/Spinlist.Gig.Window.Setup.1.1.0.exe',
   };
   // ===================================================================
   function wire(id, url){
@@ -122,7 +122,7 @@
   }
   wire('mm-mac', APPS.mmMac); wire('mm-win', APPS.mmWin);
   wire('gw-mac', APPS.gwMac); wire('gw-win', APPS.gwWin);
-  const macNote = 'Mac: unzip, move to Applications, then right-click → Open the first time.';
+  const macNote = 'Mac: open the .dmg and drag the app into your Applications folder, then open it — no security warning.';
   const winNote = 'Windows: run the installer; if a "protected your PC" notice appears, click More info → Run anyway.';
   document.getElementById('mm-note').textContent = macNote + '  ' + winNote;
   document.getElementById('gw-note').textContent = macNote + '  ' + winNote;
