@@ -28,6 +28,19 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
+/* Site-level Resend for the public contact form (separate from subscribers'
+   own Resend keys used for wedding invites). Set these in the environment:
+     CONTACT_RESEND_KEY   — a Resend API key for the Spinlist account
+     CONTACT_FROM         — verified from address, e.g. "hello@spinlist.co.uk"
+     CONTACT_FROM_NAME    — optional display name, e.g. "Spinlist"
+     CONTACT_TO           — where messages land, e.g. "phil@phil-freeman.co.uk"
+   If CONTACT_RESEND_KEY or CONTACT_TO is missing, the contact form falls back
+   to telling the user to email directly. */
+const CONTACT_RESEND_KEY = process.env.CONTACT_RESEND_KEY || '';
+const CONTACT_FROM = process.env.CONTACT_FROM || '';
+const CONTACT_FROM_NAME = process.env.CONTACT_FROM_NAME || 'Spinlist';
+const CONTACT_TO = process.env.CONTACT_TO || (process.env.ADMIN_EMAILS || '').split(',')[0].trim();
+
 // Escape user-supplied text before putting it into an HTML email.
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -189,6 +202,71 @@ app.get('/api/me', (req, res) => {
 });
 
 app.get('/api/plans', (_req, res) => res.json({ plans: PLANS }));
+
+/* Public contact form → emails us via the site Resend account.
+   Rate-limited lightly per-IP to deter abuse. No login required. */
+const contactHits = new Map();   // ip -> [timestamps]
+function contactRateOk(ip) {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;      // 10 minutes
+  const max = 5;                        // 5 messages per window
+  const arr = (contactHits.get(ip) || []).filter(t => now - t < windowMs);
+  if (arr.length >= max) return false;
+  arr.push(now);
+  contactHits.set(ip, arr);
+  return true;
+}
+
+app.get('/api/contact/status', (_req, res) => {
+  res.json({ enabled: !!(CONTACT_RESEND_KEY && CONTACT_FROM && CONTACT_TO) });
+});
+
+app.post('/api/contact', async (req, res) => {
+  try {
+    const name = String((req.body && req.body.name) || '').trim().slice(0, 80);
+    const email = String((req.body && req.body.email) || '').trim().slice(0, 120);
+    const message = String((req.body && req.body.message) || '').trim().slice(0, 3000);
+
+    if (!message) return res.status(400).json({ error: 'Please enter a message.' });
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(400).json({ error: 'That email address doesn\'t look right.' });
+    }
+    // Honeypot: bots fill hidden fields. If present, pretend success and drop it.
+    if (req.body && req.body.website) return res.json({ ok: true });
+
+    if (!(CONTACT_RESEND_KEY && CONTACT_FROM && CONTACT_TO)) {
+      return res.status(503).json({ error: 'unconfigured' });
+    }
+
+    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    if (!contactRateOk(ip)) {
+      return res.status(429).json({ error: 'You\'ve sent a few messages already — please try again a little later.' });
+    }
+
+    const html =
+      `<div style="font-family:system-ui,Arial,sans-serif;font-size:14px;line-height:1.5">` +
+      `<p><b>New Spinlist contact message</b></p>` +
+      `<p><b>Name:</b> ${escapeHtml(name || '(not given)')}<br>` +
+      `<b>Email:</b> ${escapeHtml(email || '(not given)')}</p>` +
+      `<p style="white-space:pre-wrap;border-left:3px solid #c6f24e;padding-left:12px">${escapeHtml(message)}</p>` +
+      `</div>`;
+
+    const result = await sendViaResend(
+      { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME },
+      {
+        to: CONTACT_TO,
+        subject: `Spinlist contact: ${name || email || 'message'}`.slice(0, 120),
+        html,
+        replyTo: email || undefined,
+      }
+    );
+    if (!result.ok) return res.status(502).json({ error: 'Could not send right now. Please try again, or email us directly.' });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: 'Something went wrong. Please email us directly.' });
+  }
+});
+
 
 /* =========================================================
    BILLING ROUTES (Stripe Checkout + Portal)

@@ -53,8 +53,10 @@
     <label class="field"><span>Your name</span><input id="c-name" maxlength="80" placeholder="Your name"></label>
     <label class="field"><span>Your email</span><input id="c-email" type="email" maxlength="120" placeholder="you@example.com"></label>
     <label class="field"><span>Message</span><textarea id="c-msg" maxlength="3000" placeholder="How can we help?"></textarea></label>
-    <button class="btn btn-neon" onclick="sendContact()">Send message ▸</button>
-    <p class="muted" style="margin-top:12px">This opens your email app with the message ready to send.</p>
+    <!-- Honeypot: hidden from people, tempting to bots. Leave empty. -->
+    <input id="c-website" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0" aria-hidden="true">
+    <button class="btn btn-neon" id="c-send" onclick="sendContact()">Send message ▸</button>
+    <p class="muted" id="c-status" style="margin-top:12px">We usually reply within a day.</p>
   </div>
 
   <h2>Frequently asked questions</h2>
@@ -81,19 +83,57 @@
 </div>
 
 <script>
-function sendContact(){
+const CONTACT_EMAIL='phil@phil-freeman.co.uk';
+function setStatus(msg,kind){
+  const el=document.getElementById('c-status');
+  el.textContent=msg;
+  el.style.color = kind==='ok' ? 'var(--neon-dim,#a8d63f)' : kind==='err' ? 'var(--coral,#ff6b5e)' : 'var(--muted)';
+}
+function mailtoFallback(name,email,msg){
+  const subject='Spinlist enquiry'+(name?(' from '+name):'');
+  const body='Name: '+(name||'(not given)')+'\nEmail: '+(email||'(not given)')+'\n\n'+msg;
+  window.location.href='mailto:'+CONTACT_EMAIL+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+}
+async function sendContact(){
   const name=(document.getElementById('c-name').value||'').trim();
   const email=(document.getElementById('c-email').value||'').trim();
   const msg=(document.getElementById('c-msg').value||'').trim();
-  if(!msg){ alert('Please write a message first.'); return; }
-  const subject='Spinlist enquiry'+(name?(' from '+name):'');
-  const body=
-    'Name: '+(name||'(not given)')+'\n'+
-    'Email: '+(email||'(not given)')+'\n\n'+
-    msg;
-  window.location.href='mailto:phil@phil-freeman.co.uk'
-    +'?subject='+encodeURIComponent(subject)
-    +'&body='+encodeURIComponent(body);
+  const website=(document.getElementById('c-website').value||'');   // honeypot
+  if(!msg){ setStatus('Please write a message first.','err'); return; }
+  if(email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ setStatus('That email address doesn\u2019t look right.','err'); return; }
+  const btn=document.getElementById('c-send');
+  btn.disabled=true; setStatus('Sending\u2026','muted');
+  try{
+    const r=await fetch('/api/contact',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,email,message:msg,website})
+    });
+    if(r.ok){
+      setStatus('Thanks — your message has been sent. We\u2019ll be in touch.','ok');
+      document.getElementById('c-name').value='';
+      document.getElementById('c-email').value='';
+      document.getElementById('c-msg').value='';
+      btn.disabled=false;
+      return;
+    }
+    let err={};
+    try{ err=await r.json(); }catch(_){}
+    if(err && err.error==='unconfigured'){
+      // Server can't send yet — fall back to opening the email app.
+      btn.disabled=false;
+      setStatus('Opening your email app\u2026','muted');
+      mailtoFallback(name,email,msg);
+      return;
+    }
+    setStatus((err && err.error) || 'Could not send. Please try again, or email us directly.','err');
+    btn.disabled=false;
+  }catch(e){
+    // Network error — offer the email-app fallback.
+    btn.disabled=false;
+    setStatus('Couldn\u2019t reach the server. Opening your email app instead\u2026','muted');
+    mailtoFallback(name,email,msg);
+  }
 }
 </script>
 </body>
