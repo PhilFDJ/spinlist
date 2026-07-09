@@ -1,0 +1,71 @@
+# Render Blueprint — provisions the web service, Postgres, and the daily-reminder
+# cron job together. In Render: New > Blueprint, point at this repo, then fill in
+# the secret env vars marked sync:false in the dashboard.
+services:
+  - type: web
+    name: gigconfirm
+    runtime: node
+    plan: starter            # avoids spin-down so scheduled work runs (~$7/mo)
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gigconfirm-db
+          property: connectionString
+      - key: ADMIN_PASSWORD
+        sync: false           # your dashboard password
+      - key: RESEND_API_KEY
+        sync: false           # from resend.com
+      - key: SEND_DOMAIN
+        value: gigconfirm.co.uk
+      - key: SEND_PREFIX
+        value: ldagency       # sends as ldagency@gigconfirm.co.uk
+      - key: MAIL_FROM
+        sync: false           # optional, e.g. "LD Agency <ldagency@gigconfirm.co.uk>"
+      - key: APP_URL
+        sync: false           # your live URL, e.g. https://gigconfirm.onrender.com
+      - key: CRON_SECRET
+        generateValue: true   # random secret shared with the cron job below
+
+  # Daily reminder job — calls the reminders endpoint every morning.
+  - type: cron
+    name: gigconfirm-reminders
+    runtime: node
+    plan: starter
+    schedule: "0 8 * * *"     # 08:00 UTC daily (~9am UK in summer). Adjust as needed.
+    buildCommand: npm install
+    startCommand: >
+      node -e "fetch(process.env.TARGET_URL + '/api/run-reminders', {method:'POST', headers:{'x-cron-secret': process.env.CRON_SECRET}}).then(r=>r.json()).then(d=>console.log('reminders:', JSON.stringify(d))).catch(e=>{console.error(e); process.exit(1);})"
+    envVars:
+      - key: TARGET_URL
+        sync: false           # same as APP_URL, e.g. https://gigconfirm.onrender.com
+      - key: CRON_SECRET
+        fromService:
+          name: gigconfirm
+          type: web
+          envVarKey: CRON_SECRET
+
+  # Weekly team digest — Wednesday, list of who hasn't confirmed. Fires at 09:00 and
+  # 10:00 UTC; the endpoint only actually sends when it's 10:00 in London (handles
+  # BST/GMT), so both runs are safe — one no-ops depending on the season.
+  - type: cron
+    name: gigconfirm-weekly-digest
+    runtime: node
+    plan: starter
+    schedule: "0 9,10 * * 3"  # Wed 09:00 & 10:00 UTC; guard picks the 10am-London one
+    buildCommand: npm install
+    startCommand: >
+      node -e "fetch(process.env.TARGET_URL + '/api/run-weekly-digest', {method:'POST', headers:{'x-cron-secret': process.env.CRON_SECRET}}).then(r=>r.json()).then(d=>console.log('digest:', JSON.stringify(d))).catch(e=>{console.error(e); process.exit(1);})"
+    envVars:
+      - key: TARGET_URL
+        sync: false
+      - key: CRON_SECRET
+        fromService:
+          name: gigconfirm
+          type: web
+          envVarKey: CRON_SECRET
+
+databases:
+  - name: gigconfirm-db
+    plan: starter             # ~$7/mo; avoids the 30-day free-DB expiry

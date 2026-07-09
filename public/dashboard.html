@@ -1,0 +1,2095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GigConfirm · Dashboard</title>
+<link rel="icon" type="image/png" href="/icon.png?v=2">
+<style>
+  :root{--ink:#0f1720;--ink2:#16212e;--panel:#1b2836;--line:#263341;--line2:#2c3a4a;
+    --cream:#eef3f8;--muted:#93a3b4;--amber:#e8a13a;--go:#25d366;--stop:#e2614b;--navy:#0b1220}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ink);color:var(--cream);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased;padding:0 0 60px}
+  header{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:19px;color:var(--amber)}
+  .logout{background:none;border:1px solid var(--line2);color:var(--cream);padding:8px 14px;border-radius:9px;font-size:13px;cursor:pointer}
+  .agLbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:8px 0 3px}
+  .agIn{width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:14px;font-family:inherit;box-sizing:border-box}
+  .agIn[type=date]::-webkit-calendar-picker-indicator{filter:invert(1);opacity:.7;cursor:pointer}
+  main{max-width:860px;margin:0 auto;padding:22px}
+  .upload{background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:20px;margin-bottom:22px}
+  .upload h2{margin:0 0 4px;font-size:17px}
+  .upload p{margin:0 0 16px;color:var(--muted);font-size:13.5px}
+  .drops{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:560px){.drops{grid-template-columns:1fr}}
+  label.file{display:block;padding:16px;border:1px dashed var(--line2);border-radius:12px;cursor:pointer;background:var(--ink);transition:border-color .12s,background .12s}
+  label.file.set{border-style:solid;border-color:var(--go)}
+  label.file.dragover{border-style:solid;border-color:var(--go);background:rgba(37,211,102,.10)}
+  label.file strong{display:block;font-size:14px}
+  label.file span{font-size:12px;color:var(--muted)}
+  label.file input{display:none}
+  .send{margin-top:14px;width:100%;padding:13px;border:none;border-radius:10px;background:var(--go);color:var(--navy);font-weight:700;font-size:15px;cursor:pointer}
+  .send:disabled{opacity:.5}
+  .result{margin-top:14px;font-size:14px;line-height:1.6}
+  .result .warn{color:var(--amber)}
+  .bar{display:flex;gap:18px;margin-bottom:18px;flex-wrap:wrap}
+  .stat{display:flex;flex-direction:column}
+  .stat b{font-size:24px;letter-spacing:-.03em}
+  .stat span{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .go{color:var(--go)}.amber{color:var(--amber)}.stop{color:var(--stop)}.mut{color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.07em;padding:8px 10px;border-bottom:1px solid var(--line2)}
+  th.sortable{cursor:pointer;user-select:none}
+  th.sortable:hover{color:var(--cream)}
+  th.sortable .arrow{color:var(--amber);font-size:10px}
+  .lineup-card{border:1px solid var(--line2);border-radius:10px;padding:14px 16px;margin-bottom:12px;background:var(--ink2)}
+  .lineup-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+  .lineup-acts{margin:6px 0 12px;padding-left:18px;font-size:13.5px;line-height:1.7}
+  .lineup-send{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .lineup-email{flex:1;min-width:200px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit}
+  .lineup-result{margin-top:8px;min-height:1px}
+  td{padding:11px 10px;border-bottom:1px solid var(--line)}
+  .pill{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:3px 9px;border-radius:20px}
+  .pill.pending{background:#243042;color:var(--amber)}
+  .pill.confirmed{background:#1f3320;color:var(--go)}
+  .pill.issue{background:#3a222a;color:var(--stop)}
+  .pill.resolved{background:#1f3320;color:var(--go)}
+  .nodev{font-size:11px;color:var(--stop)}
+  .resend{background:none;border:1px solid var(--line2);color:var(--go);font-size:11px;padding:3px 8px;border-radius:6px;cursor:pointer}
+  .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .clear{background:none;border:1px solid var(--line2);color:var(--muted);font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer}
+  .msg{font-size:12px;color:var(--muted);font-style:italic;margin-top:3px}
+  table.edit{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  table.edit th{font-size:10.5px}
+  table.edit td{padding:4px;border-bottom:1px solid var(--line)}
+  table.edit input{width:100%;min-width:64px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:6px;padding:7px 8px;font-size:13px;font-family:inherit}
+  table.edit input:focus{outline:none;border-color:var(--amber)}
+  .delrow{background:none;border:none;color:var(--stop);cursor:pointer;font-size:16px;padding:4px 8px}
+  .lowconf input{border-color:#3a4a5a}
+  tr.rownew td{background:rgba(111,191,115,0.06)}
+  tr.rowchanged td{background:rgba(232,161,58,0.07)}
+  td.changedcell input{border-color:var(--amber)}
+  .oldval{font-size:11px;color:var(--muted);margin-top:3px}
+  .oldval span{color:var(--stop);text-decoration:line-through}
+  .revert{background:none;border:1px solid var(--line2);color:var(--amber);font-size:10px;padding:1px 6px;border-radius:5px;cursor:pointer;margin-left:4px}
+  .badge{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.05em;padding:2px 7px;border-radius:10px;margin-right:6px;vertical-align:middle}
+  .badge.new{background:#1f3320;color:var(--go)}
+  .badge.changed{background:#2e3a2a;color:var(--amber)}
+/* --- help markers (shown only when help mode is on) --- */
+.help-tip{display:none;position:relative;margin-left:8px;width:18px;height:18px;border-radius:50%;background:var(--amber,#e8a13a);color:var(--navy);font-size:12px;font-weight:800;line-height:18px;text-align:center;cursor:help;vertical-align:middle;-webkit-user-select:none;user-select:none}
+body.help-on .help-tip{display:inline-block}
+.help-tip:hover::after,.help-tip.show::after{content:attr(data-help);position:absolute;left:50%;top:26px;transform:translateX(-50%);width:250px;max-width:70vw;background:#0b1220;color:#eef3f8;border:1px solid var(--line2,#2c3a4a);border-radius:10px;padding:10px 12px;font-size:12px;font-weight:400;line-height:1.5;text-align:left;z-index:80;box-shadow:0 8px 30px rgba(0,0,0,.5);white-space:normal}
+.help-tip:hover::before,.help-tip.show::before{content:"";position:absolute;left:50%;top:20px;transform:translateX(-50%);border:6px solid transparent;border-bottom-color:#0b1220;z-index:81}
+body.help-on #helpBtn{background:var(--amber,#e8a13a);color:var(--navy)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><img src="/logo-light.png" alt="GigConfirm" style="height:44px;width:auto;vertical-align:middle"></div>
+  <div style="position:relative;display:flex;align-items:center">
+    <div style="position:relative;margin-right:8px">
+      <button class="logout" id="bellBtn" onclick="toggleNotifs(event)" title="Notifications" style="padding:8px 12px">🔔<span id="notifCount" style="display:none;position:absolute;top:-4px;right:-4px;background:#e2614b;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:9px;padding:0 4px">0</span></button>
+      <div id="notifPanel" style="display:none;position:absolute;right:0;top:44px;width:min(380px,88vw);max-height:70vh;overflow-y:auto;background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:12px;z-index:60;box-shadow:0 12px 40px rgba(0,0,0,.5);text-align:left">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>Notifications</b><span id="notifMark" class="mut" style="font-size:11px;cursor:pointer">Mark all read</span></div>
+        <div id="notifList"></div>
+      </div>
+    </div>
+    <a class="logout" href="/GigConfirm-Guide.pdf" target="_blank" rel="noopener" style="margin-right:6px;text-decoration:none;display:inline-block" title="Download the GigConfirm user guide (PDF)">📖 Guide</a>
+    <button class="logout" id="helpBtn" onclick="toggleHelp()" style="margin-right:6px">? Help</button>
+    <button class="logout" id="acctBtn" onclick="toggleAcct(event)">Team &amp; account ▾</button>
+    <button class="logout" onclick="logout()" style="margin-left:6px">Sign out</button>
+    <div id="acctPanel" style="display:none;position:absolute;right:0;top:44px;width:min(440px,88vw);max-height:80vh;overflow-y:auto;background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:18px;z-index:50;box-shadow:0 12px 40px rgba(0,0,0,.5);text-align:left">
+      <div style="font-weight:700;font-size:16px;margin-bottom:12px">Team &amp; account</div>
+
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px">Your brand (shown on emails)</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+        <img id="logoPreview" src="" alt="" style="width:56px;height:56px;object-fit:contain;background:var(--ink);border:1px solid var(--line2);border-radius:8px;display:none" />
+        <div style="flex:1">
+          <input type="file" id="logoFile" accept="image/png,image/jpeg,image/gif,image/webp" style="font-size:12px;color:var(--muted)" />
+          <div class="msg" style="font-size:11px">PNG/JPG, under 500&nbsp;KB. Replaces the default logo on your emails.</div>
+        </div>
+        <button class="resend" onclick="uploadLogo()">Upload</button>
+      </div>
+      <input id="agWebsite" placeholder="Website (e.g. https://youragency.com)" style="width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px;margin-bottom:8px" />
+      <input id="agPhone" placeholder="Phone" style="width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px" />
+      <button class="resend" style="margin-top:8px" onclick="saveAgency()">Save details</button>
+      <div id="agResult" class="msg" style="margin-top:6px"></div>
+
+      <div style="border-top:1px solid var(--line2);margin:16px 0"></div>
+
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px">Team members</div>
+      <table class="edit"><tbody id="userRows"></tbody></table>
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        <input id="nuName" placeholder="Name" style="flex:1;min-width:90px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px 10px;font-size:12px" />
+        <input id="nuEmail" placeholder="Email" style="flex:1;min-width:120px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px 10px;font-size:12px" />
+        <input id="nuPass" type="password" placeholder="Temp password" style="flex:1;min-width:120px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px 10px;font-size:12px" />
+        <button class="resend" onclick="addUser()">Add &amp; email invite</button>
+      </div>
+      <div id="addUserResult" class="msg" style="margin-top:6px"></div>
+
+      <div style="border-top:1px solid var(--line2);margin:16px 0"></div>
+
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px">Venue groups / parent companies</div>
+      <div class="mut" style="font-size:12px;margin-bottom:8px">Set up the parent companies that own your venues (e.g. Away Resorts, Haven, Park Dean) and store their head-office email(s). You can then assign each venue to its group and send a group's whole lineup to head office from the Venue lineups section. Separate multiple emails with commas.</div>
+      <div id="brandList" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="nbName" placeholder="Group / company name (e.g. Away Resorts)" style="flex:1;min-width:110px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px 10px;font-size:12px" />
+        <input id="nbEmail" placeholder="Head office email(s), comma-separated" style="flex:2;min-width:160px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px 10px;font-size:12px" />
+        <button class="resend" onclick="addBrand()">Add group</button>
+      </div>
+      <div id="brandResult" class="msg" style="margin-top:6px"></div>
+
+      <div id="demoSection" style="display:none">
+        <div style="border-top:1px solid var(--line2);margin:16px 0"></div>
+        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px">Demo controls</div>
+        <div class="mut" style="font-size:12px;margin-bottom:8px">Reset the demo: permanently removes <b>all</b> venues, acts and their gigs so you can re-import a fresh demo set. Password-confirmed.</div>
+        <button class="resend" id="demoResetBtn" style="border-color:var(--stop);color:var(--stop)">🧹 Reset demo data</button>
+        <div id="demoResult" class="msg" style="margin-top:8px"></div>
+      </div>
+
+      <div id="storageSection" style="display:none">
+        <div style="border-top:1px solid var(--line2);margin:16px 0"></div>
+        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px">Photo &amp; video uploads (cloud storage)</div>
+        <div class="mut" style="font-size:12px;margin-bottom:8px">Connect your cloud storage so your acts can upload photos and videos from their check-off page. They land in your storage under &ldquo;GigConfirm Uploads&rdquo;, in a folder per act — ready for your social media. Only the agency head can connect or disconnect.</div>
+        <div id="storageStatus" style="font-size:13px;margin-bottom:8px"></div>
+        <div id="storageActions"></div>
+      </div>
+
+      <div id="calendarSection" style="display:none">
+        <div style="border-top:1px solid var(--line2);margin:16px 0"></div>
+        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px">Import gigs from Google Calendar</div>
+        <div class="mut" style="font-size:12px;margin-bottom:8px">Connect your Google Calendar to pull gigs straight from it instead of uploading a CSV. Events read as &ldquo;Act @ Venue&rdquo; (or the calendar name is the act). Only the agency head can connect.</div>
+        <div id="calStatus" style="font-size:13px;margin-bottom:8px"></div>
+        <div id="calActions"></div>
+      </div>
+
+      <div style="border-top:1px solid var(--line2);margin:16px 0"></div>
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px">Change my password</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="cpCur" type="password" placeholder="Current" style="flex:1;min-width:120px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px 10px;font-size:12px" />
+        <input id="cpNew" type="password" placeholder="New (8+ chars)" style="flex:1;min-width:120px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px 10px;font-size:12px" />
+        <button class="resend" onclick="changePassword()">Update</button>
+      </div>
+      <div id="cpResult" class="msg" style="margin-top:6px"></div>
+    </div>
+  </div>
+</header>
+<main>
+  <div class="upload">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Venue contacts<span class="help-tip" data-help="Import your venues and their contact details from CSV, Excel, Word or PDF — or add one manually. Acts see these details for the venue they're booked at (unless you turn sharing off).">?</span></h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="resend" id="addVenueBtn" style="font-size:13px;padding:8px 14px">＋ Add a venue</button>
+        <button class="resend" id="exportBtn" style="font-size:13px;padding:8px 14px">⤓ Export all to CSV</button>
+        <button class="resend" id="restoreVenuesBtn" style="font-size:13px;padding:8px 14px" title="Upload an edited venue CSV to update details — no check-off needed">⤒ Restore / update from CSV</button>
+        <input type="file" id="restoreVenuesFile" accept=".csv,.tsv,.txt" style="display:none" />
+      </div>
+      <div id="restoreVenuesResult" class="msg" style="margin-top:6px"></div>
+    </div>
+    <p>Add or update venue contact details. Accepts CSV, Excel, Word or PDF. We'll read what we can and show it for you to check before saving — nothing is saved until you click Save. To bulk-edit, export to CSV, edit in Excel, and re-upload.</p>
+    <div class="drops">
+      <label class="file" id="lbCont">
+        <strong id="contName">Choose a contacts file</strong>
+        <span>CSV · Excel (.xlsx) · Word (.docx) · PDF</span>
+        <input type="file" accept=".csv,.xlsx,.xls,.xlsm,.docx,.pdf" id="contacts" />
+      </label>
+    </div>
+    <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:13px;color:var(--muted);cursor:pointer">
+      <input type="checkbox" id="syncMode" style="margin-top:2px" />
+      <span>Treat this file as the <b>complete</b> list — also remove saved venues that aren't in it. Use only with a full export you've edited; you'll confirm any deletions first.</span>
+    </label>
+    <div class="result" id="contResult"></div>
+    <div id="reviewWrap" style="display:none">
+      <div id="reviewNote" class="result"></div>
+      <div style="overflow-x:auto">
+        <table id="reviewTable" class="edit">
+          <thead><tr><th>Venue</th><th>Contact</th><th>Phone</th><th>Email</th><th>Address</th><th></th></tr></thead>
+          <tbody id="reviewRows"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="send" id="addRow" style="width:auto;background:none;border:1px solid var(--line2);color:var(--cream)">+ Add row</button>
+        <button class="send" id="saveContacts" style="width:auto">Save venue contacts</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="upload">
+    <h2>Send this week's confirmations<span class="help-tip" data-help="Load this week's gigs — upload a bookings CSV or import from Google Calendar. Each act gets one email to confirm all their gigs. You'll get a review step before anything sends.">?</span></h2>
+    <p>Load this week's gigs by uploading a bookings CSV or importing from your Google Calendar. Each act gets one email with a link to confirm all their gigs, after a review step. Venue contacts are matched by venue name — manage them in the section above.</p>
+    <input id="weekLabel" placeholder="Name this week (e.g. Week of 3 Jun)" style="width:100%;margin-bottom:14px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:9px;padding:11px 12px;font-size:14px;font-family:inherit" />
+    <div class="drops">
+      <label class="file" id="lbBook">
+        <strong id="bookName">Bookings CSV</strong>
+        <span>act · email · venue · date · time · notes</span>
+        <input type="file" accept=".csv" id="bookings" />
+      </label>
+      <button class="file" id="calImportTile" onclick="openCalImport()" style="display:none;padding:16px;border:1px dashed var(--line2);border-radius:12px;cursor:pointer;background:var(--ink);text-align:left;font-family:inherit;color:var(--cream);flex-direction:column">
+        <strong style="display:block;font-size:15px;margin-bottom:2px">📅 Import from Google Calendar</strong>
+        <span style="display:block;font-size:12px;color:var(--muted)">pull this week's gigs from your calendars</span>
+      </button>
+    </div>
+    <button class="send" id="send" disabled style="margin-top:12px">Upload bookings</button>
+    <div class="result" id="result"></div>
+  </div>
+
+  <div class="upload" id="sendReviewPanel" style="display:none;border:1px solid var(--amber)">
+    <h2 style="margin:0 0 4px">Review before sending — <span id="srLabel"></span></h2>
+    <p style="margin:0 0 12px">Each act is listed with their gigs. Leave a gig <b>ticked</b> to include it in that act's confirmation email; <b>untick</b> to hold it back (it's marked <b>flagged</b>, not sent). The <b>share contact</b> tick on each gig controls whether the act sees that venue's phone/email — this saves as the venue's default for next time.</p>
+    <div id="srActs"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center">
+      <button class="send" id="srSendBtn" style="width:auto" onclick="sendConfirmations(false)">Send confirmations</button>
+      <button class="clear" onclick="sendConfirmations(true)">Re-send to everyone (incl. already sent)</button>
+      <span id="srResult" class="msg"></span>
+    </div>
+  </div>
+
+
+
+  <div class="upload">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0;cursor:pointer;user-select:none" id="venueToggle">▸ Saved venue contacts<span class="help-tip" data-help="Your stored venues. Edit contact details, tick Share to control whether acts see a venue's contact, or delete venues you no longer use.">?</span> <span id="venueHeaderCount" class="msg" style="font-weight:400"></span></h2>
+      <input id="venueSearch" placeholder="Search venues…" style="display:none;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:9px;padding:9px 12px;font-size:13px;min-width:180px" />
+    </div>
+    <div id="venueBody" style="display:none">
+      <p>These are stored on the server and reused every week. Edit a row and click Save, or remove a venue you no longer need.</p>
+      <div id="venueCount" class="msg" style="margin-bottom:8px"></div>
+      <div style="overflow-x:auto">
+        <table class="edit">
+          <thead><tr><th>Venue</th><th>Group</th><th title="Share this venue's contacts with acts">Share</th><th>Bookings</th><th></th></tr></thead>
+          <tbody id="venueRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="upload">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0;cursor:pointer;user-select:none" id="actToggle">▸ Acts<span class="help-tip" data-help="Everyone who receives confirmation emails, built automatically from your uploads. Edit an act's name or email, or remove them.">?</span> <span id="actHeaderCount" class="msg" style="font-weight:400"></span></h2>
+      <input id="actSearch" placeholder="Search name, stage name or email…" style="display:none;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:9px;padding:9px 12px;font-size:13px;min-width:180px" />
+    </div>
+    <div id="actBody" style="display:none">
+      <p>Acts (and booking agents) the system has emailed. Fix a name or email here and click Save, or remove one you no longer need. Changing an email also updates which inbox future confirmations go to.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <button class="resend" id="exportActsBtn" style="font-size:13px;padding:8px 14px">⤓ Export all to CSV</button>
+        <button class="resend" id="restoreActsBtn" style="font-size:13px;padding:8px 14px" title="Upload an edited acts CSV to add/update acts in bulk — owner only">⤒ Restore / update from CSV</button>
+        <button class="resend" id="clearEmptyActsBtn" style="font-size:13px;padding:8px 14px;border-color:var(--stop);color:var(--stop)" title="Remove all acts that have no bookings — owner only. Useful before re-importing.">🗑 Clear acts with no gigs</button>
+        <input type="file" id="restoreActsFile" accept=".csv,.tsv,.txt" style="display:none" />
+      </div>
+      <div id="restoreActsResult" class="msg" style="margin-bottom:8px"></div>
+      <div id="actCount" class="msg" style="margin-bottom:8px"></div>
+      <div style="overflow-x:auto">
+        <table class="edit">
+          <thead><tr>
+            <th class="actSortable" data-sort="real" style="cursor:pointer;user-select:none">Real name <span class="sortArrow"></span></th>
+            <th class="actSortable" data-sort="stage" style="cursor:pointer;user-select:none">Stage name(s) <span class="sortArrow"></span></th>
+            <th class="actSortable" data-sort="email" style="cursor:pointer;user-select:none">Email <span class="sortArrow"></span></th>
+            <th class="actSortable" data-sort="bookings" style="cursor:pointer;user-select:none">Bookings <span class="sortArrow"></span></th>
+            <th></th>
+          </tr></thead>
+          <tbody id="actRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div>
+      <div id="activeLabel" style="font-size:15px;font-weight:700;margin-bottom:6px"></div>
+      <div class="bar" id="bar"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="clear" onclick="openAddGig()" style="border-color:var(--go);color:var(--go)">＋ Add a gig</button>
+      <button class="clear" onclick="sendReminders()">✉ Send reminders now</button>
+      <button class="clear" onclick="sendDigest()">📋 Email team unconfirmed</button>
+      <button class="clear" onclick="exportActive()">⤓ Export status</button>
+      <button class="clear" id="historyBtn">🕘 History</button>
+      <button class="clear" onclick="clearWeek()">Archive this week</button>
+    </div>
+  </div>
+
+  <div id="calModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;align-items:flex-start;justify-content:center;padding:30px 16px;overflow-y:auto">
+    <div style="background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:20px;width:min(760px,96vw)">
+      <div style="font-weight:700;font-size:16px;margin-bottom:4px">📅 Import from Google Calendar</div>
+      <div class="mut" style="font-size:12px;margin-bottom:14px">Pick a date range and which calendars to pull gigs from, then review before anything sends.</div>
+
+      <div id="calStep1">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <div><label class="agLbl">From</label><input id="calFrom" type="date" class="agIn"></div>
+          <div><label class="agLbl">To</label><input id="calTo" type="date" class="agIn"></div>
+        </div>
+        <label class="agLbl">Calendars</label>
+        <div id="calList" class="mut" style="font-size:13px;max-height:180px;overflow-y:auto;border:1px solid var(--line2);border-radius:8px;padding:8px">Loading…</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button class="clear" onclick="closeCalImport()">Cancel</button>
+          <button class="resend" onclick="calPreview()">Preview gigs</button>
+        </div>
+      </div>
+
+      <div id="calStep2" style="display:none">
+        <div id="calReviewSummary" class="msg" style="margin-bottom:8px"></div>
+        <div style="max-height:340px;overflow-y:auto;border:1px solid var(--line2);border-radius:8px">
+          <table class="edit" style="width:100%"><thead><tr><th>Act</th><th>Email</th><th>Venue</th><th>When</th><th>Performance</th><th>Include</th></tr></thead><tbody id="calReviewRows"></tbody></table>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px"><input type="radio" name="calMode" value="current" checked> Add to current week</label>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px"><input type="radio" name="calMode" value="new"> Start a fresh week</label>
+        </div>
+        <div id="calApplyResult" class="msg" style="margin-top:8px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+          <button class="clear" onclick="calBack()">Back</button>
+          <button class="resend" onclick="calApply()">Import selected gigs</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="addGigModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto">
+    <div style="background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:20px;width:min(460px,94vw)">
+      <div style="font-weight:700;font-size:16px;margin-bottom:4px">Add a gig</div>
+      <div class="mut" style="font-size:12px;margin-bottom:14px">For last-minute bookings or swaps. Adds to this week's checks.</div>
+      <label class="agLbl">Act name</label>
+      <input id="agActName" list="agActList" placeholder="Start typing to pick an existing act…" class="agIn">
+      <datalist id="agActList"></datalist>
+      <label class="agLbl">Act email</label>
+      <input id="agActEmail" type="email" placeholder="act@email.com" class="agIn">
+      <label class="agLbl">Venue</label>
+      <input id="agVenue" list="agVenueList" placeholder="Pick a saved venue or type a new one" class="agIn">
+      <datalist id="agVenueList"></datalist>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1"><label class="agLbl">Date</label><input id="agDate" type="date" class="agIn"></div>
+        <div style="flex:1"><label class="agLbl">Time</label><input id="agTime" placeholder="e.g. 8pm" class="agIn"></div>
+      </div>
+      <label class="agLbl">Notes (optional)</label>
+      <input id="agNotes" placeholder="Anything the act should know" class="agIn">
+      <label style="display:flex;align-items:center;gap:8px;margin:12px 0;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="agEmailNow" checked> Email the act their check straight away
+      </label>
+      <div id="agResult" class="msg" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="clear" onclick="closeAddGig()">Cancel</button>
+        <button class="resend" onclick="submitAddGig()">Add gig</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="bulletinPanel" style="border:1px solid var(--line2);border-radius:12px;padding:12px 14px;margin-bottom:14px;background:var(--ink2)">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <div style="font-weight:700">📣 News bulletin</div>
+      <span class="mut" style="font-size:12px">Shown at the top of every act's page for this week.</span>
+      <label style="margin-left:auto;font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="bulletinOn" onchange="saveBulletin()"> Show to acts
+      </label>
+    </div>
+    <textarea id="bulletinText" placeholder="e.g. Reminder: all acts must sign in at reception before setting up this week." style="width:100%;min-height:52px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;resize:vertical"></textarea>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+      <button class="resend" onclick="saveBulletin()">Save bulletin</button>
+      <span id="bulletinResult" class="msg"></span>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr>
+      <th class="sortable" data-sort="act">Act <span class="arrow"></span></th>
+      <th class="sortable" data-sort="venue">Venue <span class="arrow"></span></th>
+      <th class="sortable" data-sort="date">When <span class="arrow"></span></th>
+      <th class="sortable" data-sort="status">Status <span class="arrow"></span></th>
+      <th></th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <div class="upload" style="margin-top:22px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0;cursor:pointer;user-select:none" id="lineupToggle">▸ Venue lineups<span class="help-tip" data-help="Send each venue an FYI list of which acts are coming that week. No act contact details are shared with the venue.">?</span> <span id="lineupHeaderCount" class="msg" style="font-weight:400"></span></h2>
+    </div>
+    <div id="lineupBody" style="display:none">
+      <p>Send each venue a list of the acts coming to them this week. This is FYI only — no act contact details are shared and venues don't confirm back. For venues that need several recipients, put the addresses in the venue's email field separated by commas.</p>
+      <div id="lineupList"></div>
+    </div>
+  </div>
+
+  <div id="historyPanel" class="upload" style="display:none;margin-top:22px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">History</h2>
+      <button class="clear" onclick="$('historyPanel').style.display='none'">Close</button>
+    </div>
+    <p>Past weeks you've sent out. Click one to see its bookings, statuses, and the timeline of when acts responded. Weeks older than 6 months clear automatically.</p>
+    <div id="batchList"></div>
+    <div id="batchDetail" style="margin-top:16px"></div>
+  </div>
+</main>
+
+<script>
+const $=(id)=>document.getElementById(id);
+let bookFile=null;
+
+$("bookings").onchange=e=>{bookFile=e.target.files[0];$("bookName").textContent=bookFile?bookFile.name:"Bookings CSV";$("lbBook").classList.toggle("set",!!bookFile);checkReady();};
+function checkReady(){$("send").disabled=!bookFile;}
+
+// Enable drag-and-drop on an upload label: dropping a file sets it on the hidden
+// <input type=file> and fires its normal change handler, so the rest works unchanged.
+function enableDropZone(labelId, inputId){
+  const label=$(labelId), input=$(inputId);
+  if(!label||!input)return;
+  ["dragenter","dragover"].forEach(ev=>label.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();label.classList.add("dragover");}));
+  ["dragleave","dragend"].forEach(ev=>label.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();if(e.target===label)label.classList.remove("dragover");}));
+  label.addEventListener("drop",e=>{
+    e.preventDefault();e.stopPropagation();label.classList.remove("dragover");
+    const files=e.dataTransfer&&e.dataTransfer.files;
+    if(!files||!files.length)return;
+    // check the dropped file matches what this input accepts
+    const accept=(input.getAttribute("accept")||"").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean);
+    const name=files[0].name.toLowerCase();
+    if(accept.length){
+      const ok=accept.some(a=>a.startsWith(".")?name.endsWith(a):(files[0].type===a));
+      if(!ok){alert("That file type isn't accepted here.\nExpected: "+accept.join(", "));return;}
+    }
+    try{
+      const dt=new DataTransfer();dt.items.add(files[0]);input.files=dt.files;
+    }catch(_){ /* older browsers: fall back below */ }
+    input.dispatchEvent(new Event("change",{bubbles:true}));
+  });
+}
+enableDropZone("lbBook","bookings");
+enableDropZone("lbCont","contacts");
+// Stop the browser navigating away if a file is dropped anywhere else on the page.
+["dragover","drop"].forEach(ev=>window.addEventListener(ev,e=>{
+  if(!e.target.closest||!e.target.closest("label.file")){e.preventDefault();}
+},false));
+
+$("send").onclick=async()=>{
+  $("send").disabled=true;$("result").innerHTML="Uploading…";
+  const fd=new FormData();
+  fd.append("bookings",bookFile);
+  fd.append("label",($("weekLabel").value||"").trim());
+  const r=await fetch("/api/upload",{method:"POST",body:fd});
+  const d=await r.json();
+  if(!r.ok){$("result").innerHTML='<span class="stop">'+(d.error||"Upload failed")+'</span>';$("send").disabled=false;return;}
+  let html=`Added <b>${d.created}</b> booking(s).`;
+  if(d.skippedNoEmail)html+=`<div class="warn">${d.skippedNoEmail} row(s) skipped — no act email and no agent email.</div>`;
+  if(d.created===0){
+    html+=`<div class="warn">Nothing was added. The file showed <b>${d.rowsSeen||0}</b> rows`;
+    if(d.headers&&d.headers.length)html+=` with columns: ${d.headers.join(", ")}`;
+    html+=`. Check it has an <b>Act</b> and <b>Act Email</b> column.</div>`;
+  }
+  if(d.unmatchedVenues?.length)html+=`<div class="warn">⚠ No contact match for: ${d.unmatchedVenues.join(", ")}</div>`;
+  $("send").disabled=false;
+  $("result").innerHTML=html;
+  $("weekLabel").value="";
+  bookFile=null;$("bookName").textContent="Bookings CSV";$("lbBook").classList.remove("set");$("send").disabled=true;
+  load();
+  // open the review step so the user chooses who gets venue contact, then sends
+  if(d.created>0 && d.batchId){openReview(d.batchId);}
+};
+
+// ---- pre-send review (grouped by act, per-gig send tickboxes) ----
+let reviewBatchId=null;
+async function openReview(batchId){
+  reviewBatchId=batchId||null;
+  const d=await (await fetch("/api/review"+(batchId?("?batchId="+encodeURIComponent(batchId)):""))).json();
+  reviewBatchId=d.batch?.id||batchId;
+  const acts=d.acts||[];
+  if(!acts.length){$("sendReviewPanel").style.display="none";return;}
+  $("srLabel").textContent=(d.batch?.label||"this week")+" · "+d.actCount+" act(s)";
+  const wrap=$("srActs");wrap.innerHTML="";
+  for(const a of acts){
+    const card=document.createElement("div");
+    card.className="srActCard";
+    card.style.cssText="border:1px solid var(--line2);border-radius:12px;padding:12px 14px;margin-bottom:10px";
+    let gigsHtml="";
+    for(const g of a.gigs){
+      const when=[g.gig_date,g.gig_time].filter(Boolean).join(" · ");
+      const already=g.already_sent;
+      const isIssue=g.status==="issue";
+      // right-hand control: share-venue tick if the venue has contact details, else an "add contact" link
+      let shareCtrl;
+      if(g.has_venue_contact){
+        shareCtrl='<label class="mut" style="font-size:11px;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Show this venue\'s contact details to the act">'+
+          '<input type="checkbox" class="srShareGig" data-venue="'+esc(g.venue_key||"")+'" '+(g.share_venue!==false?"checked":"")+'>share contact</label>';
+      }else{
+        shareCtrl='<button class="resend" style="font-size:10px;padding:3px 7px" onclick="openAddContact(\''+esc(g.venue_key||"")+'\',\''+esc((g.venue||"").replace(/'/g,"\\'"))+'\',this)">+ add contact</button>';
+      }
+      gigsHtml+='<div style="padding:6px 0;border-top:1px solid var(--line)">'+
+        '<div style="display:flex;align-items:center;gap:10px">'+
+          '<label style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer">'+
+            '<input type="checkbox" class="srGig" data-gig="'+esc(g.id)+'" '+(isIssue?"":"checked")+' onchange="updateAllNone(this.closest(\'.srActCard\'))">'+
+            '<span style="flex:1;min-width:0"><b>'+esc(g.venue||"—")+'</b> <span class="mut" style="font-size:12px">'+esc(when)+'</span>'+
+              (already?' <span class="mut" style="font-size:11px">· already sent</span>':'')+
+              (isIssue?' <span style="color:var(--stop);font-size:11px">· flagged</span>':'')+
+            '</span></label>'+
+          shareCtrl+
+        '</div>'+
+        '<input type="text" class="srNote" data-gig="'+esc(g.id)+'" value="'+esc(g.adhoc_note||"")+'" placeholder="Note for this gig (added to the act\'s email)…" style="width:100%;margin-top:6px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:7px;padding:6px 9px;font-size:12px;font-family:inherit">'+
+      '</div>';
+    }
+    card.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">'+
+        '<div><b>'+esc(a.act_name)+'</b> <span class="mut" style="font-size:12px">'+esc(a.act_email||"no email")+'</span></div>'+
+        '<div style="font-size:11px">'+
+          '<a href="#" class="srAll" onclick="toggleActGigs(this,true);return false" style="text-decoration:none">all</a>'+
+          ' <span class="mut">·</span> '+
+          '<a href="#" class="srNone" onclick="toggleActGigs(this,false);return false" style="text-decoration:none">none</a>'+
+        '</div>'+
+      '</div>'+
+      '<div style="margin-bottom:6px"><input type="text" class="srAgent" data-act="'+esc(a.act_id)+'" value="'+esc(a.act_contact_name||a.agent_contact_name||"")+'" placeholder="Greet as… (contact name — leave blank to use stage name)" onchange="saveAgentContact(this)" style="width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--muted);border-radius:7px;padding:5px 9px;font-size:11px;font-family:inherit"></div>'+
+      gigsHtml;
+    wrap.appendChild(card);
+    updateAllNone(card);  // set initial highlight from the gigs' state
+  }
+  $("sendReviewPanel").style.display="block";
+  $("srResult").innerHTML="";
+  $("sendReviewPanel").scrollIntoView({behavior:"smooth",block:"start"});
+}
+// tick/untick all gigs within one act card
+function toggleActGigs(link,on){
+  const card=link.closest(".srActCard");
+  if(!card)return;
+  card.querySelectorAll(".srGig").forEach(cb=>{cb.checked=on;});
+  updateAllNone(card);
+}
+// highlight 'all' or 'none' (green) to match the current tick state; neither if mixed
+function updateAllNone(card){
+  const boxes=[...card.querySelectorAll(".srGig")];
+  const allOn=boxes.length>0 && boxes.every(cb=>cb.checked);
+  const allOff=boxes.length>0 && boxes.every(cb=>!cb.checked);
+  const allLink=card.querySelector(".srAll"), noneLink=card.querySelector(".srNone");
+  if(allLink)allLink.style.color=allOn?"var(--go)":"var(--muted)";
+  if(noneLink)noneLink.style.color=allOff?"var(--go)":"var(--muted)";
+  if(allLink)allLink.style.fontWeight=allOn?"700":"400";
+  if(noneLink)noneLink.style.fontWeight=allOff?"700":"400";
+}
+// ---- add a venue contact from the review step ----
+let addContactRow=null;
+function openAddContact(venueKey,venueName,btn){
+  addContactRow=btn.closest("tr");
+  let modal=$("addContactModal");
+  if(!modal){
+    modal=document.createElement("div");modal.id="addContactModal";
+    modal.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:120;display:grid;place-items:center;padding:20px";
+    modal.innerHTML='<div style="background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:20px;width:min(420px,94vw)">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b id="acTitle">Add venue contact</b><button class="logout" onclick="closeAddContact()">Close</button></div>'+
+      '<input type="hidden" id="acKey"><input type="hidden" id="acName">'+
+      '<label class="mut" style="font-size:11px">Contact name</label><input id="acContact" style="width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px;margin-bottom:8px">'+
+      '<label class="mut" style="font-size:11px">Phone</label><input id="acPhone" style="width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px;margin-bottom:8px">'+
+      '<label class="mut" style="font-size:11px">Email (comma-separate several)</label><input id="acEmail" style="width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px;margin-bottom:8px">'+
+      '<label class="mut" style="font-size:11px">Address</label><input id="acAddress" style="width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px;margin-bottom:12px">'+
+      '<button class="send" style="width:100%" onclick="saveAddContact()">Save contact</button>'+
+      '<div id="acResult" class="msg" style="margin-top:8px"></div>'+
+    '</div>';
+    document.body.appendChild(modal);
+  }
+  $("acKey").value=venueKey;$("acName").value=venueName;
+  $("acTitle").textContent="Add contact — "+venueName;
+  $("acContact").value="";$("acPhone").value="";$("acEmail").value="";$("acAddress").value="";
+  $("acResult").innerHTML="";
+  modal.style.display="grid";
+  $("acContact").focus();
+}
+function closeAddContact(){const m=$("addContactModal");if(m)m.style.display="none";}
+async function saveAddContact(){
+  const venueKey=$("acKey").value, venue=$("acName").value;
+  const body={venueKey,venue,contact:$("acContact").value,phone:$("acPhone").value,email:$("acEmail").value,address:$("acAddress").value};
+  const r=await fetch("/api/review-add-contact",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok){$("acResult").innerHTML='<span class="stop">'+(d.error||"Couldn\'t save")+'</span>';return;}
+  closeAddContact();
+  loadVenues();                 // refresh saved venues in the background
+  if(reviewBatchId)openReview(reviewBatchId); // re-render review so the share tick appears
+}
+window.openAddContact=openAddContact;window.closeAddContact=closeAddContact;window.saveAddContact=saveAddContact;
+
+async function sendConfirmations(resend){
+  // any unticked gig is held back (blocked) → flagged instead of sent
+  const blockedGigs=[];
+  document.querySelectorAll(".srGig").forEach(cb=>{if(!cb.checked)blockedGigs.push(cb.dataset.gig);});
+  // venue share choices (last tick wins per venue, since a venue can appear on several gigs)
+  const choices={};
+  document.querySelectorAll(".srShareGig").forEach(cb=>{choices[cb.dataset.venue]=cb.checked;});
+  // per-gig ad-hoc notes → added to the act's email against that gig, saved on the booking
+  const notes={};
+  document.querySelectorAll(".srNote").forEach(t=>{const v=(t.value||"").trim();if(v)notes[t.dataset.gig]=v;});
+  const blockCount=blockedGigs.length;
+  if(blockCount){
+    if(!confirm(blockCount+" gig(s) are unticked. These will be held back and marked as flagged (not sent). Continue?"))return;
+  }
+  $("srSendBtn").disabled=true;$("srResult").textContent="Sending…";
+  const r=await fetch("/api/send-confirmations",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({batchId:reviewBatchId,blockedGigs,choices,notes,saveDefault:true,onlyUnsent:!resend})});
+  const d=await r.json();
+  $("srSendBtn").disabled=false;
+  if(!r.ok){$("srResult").innerHTML='<span class="stop">'+(d.error||"Send failed")+'</span>';return;}
+  $("srResult").innerHTML='<span style="color:var(--go)">Emailed '+d.emailed+' act(s).'+(d.flagged?(' '+d.flagged+' gig(s) flagged.'):'')+(d.skipped?(' '+d.skipped+' skipped.'):'')+(d.failed?(' '+d.failed+' failed.'):'')+'</span>';
+  load();
+}
+window.openReview=openReview;window.sendConfirmations=sendConfirmations;window.toggleActGigs=toggleActGigs;window.updateAllNone=updateAllNone;
+async function saveAgentContact(input){
+  try{
+    await fetch("/api/set-agent-contact",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({actId:input.dataset.act,name:input.value})});
+    input.style.borderColor="var(--go)";setTimeout(()=>input.style.borderColor="var(--line2)",800);
+  }catch(_){}
+}
+window.saveAgentContact=saveAgentContact;
+
+// ---- resolve a flagged gig (with notes) ----
+let resolveGigId=null;
+function openResolve(gigId,label){
+  resolveGigId=gigId;
+  let modal=$("resolveModal");
+  if(!modal){
+    modal=document.createElement("div");modal.id="resolveModal";
+    modal.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:120;display:grid;place-items:center;padding:20px";
+    modal.innerHTML='<div style="background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:20px;width:min(440px,94vw)">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b>Resolve flagged gig</b><button class="logout" onclick="closeResolve()">Close</button></div>'+
+      '<div id="rvLabel" class="mut" style="font-size:12px;margin-bottom:12px"></div>'+
+      '<label class="mut" style="font-size:11px">What did you do to resolve it? (everyone can see this)</label>'+
+      '<textarea id="rvNote" rows="3" style="width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:13px;margin:6px 0 12px;font-family:inherit" placeholder="e.g. Spoke to the act, they can do it after all"></textarea>'+
+      '<button class="send" style="width:100%" onclick="saveResolve()">Mark as resolved</button>'+
+      '<div id="rvResult" class="msg" style="margin-top:8px"></div>'+
+    '</div>';
+    document.body.appendChild(modal);
+  }
+  $("rvLabel").textContent=label||"";
+  $("rvNote").value="";$("rvResult").innerHTML="";
+  modal.style.display="grid";$("rvNote").focus();
+}
+function closeResolve(){const m=$("resolveModal");if(m)m.style.display="none";}
+async function saveResolve(){
+  const r=await fetch("/api/resolve-gig",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bookingId:resolveGigId,note:$("rvNote").value})});
+  const d=await r.json();
+  if(!r.ok){$("rvResult").innerHTML='<span class="stop">'+(d.error||"Couldn't resolve")+'</span>';return;}
+  closeResolve();load();
+}
+window.openResolve=openResolve;window.closeResolve=closeResolve;window.saveResolve=saveResolve;
+
+// Manually check off a gig when the act calls/texts us directly (records who did it).
+async function manualCheck(bookingId,label){
+  if(!confirm('Mark "'+label+'" as confirmed?\n\nUse this when the act has contacted you directly (call/text). It will be recorded as a manual check with your name.'))return;
+  const r=await fetch("/api/manual-check",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bookingId})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){alert(d.error||"Couldn't mark confirmed.");return;}
+  load();
+}
+window.manualCheck=manualCheck;
+
+// Export all saved venue contacts to CSV.
+$("exportBtn").onclick=()=>{ window.location.href="/api/export-contacts"; };
+
+// Acts: export + restore/update from CSV (owner-only, password, mirrors venues)
+$("exportActsBtn").onclick=()=>{ window.location.href="/api/export-acts"; };
+$("restoreActsBtn").onclick=()=>{
+  if(!window.__isOwner){const o=$("restoreActsResult");o.style.color="var(--stop)";o.textContent="Only the agency head can restore acts.";return;}
+  $("restoreActsFile").click();
+};
+$("restoreActsFile").onchange=async(e)=>{
+  const file=e.target.files&&e.target.files[0];
+  if(!file)return;
+  const password=prompt("Restoring acts can add and update your act list in bulk.\n\nEnter your password to continue:");
+  if(password===null){e.target.value="";return;}
+  if(!password){const o=$("restoreActsResult");o.style.color="var(--stop)";o.textContent="Password required.";e.target.value="";return;}
+  await doRestoreActs(file,false,password);
+  e.target.value="";
+};
+async function doRestoreActs(file,confirmDelete,password){
+  const out=$("restoreActsResult");
+  out.style.color="var(--muted)";out.textContent="Uploading "+file.name+"…";
+  const fd=new FormData();fd.append("acts",file);fd.append("password",password||"");
+  if(confirmDelete)fd.append("confirmDelete","true");
+  try{
+    const r=await fetch("/api/import-acts",{method:"POST",body:fd});
+    const d=await r.json();
+    if(!r.ok){out.style.color="var(--stop)";out.textContent=d.error||"Couldn't import.";return;}
+    if(d.needsConfirm){
+      const ok=confirm("This will DELETE "+d.deleteCount+" act(s) not in your file (only acts with no bookings):\n\n"+(d.deleteNames||[]).join(", ")+"\n\nContinue?");
+      if(!ok){out.style.color="var(--muted)";out.textContent="Cancelled — no changes made.";return;}
+      return doRestoreActs(file,true,password);
+    }
+    out.style.color="var(--go)";
+    out.textContent="✓ "+d.created+" added · "+d.updated+" updated"+(d.deleted?(" · "+d.deleted+" deleted"):"")+(d.skipped?(" · "+d.skipped+" skipped (no email)"):"")+".";
+    loadActs();
+  }catch(_){out.style.color="var(--stop)";out.textContent="Upload failed.";}
+}
+window.doRestoreActs=doRestoreActs;
+
+$("clearEmptyActsBtn").onclick=async()=>{
+  if(!window.__isOwner){alert("Only the agency head can do this.");return;}
+  const password=prompt("This removes every act that has NO bookings attached (acts with gigs are kept). Useful for resetting before a clean re-import.\n\nEnter your password to continue:");
+  if(password===null)return;
+  if(!password){alert("Password required.");return;}
+  // step 1: get the count
+  let r=await fetch("/api/clear-empty-acts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});
+  let d=await r.json();
+  if(!r.ok){alert(d.error||"Couldn't do that.");return;}
+  if(d.needsConfirm){
+    if(!confirm("This will permanently remove "+d.count+" act(s) that have no bookings. Acts with gigs are untouched.\n\nContinue?"))return;
+    r=await fetch("/api/clear-empty-acts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password,confirm:true})});
+    d=await r.json();
+    if(!r.ok){alert(d.error||"Couldn't do that.");return;}
+    const out=$("restoreActsResult");out.style.color="var(--go)";out.textContent="✓ Removed "+d.deleted+" act(s) with no gigs. You can now re-import for a clean list.";
+    loadActs();
+  }
+};
+
+// News bulletin (current week) — shown on every act's page
+async function loadStorage(){
+  try{
+    const d=await (await fetch("/api/storage/status")).json();
+    const sec=document.getElementById("storageSection");
+    if(!d.serverConfigured){sec.style.display="none";return;}   // no providers set up on server
+    sec.style.display="block";
+    const st=document.getElementById("storageStatus"),ac=document.getElementById("storageActions");
+    const label=(p)=>p==="dropbox"?"Dropbox":p==="onedrive"?"OneDrive":p==="gdrive"?"Google Drive":p;
+    if(d.connected){
+      st.innerHTML='<span style="color:var(--go)">✓ Connected</span> — '+label(d.provider)+' as <b>'+esc(d.accountName||"")+'</b>';
+      ac.innerHTML=window.__isOwner?'<button class="resend" onclick="disconnectStorage()">Disconnect</button>':'<span class="mut" style="font-size:12px">Only the agency head can change this.</span>';
+    }else{
+      st.innerHTML='<span class="mut">Not connected.</span>';
+      if(window.__isOwner){
+        ac.innerHTML=(d.available||[]).map(p=>'<button class="resend" style="margin-right:6px" onclick="connectStorage(\''+p+'\')">Connect '+label(p)+'</button>').join("");
+      }else{
+        ac.innerHTML='<span class="mut" style="font-size:12px">Ask your agency head to connect storage.</span>';
+      }
+    }
+  }catch(_){}
+}
+function connectStorage(provider){
+  const w=window.open("/api/storage/"+provider+"/connect","gc_connect","width=520,height=680");
+  const timer=setInterval(()=>{ if(!w||w.closed){clearInterval(timer);loadStorage();} },1200);
+}
+async function disconnectStorage(){
+  if(!confirm("Disconnect storage? Acts won't be able to upload until you reconnect."))return;
+  await fetch("/api/storage/disconnect",{method:"POST"});
+  loadStorage();
+}
+window.connectStorage=connectStorage;window.disconnectStorage=disconnectStorage;
+
+async function loadDemo(){
+  try{
+    const d=await (await fetch("/api/demo-enabled")).json();
+    if(d.enabled)document.getElementById("demoSection").style.display="block";
+  }catch(_){}
+}
+$("demoResetBtn").onclick=async()=>{
+  const password=prompt("This permanently deletes ALL venues, acts and gigs on this account so you can re-import a fresh demo set.\n\nEnter your password to continue:");
+  if(password===null)return;
+  if(!password){const o=$("demoResult");o.style.color="var(--stop)";o.textContent="Password required.";return;}
+  let r=await fetch("/api/demo-reset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});
+  let d=await r.json();
+  if(!r.ok){const o=$("demoResult");o.style.color="var(--stop)";o.textContent=d.error||"Couldn't reset.";return;}
+  if(d.needsConfirm){
+    const c=d.counts;
+    if(!confirm("This will permanently delete:\n\n• "+c.venues+" venue(s)\n• "+c.acts+" act(s)\n• "+c.bookings+" gig(s)/booking(s)\n\nThis cannot be undone. Continue?"))return;
+    r=await fetch("/api/demo-reset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password,confirm:true})});
+    d=await r.json();
+    if(!r.ok){const o=$("demoResult");o.style.color="var(--stop)";o.textContent=d.error||"Couldn't reset.";return;}
+    const o=$("demoResult");o.style.color="var(--go)";o.textContent="✓ Demo reset — removed "+d.wiped.venues+" venues, "+d.wiped.acts+" acts, "+d.wiped.bookings+" gigs. Import your demo CSVs to repopulate.";
+    loadActs();load();
+  }
+};
+
+// ---- Google Calendar connect + import ----
+async function loadCalendar(){
+  try{
+    const d=await (await fetch("/api/calendar/status")).json();
+    const sec=document.getElementById("calendarSection");
+    const tile=document.getElementById("calImportTile");
+    const showTile=(on)=>{if(tile)tile.style.display=on?"flex":"none";};
+    if(!d.serverConfigured){sec.style.display="none";showTile(false);return;}
+    sec.style.display="block";
+    const st=document.getElementById("calStatus"),ac=document.getElementById("calActions");
+    if(d.connected){
+      st.innerHTML='<span style="color:var(--go)">✓ Connected</span> — Google Calendar as <b>'+esc(d.accountName||"")+'</b>';
+      ac.innerHTML=window.__isOwner?'<button class="resend" onclick="disconnectCalendar()">Disconnect</button>':'<span class="mut" style="font-size:12px">Only the agency head can change this.</span>';
+      showTile(true);
+    }else{
+      st.innerHTML='<span class="mut">Not connected.</span>';
+      ac.innerHTML=window.__isOwner?'<button class="resend" onclick="connectCalendar()">Connect Google Calendar</button>':'<span class="mut" style="font-size:12px">Ask your agency head to connect.</span>';
+      showTile(false);
+    }
+  }catch(_){}
+}
+function connectCalendar(){
+  const w=window.open("/api/calendar/google/connect","gc_cal","width=520,height=680");
+  const t=setInterval(()=>{ if(!w||w.closed){clearInterval(t);loadCalendar();} },1200);
+}
+async function disconnectCalendar(){
+  if(!confirm("Disconnect Google Calendar?"))return;
+  await fetch("/api/calendar/disconnect",{method:"POST"});
+  loadCalendar();
+}
+window.connectCalendar=connectCalendar;window.disconnectCalendar=disconnectCalendar;
+
+let calPreviewItems=[];
+async function openCalImport(){
+  document.getElementById("calModal").style.display="flex";
+  document.getElementById("calStep1").style.display="block";
+  document.getElementById("calStep2").style.display="none";
+  document.getElementById("calList").innerHTML="Loading…";
+  document.getElementById("calApplyResult").textContent="";
+  try{
+    const d=await (await fetch("/api/calendar/list")).json();
+    if(d.calendars){
+      const controls='<div style="display:flex;gap:14px;padding:2px 0 8px;margin-bottom:6px;border-bottom:1px solid var(--line2)">'+
+        '<a href="#" onclick="calSelectAll(true);return false" style="font-size:12px;color:var(--go)">Select all</a>'+
+        '<a href="#" onclick="calSelectAll(false);return false" style="font-size:12px;color:var(--muted)">Select none</a>'+
+        '</div>';
+      const rows=d.calendars.map(c=>
+        '<label style="display:block;padding:3px 0"><input type="checkbox" class="calChk" value="'+esc(c.id)+'" checked> '+esc(c.name)+(c.primary?' <span class="mut">(primary)</span>':'')+'</label>'
+      ).join("");
+      document.getElementById("calList").innerHTML=controls+rows;
+    }else{document.getElementById("calList").textContent=d.error||"Couldn't load calendars.";}
+  }catch(_){document.getElementById("calList").textContent="Couldn't load calendars.";}
+}
+function calSelectAll(on){document.querySelectorAll(".calChk").forEach(c=>{c.checked=on;});}
+window.calSelectAll=calSelectAll;
+function closeCalImport(){document.getElementById("calModal").style.display="none";}
+function calBack(){document.getElementById("calStep1").style.display="block";document.getElementById("calStep2").style.display="none";}
+window.openCalImport=openCalImport;window.closeCalImport=closeCalImport;window.calBack=calBack;
+
+async function calPreview(){
+  const ids=[...document.querySelectorAll(".calChk:checked")].map(c=>c.value);
+  const from=document.getElementById("calFrom").value,to=document.getElementById("calTo").value;
+  if(!ids.length){alert("Pick at least one calendar.");return;}
+  if(!from||!to){alert("Pick a date range.");return;}
+  const sum=document.getElementById("calReviewSummary");
+  const r=await fetch("/api/calendar/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({calendarIds:ids,from,to})});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||"Preview failed.");return;}
+  calPreviewItems=d.items||[];
+  const tb=document.getElementById("calReviewRows");
+  if(!calPreviewItems.length){tb.innerHTML='<tr><td colspan="6" class="mut" style="padding:16px;text-align:center">No events found in that range.</td></tr>';}
+  else{
+    tb.innerHTML=calPreviewItems.map((it,i)=>{
+      const problem=it.issue||(!it.email?"No email — add one below":"");
+      const emailCell=it.email
+        ? '<span style="font-size:12px">'+esc(it.email)+'</span>'
+        : '<input class="calEmail" data-i="'+i+'" placeholder="add email…" style="background:var(--ink);border:1px solid '+(it.act?"var(--amber)":"var(--line2)")+';color:var(--cream);border-radius:6px;padding:4px 7px;font-size:12px;min-width:150px">';
+      return '<tr'+(problem&&!it.email?' style="background:rgba(232,161,58,.08)"':'')+'>'+
+        '<td style="font-size:13px">'+esc(it.act||"—")+'</td>'+
+        '<td>'+emailCell+'</td>'+
+        '<td style="font-size:13px">'+esc(it.venue||"—")+'</td>'+
+        '<td style="font-size:12px;white-space:nowrap">'+esc([it.date,it.time].filter(Boolean).join(" · "))+'</td>'+
+        '<td style="font-size:12px">'+esc(it.performance||"")+'</td>'+
+        '<td style="text-align:center"><input type="checkbox" class="calInc" data-i="'+i+'" '+((it.act&&it.venue&&it.date)?"checked":"")+'></td>'+
+      '</tr>';
+    }).join("");
+  }
+  const matched=calPreviewItems.filter(x=>x.matched).length;
+  const need=calPreviewItems.filter(x=>!x.email).length;
+  sum.style.color="var(--muted)";
+  sum.textContent=calPreviewItems.length+" event(s) found · "+matched+" matched to acts"+(need?(" · "+need+" need an email"):"");
+  document.getElementById("calStep1").style.display="none";
+  document.getElementById("calStep2").style.display="block";
+}
+window.calPreview=calPreview;
+
+async function calApply(){
+  // collect included rows, merging any hand-typed emails
+  const emailInputs={};document.querySelectorAll(".calEmail").forEach(inp=>{emailInputs[inp.dataset.i]=inp.value.trim();});
+  const items=[];
+  document.querySelectorAll(".calInc:checked").forEach(chk=>{
+    const i=chk.dataset.i,it=calPreviewItems[i];
+    const email=it.email||emailInputs[i]||"";
+    items.push({act:it.act,email,venue:it.venue,date:it.date,time:it.time,performance:it.performance});
+  });
+  const out=document.getElementById("calApplyResult");
+  if(!items.length){out.style.color="var(--stop)";out.textContent="Nothing selected to import.";return;}
+  const withoutEmail=items.filter(x=>!x.email||!/\S+@\S+\.\S+/.test(x.email)).length;
+  if(withoutEmail){out.style.color="var(--stop)";out.textContent=withoutEmail+" selected gig(s) still have no valid email — add one or untick them.";return;}
+  const mode=document.querySelector('input[name="calMode"]:checked').value;
+  const label=($("weekLabel")?.value||"").trim();
+  out.style.color="var(--muted)";out.textContent="Importing…";
+  const r=await fetch("/api/calendar/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,mode,label})});
+  const d=await r.json();
+  if(!r.ok){out.style.color="var(--stop)";out.textContent=d.error||"Import failed.";return;}
+  out.style.color="var(--go)";out.textContent="✓ Imported "+d.created+" gig(s)"+(d.skipped?(" · "+d.skipped+" skipped"):"")+". Opening the review…";
+  setTimeout(()=>{
+    closeCalImport();
+    load();
+    if(d.batchId){openReview(d.batchId);}   // same review/send flow as a CSV upload
+  },900);
+}
+window.calApply=calApply;
+
+async function loadBulletin(){
+  // never clobber what the user is currently typing
+  if(document.activeElement===$("bulletinText"))return;
+  try{
+    const d=await (await fetch("/api/bulletin")).json();
+    if(document.activeElement===$("bulletinText"))return;
+    $("bulletinText").value=d.bulletin||"";
+    $("bulletinOn").checked=!!d.bulletin_on;
+  }catch(_){}
+}
+async function saveBulletin(){
+  const out=$("bulletinResult");out.style.color="var(--muted)";out.textContent="Saving…";
+  try{
+    const r=await fetch("/api/bulletin",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({bulletin:$("bulletinText").value,bulletin_on:$("bulletinOn").checked})});
+    const d=await r.json();
+    if(!r.ok){out.style.color="var(--stop)";out.textContent=d.error||"Couldn't save.";return;}
+    out.style.color="var(--go)";out.textContent=$("bulletinOn").checked?"✓ Saved — showing to acts.":"✓ Saved — hidden from acts.";
+  }catch(_){out.style.color="var(--stop)";out.textContent="Couldn't save.";}
+}
+window.saveBulletin=saveBulletin;
+// Restore / update venues from an edited CSV (no check-off required)
+$("restoreVenuesBtn").onclick=()=>$("restoreVenuesFile").click();
+$("restoreVenuesFile").onchange=async(e)=>{
+  const file=e.target.files&&e.target.files[0];
+  if(!file){return;}
+  const out=$("restoreVenuesResult");
+  if(!window.__isOwner){out.style.color="var(--stop)";out.textContent="Only the agency head can restore venues from a file.";e.target.value="";return;}
+  const password=prompt("Restoring venues can overwrite details and delete groups.\n\nEnter your password to continue:");
+  if(password===null){e.target.value="";return;}                 // cancelled
+  if(!password){out.style.color="var(--stop)";out.textContent="Password required.";e.target.value="";return;}
+  await doRestoreVenues(file,false,password);
+  e.target.value="";  // reset so the same file can be re-picked
+};
+async function doRestoreVenues(file,confirmDelete,password){
+  const out=$("restoreVenuesResult");
+  out.style.color="var(--muted)";out.textContent="Uploading "+file.name+"…";
+  const fd=new FormData();fd.append("contacts",file);fd.append("password",password||"");
+  if(confirmDelete)fd.append("confirmDelete","true");
+  try{
+    const r=await fetch("/api/import-venues",{method:"POST",body:fd});
+    const d=await r.json();
+    if(!r.ok){out.style.color="var(--stop)";out.textContent=d.error||"Couldn't import.";return;}
+    // Server is asking us to confirm deletions before proceeding.
+    if(d.needsConfirm){
+      const parts=[];
+      if(d.venueDeleteCount)parts.push(d.venueDeleteCount+" venue(s): "+(d.venueDeleteNames||[]).join(", "));
+      if(d.deleteCount)parts.push(d.deleteCount+" group(s): "+(d.deleteNames||[]).join(", "));
+      const ok=confirm("This restore will DELETE the following, which aren't in your file:\n\n"+parts.join("\n\n")+
+        "\n\nBookings at deleted venues keep their venue name and re-link to a same-named venue if one exists. Groups' venues are just unassigned. Continue?");
+      if(!ok){out.style.color="var(--muted)";out.textContent="Cancelled — no changes made.";return;}
+      return doRestoreVenues(file,true,password);  // re-send, confirmed
+    }
+    out.style.color="var(--go)";
+    out.textContent="✓ Updated "+d.imported+" venue(s)"+
+      (d.renamed?(" · renamed "+d.renamed):"")+
+      (d.groupsCreated?(" · created "+d.groupsCreated+" group(s)"):"")+
+      (d.venuesDeleted?(" · deleted "+d.venuesDeleted+" venue(s)"):"")+
+      (d.groupsDeleted?(" · deleted "+d.groupsDeleted+" group(s)"):"")+".";
+    await loadBrands();   // refresh Team & account groups + the venue group picker
+    loadVenues();
+  }catch(_){out.style.color="var(--stop)";out.textContent="Upload failed.";}
+}
+
+// Manually add a venue: open the review table with one blank row, no file needed.
+$("addVenueBtn").onclick=()=>{
+  // clear any leftover state from a previous file upload so this can't trigger sync-delete
+  pendingMissing=[]; fileVenueKeys=[]; $("syncMode").checked=false;
+  $("reviewNote").innerHTML='<span class="msg">Type the venue details below and click Save.</span>';
+  $("reviewWrap").style.display="block";
+  addReviewRow({_status:"new"});
+  $("reviewWrap").scrollIntoView({behavior:"smooth",block:"center"});
+  const rows=$("reviewRows").querySelectorAll("tr");
+  const last=rows[rows.length-1];
+  if(last){const i=last.querySelector("input");if(i)i.focus();}
+};
+
+// ---- venue contacts: extract -> review -> save ----
+let pendingMissing=[]; // venues that would be deleted in sync mode
+let fileVenueKeys=[];  // all venue keys present in the uploaded file
+$("contacts").onchange=async e=>{
+  const f=e.target.files[0];
+  if(!f)return;
+  $("contName").textContent=f.name;
+  $("lbCont").classList.add("set");
+  $("contResult").innerHTML="Reading file…";
+  $("reviewWrap").style.display="none";
+  const fd=new FormData();fd.append("file",f);
+  try{
+    const r=await fetch("/api/extract-contacts",{method:"POST",body:fd});
+    const d=await r.json();
+    if(!r.ok){$("contResult").innerHTML='<span class="stop">'+(d.error||"Couldn't read file")+'</span>';return;}
+    pendingMissing=d.missing||[];
+    const all=d.contacts||[];
+    // all venue keys present in the file (incl. unchanged) — these are kept in sync mode
+    fileVenueKeys=all.map(c=>(c.venue||"").toLowerCase().replace(/\s+/g," ")).filter(Boolean);
+    const toReview=all.filter(c=>c._status!=="unchanged"); // hide unchanged
+    const counts=d.counts||{};
+    let summary="";
+    if(counts.unchanged)summary+=counts.unchanged+" unchanged (hidden). ";
+    summary+=(counts.new||0)+" new, "+(counts.changed||0)+" changed to review.";
+    $("contResult").innerHTML='<span class="ok" style="color:var(--go)">Read '+all.length+' contact(s). '+summary+'</span>';
+    $("reviewNote").innerHTML=d.note?'<span class="warn">'+esc(d.note)+'</span>':"";
+    renderReview(toReview);
+    $("reviewWrap").style.display="block";
+    if(!toReview.length){
+      $("reviewNote").innerHTML='<span class="warn">Nothing new or changed — everything in this file already matches your saved contacts. You can still add a row manually below.</span>';
+      addReviewRow({});
+    }
+  }catch(err){$("contResult").innerHTML='<span class="stop">'+esc(err.message)+'</span>';}
+};
+
+function renderReview(contacts){
+  $("reviewRows").innerHTML="";
+  if(contacts.length)contacts.forEach(addReviewRow);
+}
+function addReviewRow(c){
+  c=c||{};
+  const tr=document.createElement("tr");
+  const status=c._status||"";
+  const old=c._old||{};
+  if(status==="changed")tr.className="rowchanged";
+  else if(status==="new")tr.className="rownew";
+  else if(c.confidence==="low")tr.className="lowconf";
+
+  const cell=(v,field)=>{
+    const td=document.createElement("td");
+    const i=document.createElement("input");i.value=v||"";td.appendChild(i);
+    // if this field changed, show the old value beneath with a revert option
+    if(status==="changed" && Object.prototype.hasOwnProperty.call(old,field)){
+      td.classList.add("changedcell");
+      const note=document.createElement("div");note.className="oldval";
+      const oldText=old[field]?old[field]:"(was empty)";
+      note.innerHTML='was: <span>'+esc(oldText)+'</span> ';
+      const revert=document.createElement("button");revert.type="button";revert.className="revert";revert.textContent="keep old";
+      revert.onclick=()=>{i.value=old[field]||"";};
+      note.appendChild(revert);
+      td.appendChild(note);
+    }
+    return td;
+  };
+  tr.appendChild(cell(c.venue,"venue"));
+  tr.appendChild(cell(c.contact,"contact"));
+  tr.appendChild(cell(c.phone,"phone"));
+  tr.appendChild(cell(c.email,"email"));
+  tr.appendChild(cell(c.address,"address"));
+  const last=document.createElement("td");
+  if(status==="new"||status==="changed"){
+    const badge=document.createElement("span");
+    badge.className="badge "+status;badge.textContent=status==="new"?"NEW":"CHANGED";
+    last.appendChild(badge);
+  }
+  const b=document.createElement("button");b.className="delrow";b.textContent="✕";b.title="Remove row";
+  b.onclick=()=>tr.remove();last.appendChild(b);tr.appendChild(last);
+  $("reviewRows").appendChild(tr);
+}
+$("addRow").onclick=()=>addReviewRow({});
+$("saveContacts").onclick=async()=>{
+  const rows=[...$("reviewRows").querySelectorAll("tr")].map(tr=>{
+    const v=[...tr.querySelectorAll("input")].map(i=>i.value.trim());
+    return {venue:v[0],contact:v[1],phone:v[2],email:v[3],address:v[4]};
+  }).filter(r=>r.venue);
+  if(!rows.length){$("contResult").innerHTML='<span class="warn">Add at least one row with a venue name.</span>';return;}
+
+  // Sync mode: if "complete list" is ticked and some saved venues are absent from
+  // the file, confirm their deletion before doing anything.
+  const sync=$("syncMode").checked;
+  if(sync && pendingMissing.length){
+    const ok=confirm("This file is set as the complete list.\n\nThese "+pendingMissing.length+" saved venue(s) are NOT in the file and will be DELETED:\n\n"+pendingMissing.join("\n")+"\n\nProceed?");
+    if(!ok)return;
+  }
+
+  $("saveContacts").disabled=true;
+  const r=await fetch("/api/save-contacts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contacts:rows})});
+  const d=await r.json();
+  if(!r.ok){$("saveContacts").disabled=false;$("contResult").innerHTML='<span class="stop">'+(d.error||"Save failed")+'</span>';return;}
+
+  let extra="";
+  if(sync && pendingMissing.length){
+    // keepKeys = every venue in the file (incl. unchanged ones not shown), so the
+    // server only deletes venues genuinely absent from the file.
+    const keepKeys=fileVenueKeys.slice();
+    const dr=await fetch("/api/delete-missing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({keepKeys})});
+    const dd=await dr.json();
+    if(dr.ok)extra=" Removed "+dd.deleted+" venue(s) not in the file.";
+  }
+  $("saveContacts").disabled=false;
+  $("contResult").innerHTML='<span class="ok" style="color:var(--go)">Saved '+d.saved+' venue contact(s).'+extra+'</span>';
+  $("reviewWrap").style.display="none";
+  $("contName").textContent="Choose a contacts file";
+  $("lbCont").classList.remove("set");
+  $("syncMode").checked=false;
+  pendingMissing=[];
+  load();
+  loadVenues();
+};
+
+// ---- saved venue contacts: list, edit, delete ----
+let allVenues=[];
+async function loadVenues(){
+  const r=await fetch("/api/venues");
+  if(!r.ok)return;
+  const d=await r.json();
+  allVenues=d.venues||[];
+  if(!brandsCache.length){try{await loadBrands();}catch(_){}}  // so the brand dropdown has options
+  renderVenues();
+}
+function renderVenues(){
+  const q=($("venueSearch").value||"").toLowerCase();
+  const list=allVenues.filter(v=>!q||(v.display_name||"").toLowerCase().includes(q)||(v.contact_name||"").toLowerCase().includes(q));
+  $("venueHeaderCount").textContent="("+allVenues.length+")";
+  $("venueCount").textContent=allVenues.length+" venue(s) saved"+(q?(" · "+list.length+" matching"):"");
+  const tb=$("venueRows");tb.innerHTML="";
+  if(!list.length){tb.innerHTML='<tr><td colspan="5" class="mut" style="padding:20px;text-align:center">'+(allVenues.length?"No matches.":"No saved contacts yet. Upload some above.")+'</td></tr>';return;}
+  for(const v of list){
+    const tr=document.createElement("tr");
+    tr.dataset.key=v.name;
+    const cell=(val)=>{const td=document.createElement("td");const i=document.createElement("input");i.value=val||"";td.appendChild(i);return td;};
+    // Venue name — bigger, wider input now it has room
+    const nameTd=document.createElement("td");
+    const nameI=document.createElement("input");nameI.value=v.display_name||"";
+    nameI.style.cssText="font-size:15px;font-weight:600;min-width:200px";
+    nameTd.appendChild(nameI);tr.appendChild(nameTd);
+    // Brand dropdown
+    const brandTd=document.createElement("td");
+    const sel=document.createElement("select");sel.className="vBrand";
+    sel.style.cssText="background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:6px;padding:5px 6px;font-size:11px;max-width:95px";
+    sel.innerHTML='<option value="">— none —</option>'+(brandsCache||[]).map(b=>'<option value="'+esc(b.id)+'"'+(v.brand_id===b.id?" selected":"")+'>'+esc(b.name)+'</option>').join("");
+    brandTd.appendChild(sel);tr.appendChild(brandTd);
+    const sc=document.createElement("td");sc.style.textAlign="center";
+    const scBox=document.createElement("input");scBox.type="checkbox";scBox.className="vShare";scBox.checked=v.share_contact!==false;scBox.title="Share this venue's contacts with acts";
+    sc.appendChild(scBox);tr.appendChild(sc);
+    const bc=document.createElement("td");bc.className="mut";bc.style.textAlign="center";bc.textContent=v.booking_count||0;tr.appendChild(bc);
+    const act=document.createElement("td");act.style.whiteSpace="nowrap";
+    const save=document.createElement("button");save.className="resend";save.textContent="Save";save.onclick=()=>saveVenue(tr);
+    const del=document.createElement("button");del.className="delrow";del.textContent="✕";del.title="Delete venue";del.onclick=()=>deleteVenue(tr,v.display_name);
+    // expander holding ALL contacts (up to 3, each name/role/phone/email)
+    const nContacts=[v.contact_name,v.contact2_name,v.contact3_name].filter(Boolean).length;
+    const moreBtn=document.createElement("button");moreBtn.className="resend";moreBtn.textContent=nContacts?("Contacts ("+nContacts+")"):"＋ Contacts";moreBtn.title="Add up to 3 contacts (name, role, phone, email)";
+    const extraRow=document.createElement("tr");extraRow.className="venueExtra";extraRow.style.display="none";
+    const extraTd=document.createElement("td");extraTd.colSpan=5;extraTd.style.background="var(--ink2)";extraTd.style.padding="10px 14px";
+    const mk=(f,val,ph,wide)=>'<input class="vx" data-f="'+f+'" placeholder="'+ph+'" value="'+esc(val||"")+'" style="background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:6px;padding:6px 8px;font-size:12px;margin:2px;'+(wide?"min-width:160px":"min-width:110px")+'">';
+    const contactBlock=(n,name,role,phone,email)=>{
+      const P=n===1?{name:"contact_name",role:"contact_role",phone:"phone",email:"email"}
+                    :{name:"contact"+n+"_name",role:"contact"+n+"_role",phone:"contact"+n+"_phone",email:"contact"+n+"_email"};
+      return '<div style="font-size:11px;color:var(--muted);margin:6px 0 2px">Contact '+n+(n===1?' (main)':'')+'</div>'+
+        mk(P.name,name,"Name",true)+mk(P.role,role,"Role (e.g. Ents Manager)")+mk(P.phone,phone,"Phone")+
+        mk(P.email,email,n===1?"Email(s) — comma-separated":"Email",true);
+    };
+    extraTd.innerHTML=
+      contactBlock(1,v.contact_name,v.contact_role,v.phone,v.email)+
+      contactBlock(2,v.contact2_name,v.contact2_role,v.contact2_phone,v.contact2_email)+
+      contactBlock(3,v.contact3_name,v.contact3_role,v.contact3_phone,v.contact3_email)+
+      '<div style="font-size:11px;color:var(--muted);margin:10px 0 2px">Venue address</div>'+
+      mk("address",v.address,"Address / postcode",true)+
+      '<div style="font-size:11px;color:var(--muted);margin:10px 0 2px">Venue notes <span style="text-transform:none">(shown to acts — parking, load-in, access, etc.)</span></div>'+
+      '<textarea class="vx" data-f="notes" placeholder="Notes for acts about this venue" style="width:100%;min-height:52px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:6px;padding:6px 8px;font-size:12px;margin:2px 0;font-family:inherit;resize:vertical">'+esc(v.notes||"")+'</textarea>'+
+      '<div style="font-size:10px;color:var(--muted);margin-top:6px">Venue lineup emails are sent to all contact email addresses above. The main contact can hold several, comma-separated.</div>'+
+      '<div style="margin-top:8px"><button class="resend" onclick="saveVenue(this.closest(\'tr\').previousElementSibling)">Save contacts</button></div>';
+    extraRow.appendChild(extraTd);
+    moreBtn.onclick=()=>{const open=extraRow.style.display!=="none";extraRow.style.display=open?"none":"table-row";};
+    act.appendChild(save);act.appendChild(moreBtn);act.appendChild(del);tr.appendChild(act);
+    tr._extraRow=extraRow;
+    tb.appendChild(tr);
+    if(tr._extraRow)tb.appendChild(tr._extraRow);
+  }
+}
+async function saveVenue(tr){
+  // main row now has 1 text input: venue name
+  const v=[...tr.querySelectorAll('input:not([type=checkbox])')].map(i=>i.value.trim());
+  const share=tr.querySelector(".vShare")?.checked!==false;
+  const brand_id=tr.querySelector(".vBrand")?.value||"";
+  const body={key:tr.dataset.key,venue:v[0],share_contact:share,brand_id};
+  // all contact fields, emails and address come from the expandable sibling row
+  const extra=tr._extraRow;
+  if(extra){extra.querySelectorAll(".vx").forEach(i=>{body[i.dataset.f]=i.value.trim();});}
+  // map to the field names the server expects
+  body.contact=body.contact_name||"";
+  body.phone=body.phone||"";
+  body.email=body.email||"";
+  body.address=body.address||"";
+  const r=await fetch("/api/update-venue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||"Couldn't save");return;}
+  tr.dataset.key=(v[0]||"").toLowerCase().replace(/\s+/g," ");
+  tr.style.outline="2px solid var(--go)";setTimeout(()=>tr.style.outline="",900);
+  loadVenues();
+}
+async function deleteVenue(tr,name){
+  if(!confirm('Delete "'+name+'" from saved contacts? This cannot be undone.'))return;
+  const r=await fetch("/api/delete-venue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:tr.dataset.key})});
+  if(r.ok)loadVenues(); else alert("Couldn't delete");
+}
+$("venueSearch").oninput=renderVenues;
+
+// ---- collapse/expand sections ----
+function makeCollapsible(toggleId,bodyId,searchId,onFirstOpen){
+  let opened=false;
+  $(toggleId).onclick=()=>{
+    const body=$(bodyId);
+    const open=body.style.display==="none";
+    body.style.display=open?"block":"none";
+    if(searchId)$(searchId).style.display=open?"":"none";
+    // swap the ▸/▾ marker
+    const h=$(toggleId);h.innerHTML=h.innerHTML.replace(open?"▸":"▾",open?"▾":"▸");
+    if(open&&!opened&&onFirstOpen){opened=true;onFirstOpen();}
+  };
+}
+makeCollapsible("venueToggle","venueBody","venueSearch",loadVenues);
+makeCollapsible("actToggle","actBody","actSearch",loadActs);
+makeCollapsible("lineupToggle","lineupBody",null,loadLineups);
+// ---- notifications ----
+let notifOpen=false, notifSeenAt=null;
+function timeAgo(iso){
+  if(!iso)return "";
+  const d=new Date(iso), now=new Date(), s=Math.floor((now-d)/1000);
+  if(s<60)return "just now";
+  if(s<3600)return Math.floor(s/60)+"m ago";
+  if(s<86400)return Math.floor(s/3600)+"h ago";
+  const days=Math.floor(s/86400);
+  if(days<7)return days+"d ago";
+  return d.toLocaleDateString(undefined,{day:"numeric",month:"short"})+" "+d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
+}
+async function loadNotifs(){
+  try{
+    const d=await (await fetch("/api/notifications")).json();
+    const badge=$("notifCount");
+    if(d.unread>0){badge.textContent=d.unread>9?"9+":d.unread;badge.style.display="block";}
+    else badge.style.display="none";
+    const list=$("notifList");
+    if(!d.items||!d.items.length){list.innerHTML='<div class="mut" style="font-size:13px;padding:14px 6px;text-align:center">Nothing needs your attention 🎉</div>';return;}
+    list.innerHTML="";
+    for(const it of d.items){
+      const icon=it.type==="bounce"?"⚠️":it.type==="issue"?"🚩":"💳";
+      const isUnread=!notifSeenAt||(it.at&&new Date(it.at)>new Date(notifSeenAt));
+      const row=document.createElement("div");
+      row.style.cssText="display:flex;gap:10px;padding:10px 8px;border-radius:9px;cursor:pointer;align-items:flex-start"+(isUnread?";background:rgba(232,161,58,.10)":"");
+      row.onmouseenter=()=>row.style.background="var(--ink)";
+      row.onmouseleave=()=>row.style.background=isUnread?"rgba(232,161,58,.10)":"";
+      row.innerHTML='<div style="font-size:16px;flex-shrink:0">'+icon+'</div>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:13px;line-height:1.4;font-weight:'+(isUnread?"600":"400")+'">'+esc(it.text)+'</div>'+
+          (it.detail?'<div style="font-size:12px;color:var(--muted);line-height:1.4;margin-top:2px">'+esc(it.detail)+'</div>':'')+
+          '<div style="font-size:11px;color:var(--muted);margin-top:3px">'+esc(timeAgo(it.at))+'</div>'+
+        '</div>';
+      row.onclick=()=>{gotoTarget(it.target);};
+      list.appendChild(row);
+    }
+  }catch(_){}
+}
+function gotoTarget(target){
+  $("notifPanel").style.display="none";notifOpen=false;
+  if(target==="billing"){location.href="/billing.html";return;}
+  const map={acts:"actToggle",bookings:"rows",venues:"venueToggle"};
+  const id=map[target];
+  if(target==="acts"){const b=$("actBody");if(b&&b.style.display==="none")$("actToggle").click();}
+  if(target==="venues"){const b=$("venueBody");if(b&&b.style.display==="none")$("venueToggle").click();}
+  const el=document.getElementById(id)||document.querySelector("main");
+  if(el)el.scrollIntoView({behavior:"smooth",block:"center"});
+}
+async function toggleNotifs(e){
+  e.stopPropagation();
+  const p=$("notifPanel");
+  notifOpen=p.style.display==="none";
+  p.style.display=notifOpen?"block":"none";
+  // opening just displays; it does NOT auto-mark read (that's the button's job)
+  if(notifOpen)await loadNotifs();
+}
+document.addEventListener("click",e=>{
+  const p=$("notifPanel");
+  if(notifOpen&&p&&!p.contains(e.target)&&e.target.id!=="bellBtn"){p.style.display="none";notifOpen=false;}
+});
+async function markAllRead(e){
+  if(e)e.stopPropagation();
+  await fetch("/api/notifications/seen",{method:"POST"});
+  $("notifCount").style.display="none";
+  // server now excludes dismissed items, so a reload returns only genuinely new ones
+  await loadNotifs();
+}
+$("notifMark").onclick=markAllRead;
+window.toggleNotifs=toggleNotifs;
+// fetch the current seen marker once so unread highlighting is accurate
+(async()=>{try{const me=await (await fetch("/api/me")).json();notifSeenAt=me.notifs_seen_at||null;await loadNotifs();}catch(_){}})();
+loadNotifs();
+setInterval(loadNotifs,60000);
+
+// ---- help mode ----
+function toggleHelp(){
+  document.body.classList.toggle("help-on");
+}
+// let markers also be tapped (mobile / touch): tap toggles the tooltip
+document.addEventListener("click",e=>{
+  const t=e.target;
+  if(t.classList&&t.classList.contains("help-tip")){
+    e.stopPropagation();
+    document.querySelectorAll(".help-tip.show").forEach(x=>{if(x!==t)x.classList.remove("show");});
+    t.classList.toggle("show");
+  }else{
+    document.querySelectorAll(".help-tip.show").forEach(x=>x.classList.remove("show"));
+  }
+});
+window.toggleHelp=toggleHelp;
+let acctLoaded=false;
+function toggleAcct(e){
+  e.stopPropagation();
+  const p=$("acctPanel");
+  const show=p.style.display==="none";
+  p.style.display=show?"block":"none";
+  if(show&&!acctLoaded){acctLoaded=true;loadUsers();loadAgency();loadBrands();}
+}
+document.addEventListener("click",e=>{
+  const p=$("acctPanel");
+  if(p.style.display==="block"&&!p.contains(e.target)&&e.target.id!=="acctBtn")p.style.display="none";
+});
+
+async function loadAgency(){
+  const a=await (await fetch("/api/agency")).json();
+  $("agWebsite").value=a.website||"";
+  $("agPhone").value=a.phone||"";
+  if(a.has_logo){const img=$("logoPreview");img.src="/agency-logo/"+encodeURIComponent(a.id||"")+"?t="+Date.now();img.style.display="block";}
+}
+async function saveAgency(){
+  const r=await fetch("/api/agency",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({website:$("agWebsite").value,phone:$("agPhone").value})});
+  $("agResult").innerHTML=r.ok?'<span style="color:var(--go)">Saved.</span>':'<span class="stop">Couldn\'t save.</span>';
+}
+async function uploadLogo(){
+  const f=$("logoFile").files[0];
+  if(!f){$("agResult").innerHTML='<span class="stop">Choose an image first.</span>';return;}
+  const fd=new FormData();fd.append("logo",f);
+  const r=await fetch("/api/agency-logo",{method:"POST",body:fd});
+  const d=await r.json();
+  if(!r.ok){$("agResult").innerHTML='<span class="stop">'+(d.error||"Upload failed")+'</span>';return;}
+  $("agResult").innerHTML='<span style="color:var(--go)">Logo uploaded.</span>';
+  const img=$("logoPreview");img.src=URL.createObjectURL(f);img.style.display="block";
+}
+window.toggleAcct=toggleAcct;window.saveAgency=saveAgency;window.uploadLogo=uploadLogo;
+
+// ---- team / account ----
+let myUserId=null;
+async function loadUsers(){
+  const d=await (await fetch("/api/users")).json();
+  myUserId=d.me;
+  const users=d.users||[];
+  const tb=$("userRows");tb.innerHTML="";
+  for(const u of users){
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${esc(u.name||"—")}</td><td>${esc(u.email)}${emailStatusBadge(u.email_status)}</td>`;
+    const act=document.createElement("td");
+    if(u.id===myUserId){act.innerHTML='<span class="mut" style="font-size:11px">you</span>';}
+    else{
+      const del=document.createElement("button");del.className="delrow";del.textContent="✕";del.title="Remove user";
+      del.onclick=async()=>{if(!confirm('Remove '+(u.name||u.email)+"?"))return;const r=await fetch("/api/delete-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:u.id})});if(r.ok)loadUsers();else{const e=await r.json();alert(e.error||"Couldn't remove");}};
+      act.appendChild(del);
+    }
+    tr.appendChild(act);tb.appendChild(tr);
+  }
+}
+async function addUser(){
+  const name=$("nuName").value.trim(),email=$("nuEmail").value.trim(),password=$("nuPass").value;
+  $("addUserResult").innerHTML='<span class="msg">Adding…</span>';
+  const r=await fetch("/api/add-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,email,password})});
+  const d=await r.json();
+  if(!r.ok){$("addUserResult").innerHTML='<span class="stop">'+(d.error||"Couldn't add")+'</span>';return;}
+  if(d.invited){
+    $("addUserResult").innerHTML='<span style="color:var(--go)">Added — an invite with their login details has been emailed to '+esc(email)+'.</span>';
+  }else{
+    $("addUserResult").innerHTML='<span style="color:var(--go)">Added.</span> <span class="warn">Couldn\'t email the invite'+(d.inviteError?(' ('+esc(d.inviteError)+')'):'')+' — share the login with them manually.</span>';
+  }
+  $("nuName").value="";$("nuEmail").value="";$("nuPass").value="";
+  loadUsers();
+}
+async function changePassword(){
+  const current=$("cpCur").value,next=$("cpNew").value;
+  const r=await fetch("/api/change-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({current,next})});
+  const d=await r.json();
+  if(!r.ok){$("cpResult").innerHTML='<span class="stop">'+(d.error||"Couldn't update")+'</span>';return;}
+  $("cpResult").innerHTML='<span style="color:var(--go)">Password updated.</span>';
+  $("cpCur").value="";$("cpNew").value="";
+}
+window.addUser=addUser;window.changePassword=changePassword;
+
+// ---- brands (parent groups with head-office emails) ----
+let brandsCache=[];
+async function loadBrands(){
+  try{
+    const {brands}=await (await fetch("/api/brands")).json();
+    brandsCache=brands||[];
+    const box=$("brandList");
+    if(!brandsCache.length){box.innerHTML='<div class="mut" style="font-size:12px">No groups yet.</div>';return;}
+    box.innerHTML=brandsCache.map(b=>{
+      const bid=esc(b.id);
+      return '<div style="border:1px solid var(--line2);border-radius:8px;padding:8px 10px;margin-bottom:6px">'+
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+          '<input value="'+esc(b.name)+'" id="bn_'+bid+'" style="flex:1;min-width:100px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:7px;padding:6px 9px;font-size:12px">'+
+          '<input value="'+esc(b.office_email||"")+'" id="be_'+bid+'" placeholder="head office email(s)" style="flex:2;min-width:150px;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:7px;padding:6px 9px;font-size:12px">'+
+          '<button class="resend" onclick="saveBrand(\''+bid+'\')">Save</button>'+
+          '<button class="delrow" onclick="deleteBrand(\''+bid+'\',\''+esc((b.name||"").replace(/'/g,"\\'"))+'\')">✕</button>'+
+        '</div>'+
+        '<div class="mut" style="font-size:11px;margin-top:4px">'+(b.venue_count||0)+' venue(s) assigned</div>'+
+      '</div>';
+    }).join("");
+  }catch(_){}
+}
+async function addBrand(){
+  const name=$("nbName").value.trim();
+  if(!name){$("brandResult").innerHTML='<span class="stop">Group name required.</span>';return;}
+  const r=await fetch("/api/brand",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,office_email:$("nbEmail").value})});
+  const d=await r.json();
+  if(!r.ok){$("brandResult").innerHTML='<span class="stop">'+(d.error||"Couldn't add")+'</span>';return;}
+  $("nbName").value="";$("nbEmail").value="";$("brandResult").innerHTML='<span style="color:var(--go)">Group added.</span>';
+  loadBrands();
+}
+async function saveBrand(id){
+  const name=$("bn_"+id).value.trim(), office_email=$("be_"+id).value;
+  const r=await fetch("/api/brand",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,name,office_email})});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||"Couldn't save");return;}
+  $("brandResult").innerHTML='<span style="color:var(--go)">Saved.</span>';loadBrands();
+}
+async function deleteBrand(id,name){
+  if(!confirm('Delete group "'+name+'"? Venues will be unassigned from it (not deleted).'))return;
+  const r=await fetch("/api/delete-brand",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id})});
+  if(!r.ok){alert("Couldn't delete");return;}
+  loadBrands();loadVenues();
+}
+window.addBrand=addBrand;window.saveBrand=saveBrand;window.deleteBrand=deleteBrand;window.loadBrands=loadBrands;
+// show agency name in the header
+(async()=>{try{const me=await (await fetch("/api/me")).json();
+  // Subscription gate: unpaid agencies are sent to the billing page.
+  if(me.needsSubscription){location.href="/billing.html";return;}
+  window.__isOwner=!!me.is_owner;   // only the agency head may delete archived weeks / restore venues
+  if(!window.__isOwner){const rb=document.getElementById("restoreVenuesBtn");if(rb)rb.style.display="none";}
+  // (agency name is shown on the right, next to the agency logo)
+  // Show the agency's own logo + name on the left, next to the GigConfirm logo.
+  if(me.agency_id && (me.has_logo || me.agency_name)){
+    const brand=document.querySelector(".brand");
+    let inner='<span style="width:1px;height:30px;background:var(--line2);margin:0 6px"></span>';
+    if(me.has_logo)inner+='<img src="/agency-logo/'+encodeURIComponent(me.agency_id)+'" alt="'+esc(me.agency_name||"")+'" style="height:42px;width:auto;max-width:170px;object-fit:contain;border-radius:5px">';
+    if(me.agency_name)inner+='<span style="font-size:16px;color:var(--cream);font-weight:600;white-space:nowrap">'+esc(me.agency_name)+'</span>';
+    brand.insertAdjacentHTML("beforeend",inner);
+  }
+  if(me.is_admin){
+    // platform admin gets Subscribers + Discounts buttons in the header
+    const sb=document.createElement("button");sb.className="logout";sb.textContent="Subscribers";sb.style.marginRight="6px";
+    sb.onclick=openSubscribers;
+    $("acctBtn").parentNode.insertBefore(sb,$("acctBtn"));
+    const b=document.createElement("button");b.className="logout";b.textContent="Discounts";b.style.marginRight="6px";
+    b.onclick=openDiscounts;
+    $("acctBtn").parentNode.insertBefore(b,$("acctBtn"));
+  }
+  if(me.isNew){
+    const banner=document.createElement("div");
+    banner.className="upload";
+    banner.style.cssText="border:1px solid var(--amber);margin-bottom:18px";
+    banner.innerHTML='<h2 style="margin:0 0 6px">Welcome to GigConfirm 🎵</h2>'+
+      '<p style="margin:0">You\'re all set up'+(me.email_prefix?(' — your gig emails will send from <b>'+esc(me.email_prefix)+'@gigconfirm.co.uk</b>'):'')+'.</p>'+
+      '<p style="margin:8px 0 0">To get started: <b>1)</b> add your venue contacts (upload a CSV/Excel, or add them under "Saved venue contacts"), then <b>2)</b> upload your week\'s bookings CSV above and each act gets a confirmation email. Manage your team under "Team &amp; account".</p>';
+    const main=document.querySelector("main");
+    main.insertBefore(banner,main.firstChild);
+  }
+}catch(_){}})();
+
+// ---- subscribers overview (platform admin only) ----
+function statusBadge(s){
+  const map={active:["#1fb457","Active"],trialing:["#e8a13a","Trial"],past_due:["#e2614b","Past due"],canceled:["#888","Canceled"],none:["#888","No sub"]};
+  const [c,label]=map[s]||["#888",s||"—"];
+  return '<span style="background:'+c+';color:#0b1220;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700">'+label+'</span>';
+}
+async function openSubscribers(){
+  let panel=$("subPanel");
+  if(!panel){
+    panel=document.createElement("div");panel.id="subPanel";
+    panel.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;display:grid;place-items:center;padding:20px";
+    panel.innerHTML='<div style="background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:22px;width:min(720px,95vw);max-height:88vh;overflow-y:auto">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h2 style="margin:0">Subscribers</h2><button class="logout" onclick="document.getElementById(\'subPanel\').remove()">Close</button></div>'+
+      '<div id="subBody"><p class="mut">Loading…</p></div>'+
+    '</div>';
+    document.body.appendChild(panel);
+  }
+  loadSubscribers();
+}
+async function loadSubscribers(){
+  const d=await (await fetch("/api/subscribers")).json();
+  const agencies=d.agencies||[];
+  const body=$("subBody");
+  if(!agencies.length){body.innerHTML='<p class="mut">No agencies yet.</p>';return;}
+  body.innerHTML="";
+  for(const a of agencies){
+    const box=document.createElement("div");
+    box.style.cssText="border:1px solid var(--line2);border-radius:12px;padding:14px;margin-bottom:12px";
+    let head='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<div><b>'+esc(a.name)+'</b> <span class="mut" style="font-size:12px">'+esc(a.email_prefix)+'@gigconfirm.co.uk</span></div>'+
+      '<div style="display:flex;align-items:center;gap:8px">'+statusBadge(a.sub_status)+
+        (a.id!=="ld-agency"?'<button class="delrow" title="Delete this agency" onclick="deleteAgency(\''+esc(a.id)+'\',\''+esc((a.name||"").replace(/'/g,"\\'"))+'\')">🗑 Delete</button>':'')+
+      '</div></div>'+
+      '<div class="mut" style="font-size:12px;margin:4px 0 10px">'+a.user_count+' user(s) · '+a.booking_count+' booking(s)</div>';
+    let rows="";
+    for(const u of (a.users||[])){
+      rows+='<tr><td>'+esc(u.name||"—")+(u.is_admin?' <span class="mut" style="font-size:10px">(admin)</span>':'')+'</td>'+
+        '<td class="mut" style="font-size:12px">'+esc(u.email)+emailStatusBadge(u.email_status)+'</td>'+
+        '<td style="text-align:right"><button class="resend" style="font-size:12px;padding:6px 10px" onclick="resetUserPw(\''+u.id+'\',\''+esc(u.email)+'\')">Reset password</button></td></tr>';
+    }
+    box.innerHTML=head+'<table class="edit" style="width:100%"><tbody>'+rows+'</tbody></table>';
+    body.appendChild(box);
+  }
+}
+async function deleteAgency(agencyId,name){
+  const typed=prompt('This permanently deletes "'+name+'" and ALL its users, acts, venues, bookings and history. This cannot be undone.\n\nTo confirm, type the agency name exactly:');
+  if(typed===null)return;               // cancelled
+  if(typed.trim()!==name){alert("The name didn't match. Deletion cancelled.");return;}
+  const r=await fetch("/api/delete-agency",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agencyId,confirmName:typed.trim()})});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||"Couldn't delete");return;}
+  alert('"'+name+'" has been deleted.');
+  loadSubscribers();
+}
+window.deleteAgency=deleteAgency;
+async function resetUserPw(userId,email){
+  if(!confirm("Reset password for "+email+"? They'll be emailed a new one."))return;
+  const r=await fetch("/api/reset-user-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId})});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||"Couldn't reset");return;}
+  if(d.emailed)alert("Done — a new password has been emailed to "+email+".");
+  else alert("Password reset, but the email couldn't be sent. New password: "+d.newPass+"\n\nPlease share it with them manually.");
+}
+window.openSubscribers=openSubscribers;window.resetUserPw=resetUserPw;
+
+// ---- discount admin (platform admin only) ----
+async function openDiscounts(){
+  let panel=$("discPanel");
+  if(!panel){
+    panel=document.createElement("div");panel.id="discPanel";
+    panel.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;display:grid;place-items:center;padding:20px";
+    panel.innerHTML='<div style="background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:22px;width:min(620px,94vw);max-height:86vh;overflow-y:auto">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h2 style="margin:0">Discount codes</h2><button class="logout" onclick="document.getElementById(\'discPanel\').remove()">Close</button></div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:end;margin-bottom:14px">'+
+        '<div><label class="mut" style="font-size:11px">Code</label><br><input id="dcCode" placeholder="LAUNCH50" style="background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px;font-size:13px;width:120px"></div>'+
+        '<div><label class="mut" style="font-size:11px">Type</label><br><select id="dcKind" style="background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px;font-size:13px"><option value="percent">% off</option><option value="amount">£ off</option></select></div>'+
+        '<div><label class="mut" style="font-size:11px">Value</label><br><input id="dcValue" type="number" placeholder="50" style="background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px;font-size:13px;width:80px"></div>'+
+        '<div><label class="mut" style="font-size:11px">Applies</label><br><select id="dcDur" style="background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:8px;font-size:13px"><option value="once">First payment</option><option value="forever">Ongoing</option></select></div>'+
+        '<button class="resend" onclick="createDiscount()">Add</button>'+
+      '</div>'+
+      '<div id="dcMsg" class="msg" style="margin-bottom:10px"></div>'+
+      '<table class="edit"><thead><tr><th>Code</th><th>Discount</th><th>Applies</th><th>Used</th><th>Active</th><th></th></tr></thead><tbody id="dcRows"></tbody></table>'+
+      '<p class="mut" style="font-size:11px;margin-top:10px">£ off values are in pounds. Codes map to Stripe coupons automatically when first used.</p>'+
+    '</div>';
+    document.body.appendChild(panel);
+  }
+  loadDiscounts();
+}
+async function loadDiscounts(){
+  const d=await (await fetch("/api/discounts")).json();
+  const tb=$("dcRows");tb.innerHTML="";
+  for(const c of (d.codes||[])){
+    const tr=document.createElement("tr");
+    const disc=c.kind==="percent"?(c.value+"% off"):("£"+(c.value/100).toFixed(2)+" off");
+    tr.innerHTML=`<td><b>${esc(c.code)}</b></td><td>${disc}</td><td>${c.duration==="forever"?"Ongoing":"First payment"}</td><td style="text-align:center">${c.times_used}</td>`+
+      `<td style="text-align:center"><input type="checkbox" ${c.active?"checked":""} onchange="toggleDiscount('${esc(c.code)}')"></td>`+
+      `<td><button class="delrow" onclick="deleteDiscount('${esc(c.code)}')">✕</button></td>`;
+    tb.appendChild(tr);
+  }
+}
+async function createDiscount(){
+  const code=$("dcCode").value.trim(),kind=$("dcKind").value,duration=$("dcDur").value;
+  let value=parseInt($("dcValue").value,10);
+  if(kind==="amount")value=Math.round(value*100); // pounds -> pence
+  const r=await fetch("/api/discounts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code,kind,value,duration})});
+  const d=await r.json();
+  if(!r.ok){$("dcMsg").innerHTML='<span class="stop">'+(d.error||"Couldn't add")+'</span>';return;}
+  $("dcMsg").innerHTML='<span style="color:var(--go)">Added.</span>';$("dcCode").value="";$("dcValue").value="";
+  loadDiscounts();
+}
+async function toggleDiscount(code){await fetch("/api/discounts/toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});loadDiscounts();}
+async function deleteDiscount(code){if(!confirm("Delete code "+code+"?"))return;await fetch("/api/discounts/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});loadDiscounts();}
+window.openDiscounts=openDiscounts;window.createDiscount=createDiscount;window.toggleDiscount=toggleDiscount;window.deleteDiscount=deleteDiscount;
+
+// ---- venue lineups (FYI emails) ----
+let lineupWeek="";
+async function loadLineups(){
+  const d=await (await fetch("/api/venue-lineups")).json();
+  lineupWeek=d.activeLabel||"";
+  const venues=d.venues||[];
+  const brands=d.brands||[];
+  $("lineupHeaderCount").textContent="("+venues.length+")";
+  const wrap=$("lineupList");
+  if(!venues.length){wrap.innerHTML='<div class="mut" style="padding:16px">No bookings in the current week yet.</div>';return;}
+  wrap.innerHTML="";
+
+  // Brand head-office senders (only brands that have venues in this week)
+  if(brands.length){
+    const bwrap=document.createElement("div");
+    bwrap.style.cssText="border:1px solid var(--line2);border-radius:12px;padding:12px 14px;margin-bottom:14px;background:var(--ink2)";
+    bwrap.innerHTML='<div style="font-weight:700;margin-bottom:8px">Send to head office</div>';
+    brands.forEach(b=>{
+      const row=document.createElement("div");
+      row.style.cssText="padding:8px 0;border-top:1px solid var(--line)";
+      const hasEmail=(b.office_email||"").trim().length>0;
+      // this group's venues (from the already-loaded lineup data)
+      const groupVenues=venues.filter(v=>v.brand_id===b.id);
+      const totalActs=groupVenues.reduce((n,v)=>n+v.acts.length,0);
+      // build the preview (venues, each with their acts)
+      const preview=groupVenues.map(v=>
+        '<div style="margin:6px 0 2px"><b>'+esc(v.venue)+'</b> <span class="mut" style="font-size:11px">· '+v.acts.length+' act(s)</span></div>'+
+        '<ul style="margin:0 0 4px;padding-left:18px;font-size:12px">'+
+          v.acts.map(a=>'<li>'+esc([a.date,a.time].filter(Boolean).join(" · "))+' — <b>'+esc(a.act)+'</b>'+(a.notes?' <span class="mut">('+esc(a.notes)+')</span>':'')+'</li>').join("")+
+        '</ul>'
+      ).join("");
+      row.innerHTML='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<div style="flex:1;min-width:140px"><b>'+esc(b.name)+'</b> <span class="mut" style="font-size:12px">· '+b.venue_count+' venue(s) · '+totalActs+' act(s) this week</span>'+
+            (hasEmail?'<div class="mut" style="font-size:11px">'+esc(b.office_email)+'</div>':'<div style="color:var(--amber);font-size:11px">No head-office email set (add one in Team &amp; account)</div>')+'</div>'+
+          '<button class="resend brandPreviewBtn">Preview</button>'+
+          '<button class="resend brandSendBtn"'+(hasEmail?"":" disabled")+'>Send to head office</button>'+
+          '<span class="brandSendResult msg"></span>'+
+        '</div>'+
+        '<div class="brandPreview" style="display:none;margin-top:8px;padding:10px 12px;background:var(--ink);border:1px solid var(--line);border-radius:8px">'+
+          '<div class="mut" style="font-size:11px;margin-bottom:4px">This is what will be sent to '+esc(b.name)+'\'s head office:</div>'+
+          (preview||'<div class="mut" style="font-size:12px">No venues/acts for this group this week.</div>')+
+        '</div>';
+      const btn=row.querySelector(".brandSendBtn");
+      const result=row.querySelector(".brandSendResult");
+      const previewBtn=row.querySelector(".brandPreviewBtn");
+      const previewBox=row.querySelector(".brandPreview");
+      previewBtn.onclick=()=>{
+        const open=previewBox.style.display!=="none";
+        previewBox.style.display=open?"none":"block";
+        previewBtn.textContent=open?"Preview":"Hide preview";
+      };
+      if(btn)btn.onclick=async()=>{
+        btn.disabled=true;result.textContent="Sending…";
+        const r=await fetch("/api/send-brand-lineup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({brandId:b.id})});
+        const dd=await r.json();
+        btn.disabled=false;
+        if(!r.ok){result.innerHTML='<span class="stop">'+(dd.error||"Send failed")+'</span>';return;}
+        result.innerHTML='<span style="color:var(--go)">Sent '+dd.venues+' venue(s) to '+dd.sentTo+' address(es).</span>';
+      };
+      bwrap.appendChild(row);
+    });
+    wrap.appendChild(bwrap);
+  }
+
+  venues.forEach((v,i)=>{
+    const card=document.createElement("div");
+    card.className="lineup-card";
+    const acts=v.acts.map(a=>`<li>${esc([a.date,a.time].filter(Boolean).join(" · "))} — <b>${esc(a.act)}</b>${a.notes?` <span class="mut">(${esc(a.notes)})</span>`:""}</li>`).join("");
+    card.innerHTML=`
+      <div class="lineup-head">
+        <strong>${esc(v.venue)}${emailStatusBadge(v.email_status)}</strong>
+        <span class="mut" style="font-size:12px">${v.acts.length} act(s)${v.brand_name?` · ${esc(v.brand_name)}`:""}</span>
+      </div>
+      <ul class="lineup-acts">${acts}</ul>
+      <div class="lineup-send">
+        <input class="lineup-email" placeholder="venue email(s), comma-separated" value="${esc(v.email||"")}" />
+        <button class="resend lineup-btn">Send lineup</button>
+      </div>
+      <div class="lineup-result msg"></div>`;
+    const btn=card.querySelector(".lineup-btn");
+    const emailInput=card.querySelector(".lineup-email");
+    const result=card.querySelector(".lineup-result");
+    btn.onclick=async()=>{
+      const emails=emailInput.value.trim();
+      if(!emails){result.innerHTML='<span class="warn">Add at least one email address.</span>';return;}
+      btn.disabled=true;result.textContent="Sending…";
+      const r=await fetch("/api/send-venue-lineup",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({venue:v.venue,acts:v.acts,emails,weekLabel:lineupWeek,brandName:v.brand_name||""})});
+      const dd=await r.json();
+      btn.disabled=false;
+      if(!r.ok){result.innerHTML='<span class="stop">'+(dd.error||"Send failed")+'</span>';return;}
+      result.innerHTML='<span style="color:var(--go)">Sent to '+dd.sentTo+' recipient(s).</span>';
+    };
+    wrap.appendChild(card);
+  });
+}
+
+// ---- acts management ----
+let allActs=[];
+let actSort={col:null,dir:"asc"};
+function updateSortArrows(){
+  document.querySelectorAll(".actSortable").forEach(th=>{
+    const arrow=th.querySelector(".sortArrow");
+    if(!arrow)return;
+    arrow.textContent = th.dataset.sort===actSort.col ? (actSort.dir==="desc"?"▼":"▲") : "";
+    arrow.style.color="var(--muted)";arrow.style.fontSize="10px";
+  });
+}
+function wireActSort(){
+  document.querySelectorAll(".actSortable").forEach(th=>{
+    th.onclick=()=>{
+      const col=th.dataset.sort;
+      if(actSort.col===col){actSort.dir=actSort.dir==="asc"?"desc":"asc";}
+      else{actSort.col=col;actSort.dir="asc";}
+      renderActs();
+    };
+  });
+}
+async function loadActs(){
+  const r=await fetch("/api/acts");
+  if(!r.ok)return;
+  const d=await r.json();
+  allActs=d.acts||[];
+  renderActs();
+}
+function renderActs(){
+  const q=($("actSearch").value||"").toLowerCase();
+  const list=allActs.filter(a=>{
+    if(!q)return true;
+    const hay=[a.contact_name,a.name,a.stage_names,a.email,
+               Array.isArray(a.performed_as)?a.performed_as.join(" "):""]
+      .map(x=>(x||"").toString().toLowerCase()).join(" ");
+    return hay.includes(q);
+  });
+  // sort by the chosen column (if any)
+  if(actSort.col){
+    const dir=actSort.dir==="desc"?-1:1;
+    const keyOf=(a)=>{
+      switch(actSort.col){
+        case "real": return (a.contact_name||a.agent_name||a.name||"").toLowerCase();
+        case "stage": return (a.name||a.stage_names||"").toLowerCase();
+        case "email": return (a.email||"").toLowerCase();
+        case "bookings": return a.booking_count||0;
+        default: return "";
+      }
+    };
+    list.sort((a,b)=>{
+      const x=keyOf(a),y=keyOf(b);
+      if(typeof x==="number"&&typeof y==="number")return (x-y)*dir;
+      return String(x).localeCompare(String(y))*dir;
+    });
+  }
+  $("actHeaderCount").textContent="("+allActs.length+")";
+  $("actCount").textContent=allActs.length+" act(s)"+(q?(" · "+list.length+" matching"):"");
+  updateSortArrows();
+  const tb=$("actRows");tb.innerHTML="";
+  if(!list.length){tb.innerHTML='<tr><td colspan="5" class="mut" style="padding:20px;text-align:center">'+(allActs.length?"No matches.":"No acts yet — upload bookings first.")+'</td></tr>';return;}
+  for(const a of list){
+    const tr=document.createElement("tr");tr.dataset.id=a.id;
+    const cell=(val)=>{const td=document.createElement("td");const i=document.createElement("input");i.value=val||"";td.appendChild(i);return td;};
+
+    // Column 1 — Real name. Editable (saves to contact_name). If there's no real name,
+    // fall back to showing the stage name here (many agency bookings have no real name).
+    const realTd=document.createElement("td");
+    const realInput=document.createElement("input");
+    realInput.className="actRealName";
+    // Fallback order for the display: real name → agency name (company) → stage name.
+    const fallbackName=a.agent_name||a.name||"";
+    realInput.value=a.contact_name||fallbackName;
+    realInput.placeholder="Real name";
+    // remember what was actually stored as the real name, and the fallback we displayed,
+    // so saving doesn't turn a fallback into the stored real name.
+    realInput.dataset.stored=a.contact_name||"";
+    realInput.dataset.fallback=a.contact_name?"":fallbackName;
+    realTd.appendChild(realInput);
+    tr.appendChild(realTd);
+
+    // Column 2 — Stage name(s). Read-only display of the act's stage name plus any stored
+    // stage_names / booking performer names, deduped.
+    const stageTd=document.createElement("td");
+    const stageSeen=new Set();const stageList=[];
+    const addStage=(s)=>{s=(s||"").trim();const k=s.toLowerCase();if(s&&!stageSeen.has(k)){stageSeen.add(k);stageList.push(s);}};
+    addStage(a.name);
+    (typeof a.stage_names==="string"?a.stage_names.split(","):[]).forEach(addStage);
+    (Array.isArray(a.performed_as)?a.performed_as:[]).forEach(addStage);
+    stageTd.style.fontSize="13px";
+    stageTd.innerHTML=stageList.length?stageList.map(s=>esc(s)).join('<br>'):'<span class="mut">—</span>';
+    tr.appendChild(stageTd);
+
+    // Column 3 — Email.
+    const emailTd=cell(a.email);
+    if(a.email_status==="bounced"||a.email_status==="complained"){
+      const flag=document.createElement("div");
+      flag.style.cssText="font-size:10px;font-weight:700;margin-top:2px;color:"+(a.email_status==="bounced"?"#e2614b":"#e8a13a");
+      flag.textContent=a.email_status==="bounced"?"⚠ email bounced":"⚠ marked as spam";
+      emailTd.appendChild(flag);
+    }
+    tr.appendChild(emailTd);
+
+    const bc=document.createElement("td");bc.className="mut";bc.style.textAlign="center";bc.textContent=a.booking_count||0;tr.appendChild(bc);
+    const act=document.createElement("td");act.style.whiteSpace="nowrap";
+    const save=document.createElement("button");save.className="resend";save.textContent="Save";save.onclick=()=>saveAct(tr);
+    const del=document.createElement("button");del.className="delrow";del.textContent="✕";del.title="Delete act";del.onclick=()=>deleteAct(a.id,a.name,a.booking_count||0);
+    // Contacts expander (act contact + agent details)
+    const hasDetails=a.contact_name||a.phone||a.via_agent||a.agent_name||a.agent_email;
+    const moreBtn=document.createElement("button");moreBtn.className="resend";moreBtn.textContent=hasDetails?"Contacts ✓":"＋ Contacts";moreBtn.title="Act contact details & agent info";
+    const exRow=document.createElement("tr");exRow.className="actExtra";exRow.style.display="none";
+    const exTd=document.createElement("td");exTd.colSpan=5;exTd.style.background="var(--ink2)";exTd.style.padding="10px 14px";
+    const mk=(f,val,ph,type)=>'<input class="ax" data-f="'+f+'" type="'+(type||"text")+'" placeholder="'+ph+'" value="'+esc(val||"")+'" style="background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:6px;padding:6px 8px;font-size:12px;margin:2px;min-width:150px">';
+    exTd.innerHTML=
+      '<div style="font-size:11px;color:var(--muted);margin:2px 0 2px">Phone</div>'+
+      mk("phone",a.phone,"Phone")+
+      '<div style="font-size:11px;color:var(--muted);margin:8px 0 2px">Car reg</div>'+
+      '<input class="ax" data-f="car_reg" placeholder="Car reg" value="'+esc(a.car_reg||"")+'" style="background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:6px;padding:6px 8px;font-size:12px;margin:2px;min-width:150px;text-transform:uppercase">'+
+      '<div style="font-size:11px;color:var(--muted);margin:8px 0 2px">Stage name(s) <span style="text-transform:none">(comma-separated — names shown on gigs)</span></div>'+
+      mk("stage_names",a.stage_names,"e.g. DJ Spark, The Sparklers")+
+      '<div style="font-size:11px;color:var(--muted);margin:8px 0 2px">Booked via agent?</div>'+
+      '<label style="font-size:12px;display:inline-flex;align-items:center;gap:6px;margin:2px"><input type="checkbox" class="axVia" '+(a.via_agent?"checked":"")+'> This act is booked through an agent</label><br>'+
+      mk("agent_name",a.agent_name,"Agent name")+mk("agent_email",a.agent_email,"Agent email","email")+
+      '<div style="margin-top:8px"><button class="resend" onclick="saveAct(this.closest(\'tr\').previousElementSibling)">Save contact</button></div>';
+    exRow.appendChild(exTd);
+    moreBtn.onclick=()=>{const open=exRow.style.display!=="none";exRow.style.display=open?"none":"table-row";};
+    act.appendChild(save);act.appendChild(moreBtn);act.appendChild(del);tr.appendChild(act);
+    tr._exRow=exRow;
+    tb.appendChild(tr);
+    tb.appendChild(exRow);
+  }
+}
+async function saveAct(tr){
+  // Column layout: [0] real name, [1] stage names (read-only), [2] email, [3] bookings, [4] actions.
+  const realEl=tr.querySelector(".actRealName");
+  const typed=(realEl?.value||"").trim();
+  // If the field still shows the fallback stage name (no real name was entered), don't
+  // store that as the real name — leave contact_name blank.
+  const isFallback=realEl && realEl.dataset.fallback && typed===realEl.dataset.fallback;
+  const realName=isFallback ? "" : typed;
+  const emailVal=(tr.children[2].querySelector("input")?.value||"").trim();
+  const body={id:tr.dataset.id,email:emailVal,contact_name:realName};
+  // pull phone, car reg, stage names + agent fields from the expander row if present
+  const ex=tr._exRow;
+  if(ex){
+    ex.querySelectorAll(".ax").forEach(i=>{body[i.dataset.f]=i.value.trim();});
+    body.via_agent=ex.querySelector(".axVia")?.checked||false;
+  }
+  const r=await fetch("/api/update-act",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||"Couldn't save");return;}
+  tr.style.outline="2px solid var(--go)";setTimeout(()=>tr.style.outline="",900);
+  loadActs();
+}
+async function deleteAct(id,name,bookings){
+  const warn=bookings?('"'+name+'" has '+bookings+' booking(s). Deleting the act will also remove those bookings. Continue?'):('Delete "'+name+'"? This cannot be undone.');
+  if(!confirm(warn))return;
+  const r=await fetch("/api/delete-act",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id})});
+  if(r.ok){loadActs();load();} else alert("Couldn't delete");
+}
+$("actSearch").oninput=renderActs;
+wireActSort();
+
+let activeBatchLabel="";
+async function load(){
+  const r=await fetch("/api/dashboard");
+  if(r.status===401){location.href="/login.html";return;}
+  const {bookings,activeLabel}=await r.json();
+  currentBookings=bookings;
+  activeBatchLabel=activeLabel||"";
+  if(!window.__bulletinLoaded){window.__bulletinLoaded=true;loadBulletin();loadStorage();loadCalendar();loadDemo();}
+  $("activeLabel").textContent=activeLabel?("Current week: "+activeLabel):"No active week — upload bookings to start one.";
+  const c={confirmed:0,pending:0,issue:0,resolved:0};
+  bookings.forEach(b=>{if(c[b.status]!==undefined)c[b.status]++;});
+  // acts responded: an act counts if NONE of their gigs are still pending
+  // (confirmed, flagged, or resolved all count as a response)
+  const byAct={};
+  bookings.forEach(b=>{(byAct[b.act_id]=byAct[b.act_id]||[]).push(b.status);});
+  const actIds=Object.keys(byAct);
+  const actsResponded=actIds.filter(id=>byAct[id].every(s=>s!=="pending")).length;
+  const actsTotal=actIds.length;
+  $("bar").innerHTML=`
+    <div class="stat"><b class="go">${c.confirmed}</b><span>Confirmed</span></div>
+    <div class="stat"><b class="amber">${c.pending}</b><span>Awaiting</span></div>
+    <div class="stat"><b class="stop">${c.issue}</b><span>Flagged</span></div>`+
+    (c.resolved?`<div class="stat"><b class="go">${c.resolved}</b><span>Resolved</span></div>`:"")+
+    `<div class="stat"><b>${actsResponded}/${actsTotal}</b><span>Acts responded</span></div>`;
+  renderRows();
+}
+let currentBookings=[];
+function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+// small inline badge for a recipient's latest email delivery status
+function emailStatusBadge(status){
+  if(status==="bounced")return '<span title="This email bounced — the address may be wrong" style="color:#e2614b;font-weight:700;font-size:10px;margin-left:4px">⚠ bounced</span>';
+  if(status==="complained")return '<span title="Marked as spam" style="color:#e8a13a;font-weight:700;font-size:10px;margin-left:4px">⚠ spam</span>';
+  if(status==="delivered")return '<span title="Last email delivered" style="color:var(--go);font-size:10px;margin-left:4px">✓</span>';
+  return "";
+}
+let sortKey="date", sortDir=1; // default sort by date ascending
+function parseDateClient(s){
+  if(!s)return null;
+  const t=s.replace(/^[A-Za-z]{3,}\s+/,"").trim();
+  const m=t.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/);
+  if(!m)return null;
+  const mo={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11}[m[2].slice(0,3).toLowerCase()];
+  if(mo===undefined)return null;
+  return new Date(Date.UTC(+m[3],mo,+m[1])).getTime();
+}
+const STATUS_ORDER={pending:0,issue:1,confirmed:2}; // awaiting first when sorting by status
+function sortBookings(list){
+  const dir=sortDir;
+  const key=sortKey;
+  return [...list].sort((a,b)=>{
+    let av,bv;
+    if(key==="act"){av=(a.performer_name||a.act_name||"").toLowerCase();bv=(b.performer_name||b.act_name||"").toLowerCase();}
+    else if(key==="venue"){av=(a.display_name||a.venue_text||"").toLowerCase();bv=(b.display_name||b.venue_text||"").toLowerCase();}
+    else if(key==="status"){av=STATUS_ORDER[a.status]??9;bv=STATUS_ORDER[b.status]??9;}
+    else{ // date
+      av=parseDateClient(a.gig_date); bv=parseDateClient(b.gig_date);
+      // unparseable dates sort to the end
+      if(av===null)av=Infinity; if(bv===null)bv=Infinity;
+    }
+    if(av<bv)return -1*dir;
+    if(av>bv)return 1*dir;
+    return 0;
+  });
+}
+function renderRows(){
+  const list=sortBookings(currentBookings);
+  $("rows").innerHTML=list.map(b=>`
+    <tr>
+      <td>${esc(b.performer_name||b.act_name)}${b.email_status==="bounced"?' <span title="This email bounced — the address may be wrong" style="color:#e2614b;font-weight:700;font-size:11px">⚠ bounced</span>':b.email_status==="complained"?' <span title="Marked as spam" style="color:#e8a13a;font-weight:700;font-size:11px">⚠ spam</span>':''}<br><span class="mut" style="font-size:11px">${esc(b.act_email)}</span>
+        <br><button class="resend" onclick="resend('${b.act_id}')">resend email</button></td>
+      <td>${esc(b.display_name||b.venue_text||"—")}${b.adhoc_note?`<div class="msg" style="color:var(--amber)">📝 ${esc(b.adhoc_note)}</div>`:""}</td>
+      <td>${esc([b.gig_date,b.gig_time].filter(Boolean).join(" · ")||"—")}</td>
+      <td><span class="pill ${b.status}">${b.status==="issue"?"flagged":b.status}</span>${b.message&&b.status!=="resolved"?`<div class="msg">"${esc(b.message)}"</div>`:""}${
+        b.status==="pending"?`<br><button class="resend" style="margin-top:6px" title="Mark confirmed because the act called or texted us directly" onclick='manualCheck(${JSON.stringify(String(b.id))},${JSON.stringify((b.performer_name||b.act_name)+" — "+(b.display_name||b.venue_text||""))})'>✓ Manual check</button>`:""
+      }${
+        b.status==="issue"?`<br><button class="resend" style="margin-top:6px" onclick='openResolve(${JSON.stringify(String(b.id))},${JSON.stringify((b.performer_name||b.act_name)+" — "+(b.display_name||b.venue_text||""))})'>✓ Resolve</button>`:""
+      }${
+        b.status==="resolved"?`<div class="msg" style="color:var(--go)">✓ Resolved${b.resolved_by?` by ${esc((b.resolved_by||"").split("@")[0])}`:""}${b.resolution_note?`: "${esc(b.resolution_note)}"`:""}</div>`:""
+      }</td>
+      <td></td>
+    </tr>`).join("")||`<tr><td colspan="5" class="mut" style="padding:24px;text-align:center">No bookings yet. Upload above.</td></tr>`;
+  // update header arrows
+  document.querySelectorAll("th.sortable").forEach(th=>{
+    const a=th.querySelector(".arrow");
+    a.textContent = th.dataset.sort===sortKey ? (sortDir>0?"▲":"▼") : "";
+  });
+}
+document.querySelectorAll("th.sortable").forEach(th=>{
+  th.onclick=()=>{
+    const k=th.dataset.sort;
+    if(sortKey===k){sortDir*=-1;} else {sortKey=k;sortDir=1;}
+    renderRows();
+  };
+});
+
+async function resend(actId){await fetch("/api/resend-invite",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({actId})});alert("Invite re-sent.");}
+async function clearWeek(){if(!confirm("Archive this week? It moves to History (not deleted) and the dashboard clears for a new upload."))return;await fetch("/api/clear-week",{method:"POST"});load();}
+async function logout(){await fetch("/api/logout",{method:"POST"});location.href="/login.html";}
+async function sendReminders(){
+  if(!confirm("Email a reminder now to everyone with a pending gig that's still upcoming?"))return;
+  const r=await fetch("/api/send-reminders-now",{method:"POST"});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||"Couldn't send reminders");return;}
+  let msg="Reminders sent to "+d.acts+" act(s)/agent(s), covering "+d.gigs+" gig(s)."+(d.failed?(" "+d.failed+" failed."):"");
+  if(d.acts===0){
+    msg+="\n\nNothing was sent. Diagnostics:";
+    msg+="\n• Pending gigs scanned: "+(d.scanned??"?");
+    msg+="\n• Future & eligible: "+(d.futureCount??"?");
+    msg+="\n• Acts grouped to email: "+(d.groups??"?");
+    if(d.failed)msg+="\n• ⚠ "+d.failed+" send(s) FAILED (email error) — check server logs.";
+    if(d.emailConfigured===false)msg+="\n• ⚠ Email is NOT configured on the server (missing RESEND_API_KEY).";
+    if(d.unparseableDates)msg+="\n• ⚠ "+d.unparseableDates+" gig(s) have an unreadable date format.";
+    if(d.pastDated)msg+="\n• "+d.pastDated+" gig(s) are in the past (skipped by design).";
+    if(!d.scanned)msg+="\n• No pending gigs found (all confirmed/flagged/resolved, or week archived).";
+  }
+  alert(msg);
+}
+window.sendReminders=sendReminders;
+
+// ---- add a manual gig ----
+async function openAddGig(){
+  $("addGigModal").style.display="flex";
+  $("agResult").textContent="";
+  try{
+    const [av,vv]=await Promise.all([
+      fetch("/api/acts").then(r=>r.json()).catch(()=>({acts:[]})),
+      fetch("/api/venues").then(r=>r.json()).catch(()=>({venues:[]})),
+    ]);
+    $("agActList").innerHTML=(av.acts||[]).map(a=>'<option value="'+esc(a.name||"")+'">').join("");
+    window.__actEmailByName={};(av.acts||[]).forEach(a=>{if(a.name)window.__actEmailByName[a.name.toLowerCase()]=a.email||"";});
+    $("agVenueList").innerHTML=(vv.venues||[]).map(v=>'<option value="'+esc(v.display_name||"")+'">').join("");
+  }catch(_){}
+}
+function closeAddGig(){$("addGigModal").style.display="none";}
+document.addEventListener("input",e=>{
+  if(e.target&&e.target.id==="agActName"){
+    const m=(window.__actEmailByName||{})[e.target.value.toLowerCase()];
+    if(m&&!$("agActEmail").value)$("agActEmail").value=m;
+  }
+});
+async function submitAddGig(){
+  const body={
+    actName:$("agActName").value,actEmail:$("agActEmail").value,
+    venue:$("agVenue").value,date:$("agDate").value,time:$("agTime").value,
+    notes:$("agNotes").value,emailNow:$("agEmailNow").checked,
+  };
+  const out=$("agResult");out.style.color="var(--muted)";out.textContent="Adding…";
+  const r=await fetch("/api/add-gig",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok){out.style.color="var(--stop)";out.textContent=d.error||"Couldn't add.";return;}
+  out.style.color="var(--go)";
+  out.textContent=d.emailed?"✓ Gig added and check emailed.":(d.emailError?("Gig added, but email failed: "+d.emailError):"✓ Gig added.");
+  ["agActName","agActEmail","agVenue","agDate","agTime","agNotes"].forEach(id=>$(id).value="");
+  load();
+  setTimeout(closeAddGig,1200);
+}
+window.openAddGig=openAddGig;window.closeAddGig=closeAddGig;window.submitAddGig=submitAddGig;
+async function sendDigest(){
+  if(!confirm("Email your team the list of acts who still haven't confirmed this week?"))return;
+  const r=await fetch("/api/send-digest-now",{method:"POST"});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||"Couldn't send digest");return;}
+  if(d.sent>0)alert("Digest emailed to your team.");
+  else alert("Nothing to send — no unconfirmed gigs this week (or no team emails).");
+}
+window.sendDigest=sendDigest;
+window.resend=resend;
+
+// ---- history / archive ----
+let activeBatchId=null;
+$("historyBtn").onclick=async()=>{
+  const p=$("historyPanel");
+  if(p.style.display==="block"){p.style.display="none";return;}
+  p.style.display="block";
+  await loadBatches();
+  p.scrollIntoView({behavior:"smooth"});
+};
+async function loadBatches(){
+  const {batches}=await (await fetch("/api/batches")).json();
+  if(!batches||!batches.length){$("batchList").innerHTML='<div class="mut" style="padding:16px">No weeks yet.</div>';return;}
+  $("batchList").innerHTML='<table class="edit"><thead><tr><th>Week</th><th>When</th><th>Confirmed</th><th>Awaiting</th><th>Flagged</th><th></th></tr></thead><tbody>'+
+    batches.map(b=>{
+      const d=new Date(b.created_at).toLocaleDateString();
+      const cur=b.archived?"":' <span class="badge new" style="vertical-align:middle">CURRENT</span>';
+      return `<tr>
+        <td><b>${esc(b.label)}</b>${cur}</td>
+        <td class="mut">${d}</td>
+        <td class="go" style="text-align:center">${b.confirmed}</td>
+        <td class="amber" style="text-align:center">${b.pending}</td>
+        <td class="stop" style="text-align:center">${b.issue}</td>
+        <td style="white-space:nowrap">
+          <button class="resend" onclick="viewBatch('${b.id}')">View</button>
+          <button class="resend" onclick="exportBatch('${b.id}')">⤓ CSV</button>
+          ${(b.archived && window.__isOwner)?`<button class="delrow" title="Delete week (agency head only)" onclick="deleteBatch('${b.id}','${esc(b.label).replace(/'/g,"")}')">✕</button>`:""}
+        </td></tr>`;
+    }).join("")+'</tbody></table>';
+  $("batchDetail").innerHTML="";
+}
+async function viewBatch(id){
+  const {batch,bookings,timeline}=await (await fetch("/api/batch?id="+encodeURIComponent(id))).json();
+  let html='<h3 style="margin:6px 0">'+esc(batch.label)+'</h3>';
+  // timeline
+  if(timeline.length){
+    html+='<div style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--amber);margin:12px 0 6px">Response timeline</div>';
+    html+=timeline.map(t=>{
+      const when=new Date(t.responded_at).toLocaleString();
+      const icon=t.status==="confirmed"?"✓":"⚑";
+      const col=t.status==="confirmed"?"var(--go)":"var(--stop)";
+      return `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid var(--line)"><span style="color:${col}">${icon}</span> <b>${esc(t.performer_name||"")}</b> — ${esc(t.venue||"")} <span class="mut">· ${when}</span>${t.message?`<div class="msg">"${esc(t.message)}"</div>`:""}</div>`;
+    }).join("");
+  } else {
+    html+='<div class="mut" style="padding:8px 0">No responses recorded for this week.</div>';
+  }
+  // full bookings table
+  html+='<div style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:14px 0 6px">All bookings</div>';
+  html+='<table class="edit"><thead><tr><th>Act</th><th>Venue</th><th>When</th><th>Status</th></tr></thead><tbody>'+
+    bookings.map(b=>`<tr><td>${esc(b.performer_name||b.act_name)}</td><td>${esc(b.display_name||b.venue_text||"—")}</td><td>${esc([b.gig_date,b.gig_time].filter(Boolean).join(" · "))}</td><td><span class="pill ${b.status}">${b.status}</span></td></tr>`).join("")+
+    '</tbody></table>';
+  $("batchDetail").innerHTML=html;
+  $("batchDetail").scrollIntoView({behavior:"smooth"});
+}
+function exportBatch(id){window.location.href="/api/export-status?id="+encodeURIComponent(id);}
+async function exportActive(){
+  const {batches}=await (await fetch("/api/batches")).json();
+  const active=(batches||[]).find(b=>!b.archived);
+  if(!active){alert("No active week to export yet.");return;}
+  exportBatch(active.id);
+}
+async function deleteBatch(id,label){
+  if(!confirm('Delete the week "'+label+'" and all its bookings from history? This cannot be undone.'))return;
+  const password=prompt("For security, please enter your password to confirm deleting this week:");
+  if(password===null)return;                    // cancelled
+  if(!password){alert("Password required.");return;}
+  const r=await fetch("/api/delete-batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,password})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){alert(d.error||"Couldn't delete.");return;}
+  loadBatches();
+}
+window.viewBatch=viewBatch;window.exportBatch=exportBatch;window.deleteBatch=deleteBatch;
+
+load();
+loadVenues(); // populates the (collapsed) venue list + header count
+loadActs();   // populates the (collapsed) acts list + header count
+setInterval(load,15000); // refresh confirmations live
+</script>
+</body>
+</html>

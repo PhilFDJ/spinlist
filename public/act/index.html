@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>GigConfirm</title>
+<link rel="icon" type="image/png" href="/act/icon.png?v=2">
+<meta name="theme-color" content="#0f1720" />
+<style>
+  :root{
+    --ink:#0f1720;--ink2:#16212e;--panel:#1b2836;--line:#263341;--line2:#2c3a4a;
+    --cream:#eef3f8;--muted:#93a3b4;--amber:#e8a13a;--go:#25d366;--stop:#e2614b;--navy:#0b1220;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ink);color:var(--cream);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased;padding:0 0 48px}
+  header{padding:22px 20px 16px;border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:19px;color:var(--amber);letter-spacing:-.02em}
+  .sub{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin-top:4px}
+  main{max-width:560px;margin:0 auto;padding:20px}
+  .intro{color:var(--muted);font-size:14px;line-height:1.5;margin:0 0 18px}
+  .gig{background:var(--ink2);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  .prev-head{margin:26px 0 12px;padding-top:20px;border-top:1px solid var(--line);font-weight:700;font-size:16px;display:flex;flex-direction:column}
+  .prev-head span{font-weight:400;font-size:12px;color:var(--muted);margin-top:2px}
+  .gig.prev{opacity:.72}
+  .prev-status{margin-top:8px;font-size:13px;color:var(--go);font-weight:600}
+  .gig.confirmed{border-color:var(--go)}
+  .gig.issue{border-color:var(--stop)}
+  .venue{font-size:18px;font-weight:700;letter-spacing:-.01em}
+  .when{color:var(--muted);font-size:13px;margin-top:3px}
+  .row{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .row .k{width:78px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.07em;flex:none;padding-top:2px}
+  .contact{margin-top:12px}
+  .contact-title{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--amber);margin-bottom:6px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .actions a{display:inline-flex;align-items:center;gap:6px;padding:10px 14px;border-radius:9px;font-size:13px;font-weight:600;text-decoration:none}
+  .call{background:#2a3f2c;color:var(--go)}
+  .text{background:#2e2a3f;color:#a99cf0}
+  .confirm-row{display:flex;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  .confirm-row button{flex:1;padding:13px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;border:none;font-family:inherit}
+  .btn-go{background:var(--go);color:var(--navy)}
+  .btn-flag{background:none;border:1px solid var(--stop);color:var(--stop)}
+  .status-tag{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:5px 12px;border-radius:20px;margin-top:12px}
+  .status-tag.confirmed{background:#1f3320;color:var(--go)}
+  .status-tag.issue{background:#3a222a;color:var(--stop)}
+  .empty{color:var(--muted);text-align:center;padding:40px 20px;font-size:14px;line-height:1.5}
+  .allset{background:var(--ink2);border:1px solid var(--go);border-radius:14px;padding:18px;margin-bottom:14px;color:var(--go);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><img src="/logo-light.png" alt="GigConfirm" style="height:30px;width:auto"></div>
+  <div class="sub">Confirm your bookings</div>
+</header>
+<main>
+  <div id="agencyBrand" style="display:none;align-items:center;gap:12px;background:var(--ink2);border:1px solid var(--line2);border-radius:12px;padding:12px 14px;margin:0 0 16px"></div>
+  <div id="bulletin" style="display:none;background:#fff8ec;border:1px solid #e8a13a;border-left:4px solid #e8a13a;border-radius:12px;padding:12px 14px;margin:0 0 16px;color:#5a4318"></div>
+  <p class="intro" id="intro" style="display:none">Please check each gig and tap <b>Confirm</b> if you're all good, or <b>🚩 Flag a problem</b> if something's not right. When flagging, please tell us as much as you can so we can fix it quickly.</p>
+  <div id="carRegBox" style="display:none;background:var(--ink2);border:1px solid var(--line2);border-radius:12px;padding:12px 14px;margin:0 0 16px">
+    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">🚗 Your car registration <span style="font-weight:400;color:var(--muted)">(shared with venues for parking/security)</span></label>
+    <div style="display:flex;gap:8px">
+      <input id="carRegInput" placeholder="e.g. AB12 CDE" maxlength="20" style="flex:1;text-transform:uppercase;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:15px;font-family:inherit;letter-spacing:.05em" />
+      <button id="carRegSave" onclick="saveCarReg()" class="btn-go" style="padding:9px 16px;border:none;border-radius:8px;font-weight:700;cursor:pointer">Save</button>
+    </div>
+    <div id="carRegResult" style="font-size:12px;margin-top:6px"></div>
+  </div>
+  <div id="mediaBox" style="display:none;background:var(--ink2);border:1px solid var(--line2);border-radius:12px;padding:14px;margin:0 0 16px">
+    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px">📸 Share photos &amp; videos</label>
+    <div class="mut" style="font-size:12px;margin-bottom:10px">Got great shots or clips from your gigs? Upload them here for the agency to use on social media. Photos and short videos welcome.</div>
+    <input id="mediaFiles" type="file" accept="image/*,video/*" multiple style="width:100%;font-size:13px;color:var(--cream);margin-bottom:8px" />
+    <button id="mediaBtn" onclick="uploadMedia()" class="btn-go" style="padding:10px 16px;border:none;border-radius:8px;font-weight:700;cursor:pointer;width:100%">Upload</button>
+    <div id="mediaResult" style="font-size:12px;margin-top:8px"></div>
+  </div>
+  <div id="gigs"><div class="empty">Loading your gigs…</div></div>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+const actId = params.get("act");
+const bookingId = params.get("b");
+
+function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+async function loadGigs(){
+  const el=document.getElementById("gigs");
+  const intro=document.getElementById("intro");
+  const q=bookingId?("b="+bookingId):actId?("act="+actId):null;
+  if(!q){
+    el.innerHTML='<div class="empty">This link is missing its code.<br>Please open the link from your confirmation email again.</div>';
+    return;
+  }
+  try{
+    const res=await fetch("/api/my-gigs?"+q);
+    const data=await res.json();
+    const gigs=data.gigs||[];
+    const previous=data.previous||[];
+    // agency branding banner (who the booking is from + how to reach them)
+    if(data.agency && (data.agency.name||data.agency.logoUrl)){
+      const a=data.agency, tel=(a.phone||"").replace(/[^\d+]/g,"");
+      let html="";
+      if(a.logoUrl)html+='<img src="'+a.logoUrl+'" alt="'+esc(a.name||"")+'" style="height:44px;width:auto;max-width:150px;object-fit:contain;border-radius:6px">';
+      html+='<div style="flex:1;min-width:0">';
+      if(a.name)html+='<div style="font-weight:700;font-size:15px">'+esc(a.name)+'</div>';
+      const contact=[];
+      if(a.phone)contact.push(tel?('<a href="tel:'+tel+'" style="color:var(--go);text-decoration:none">📞 '+esc(a.phone)+'</a>'):esc(a.phone));
+      if(a.website && a.website.trim()){
+        let raw=a.website.trim();
+        // strip any malformed/partial scheme the user may have typed, then re-add https
+        let bare=raw.replace(/^\s*https?:?\/*/i,"").trim();
+        // only render a link if it actually looks like a domain (has a dot, no spaces)
+        if(/^[^\s]+\.[^\s]+$/.test(bare)){
+          const url="https://"+bare;
+          contact.push('<a href="'+esc(url)+'" rel="noopener" style="color:var(--go);text-decoration:underline">'+esc(bare)+'</a>');
+        }else{
+          // not a usable URL — show it as plain text rather than a broken link
+          contact.push('<span style="color:var(--muted)">'+esc(raw)+'</span>');
+        }
+      }
+      if(contact.length)html+='<div style="font-size:13px;margin-top:2px">'+contact.join(' &nbsp;·&nbsp; ')+'</div>';
+      html+='</div>';
+      const bx=document.getElementById("agencyBrand");
+      bx.innerHTML=html;bx.style.display="flex";
+    }
+    if(!gigs.length && !previous.length){el.innerHTML='<div class="empty">No gigs to confirm right now.</div>';return;}
+    // News bulletin (current week, if switched on)
+    if(data.bulletin){
+      const bb=document.getElementById("bulletin");
+      bb.innerHTML='<div style="font-weight:700;margin-bottom:3px">📣 Notice</div>'+esc(data.bulletin).replace(/\n/g,"<br>");
+      bb.style.display="block";
+    }
+    intro.style.display=gigs.length?"block":"none";
+    // car registration box (only when there are current gigs)
+    if(gigs.length && data.actId){
+      window.__actId=data.actId;
+      document.getElementById("carRegInput").value=data.carReg||"";
+      document.getElementById("carRegBox").style.display="block";
+      // media upload box — only if OneDrive uploads are switched on
+      try{
+        const ue=await (await fetch("/api/upload-enabled?act="+encodeURIComponent(data.actId))).json();
+        if(ue.enabled)document.getElementById("mediaBox").style.display="block";
+      }catch(_){}
+    }
+    let html=gigs.map(renderGig).join("");
+    if(previous.length){
+      html+='<div class="prev-head">Previous check-offs<span>Confirmed in the last 14 days · for your reference</span></div>';
+      html+=previous.map(renderPrevious).join("");
+    }
+    el.innerHTML=html;
+  }catch(e){
+    el.innerHTML='<div class="empty">Couldn\'t load your gigs just now.<br>Please check your connection and reopen the link.</div>';
+  }
+}
+
+// Build the venue-contact block, showing up to 3 contacts (name/role/phone) plus
+// email/address on the primary, each with tap-to-call/text.
+function venueContactHtml(g){
+  const contacts=[
+    {name:g.contact_name, role:g.contact_role, phone:g.phone, email:g.venue_email},
+    {name:g.contact2_name, role:g.contact2_role, phone:g.contact2_phone, email:g.contact2_email},
+    {name:g.contact3_name, role:g.contact3_role, phone:g.contact3_phone, email:g.contact3_email},
+  ].filter(c=>c.name||c.phone||c.email);
+  const hasAny=contacts.length||g.address||g.venue_notes;
+  if(!hasAny)return `<div class="row"><span class="k">Contact</span><span style="color:var(--muted)">Not on file yet</span></div>`;
+  const blocks=contacts.map(c=>{
+    const tel=(c.phone||"").replace(/[^\d+]/g,"");
+    const email1=(c.email||"").split(",")[0].trim();  // first email for the mailto link
+    return '<div style="padding:6px 0;border-top:1px solid var(--line)">'+
+      (c.name?'<div style="font-weight:600">'+esc(c.name)+(c.role?' <span class="mut" style="font-weight:400;font-size:12px">· '+esc(c.role)+'</span>':'')+'</div>':(c.role?'<div class="mut" style="font-size:12px">'+esc(c.role)+'</div>':''))+
+      (c.phone?'<div style="font-size:13px;margin-top:2px">'+esc(c.phone)+'</div>':'')+
+      (c.email?'<div style="font-size:13px;margin-top:2px">'+esc(c.email)+'</div>':'')+
+      ((tel||email1)?'<div class="actions" style="margin-top:6px">'+
+        (tel?'<a class="call" href="tel:'+tel+'">📞 Call</a> <a class="text" href="sms:'+tel+'">💬 Text</a>':'')+
+        (email1?' <a class="text" href="mailto:'+esc(email1)+'">✉️ Email</a>':'')+
+      '</div>':'')+
+    '</div>';
+  }).join("");
+  return '<div class="contact">'+
+    '<div class="contact-title">'+(contacts.length?('Venue contact'+(contacts.length>1?'s':'')):'Venue')+'</div>'+
+    blocks+
+    (g.address?'<div class="row" style="margin-top:6px"><span class="k">Address</span><span>'+esc(g.address)+'</span></div>'+
+      '<div class="mut" style="font-size:11px;margin-top:6px">Directions:</div>'+
+      '<div class="actions" style="margin-top:4px">'+
+        '<a class="call" href="http://maps.apple.com/?daddr='+encodeURIComponent(g.address)+'" target="_blank" rel="noopener">🍏 Apple Maps</a> '+
+        '<a class="call" href="https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(g.address)+'" target="_blank" rel="noopener">🗺️ Google Maps</a> '+
+        '<a class="call" href="https://waze.com/ul?q='+encodeURIComponent(g.address)+'&navigate=yes" target="_blank" rel="noopener">🚗 Waze</a>'+
+      '</div>':'')+
+    (g.venue_notes?'<div style="margin-top:8px;padding:8px 10px;background:var(--ink2);border-left:3px solid var(--amber);border-radius:6px;font-size:13px"><b>Venue notes:</b> '+esc(g.venue_notes).replace(/\n/g,"<br>")+'</div>':'')+
+  '</div>';
+}
+function renderPrevious(g){
+  const when=[g.gig_date,g.gig_time].filter(Boolean).join(" · ");
+  const tel=(g.phone||"").replace(/[^\d+]/g,"");
+  return `<div class="gig prev">
+    ${(g.performer_name||g.act_name)?`<div class="when" style="color:var(--amber);font-weight:700;font-size:16px;margin-bottom:2px">${esc(g.performer_name||g.act_name)}</div>`:""}
+    <div class="venue">${esc(g.display_name||"Gig")}</div>
+    <div class="when">${esc(when)}</div>
+    ${venueContactHtml(g)}
+    <div class="prev-status">✓ You confirmed this</div>
+  </div>`;
+}
+
+function renderGig(g){
+  const tel=(g.phone||"").replace(/[^\d+]/g,"");
+  const confirmed=g.status==="confirmed",issue=g.status==="issue";
+  const done=confirmed||issue;
+  return `<div class="gig ${g.status}" id="gig-${g.id}">
+    ${(g.performer_name||g.act_name)?`<div class="when" style="color:var(--amber);font-weight:700;font-size:16px;margin-bottom:2px">${esc(g.performer_name||g.act_name)}</div>`:""}
+    <div class="venue">${esc(g.display_name||g.venue_text||"Gig")}</div>
+    <div class="when">${esc([g.gig_date,g.gig_time].filter(Boolean).join(" · ")||"")}</div>
+    ${g.adhoc_note?`<div style="background:rgba(232,161,58,.12);border-left:3px solid var(--amber);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:13px"><b>Note:</b> ${esc(g.adhoc_note)}</div>`:""}
+    ${g.notes?`<div class="row"><span class="k">Details</span><span>${esc(g.notes)}</span></div>`:""}
+    ${venueContactHtml(g)}
+    ${confirmed?`<span class="status-tag confirmed">✓ You confirmed this</span>`:""}
+    ${issue?`<div class="status-tag issue">⚑ You flagged a problem</div>
+      <div class="confirm-row" style="margin-top:8px">
+        <button class="btn-go" onclick="respond('${g.id}','confirmed')">👍 Actually, I'm good — confirm</button>
+      </div>`:""}
+    ${!done?`
+      <div class="confirm-row">
+        <button class="btn-go" onclick="respond('${g.id}','confirmed')">👍 Confirm I'm good</button>
+        <button class="btn-flag" onclick="flag('${g.id}')">🚩 Flag a problem</button>
+      </div>`:""}
+  </div>`;
+}
+
+async function respond(id,status,message){
+  try{
+    await fetch("/api/respond",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({bookingId:id,status,message})});
+  }catch(e){}
+  loadGigs();
+}
+function flag(id){
+  const m=prompt(
+    "Please describe the problem in as much detail as you can — the more we know, the "
+    +"quicker we can sort it.\n\n"
+    +"For example: wrong date or time? Double-booked? Can't make it? Issue with the venue "
+    +"or the booking details?\n\n"
+    +"Type your message below:"
+  );
+  if(m===null)return;                 // they cancelled — don't flag
+  if(!m.trim()){
+    const sure=confirm("You didn't add any detail. Flag it anyway without a description?");
+    if(!sure)return;
+  }
+  respond(id,"issue",m.trim());
+}
+window.respond=respond;window.flag=flag;
+
+async function uploadMedia(){
+  const input=document.getElementById("mediaFiles");
+  const out=document.getElementById("mediaResult");
+  const btn=document.getElementById("mediaBtn");
+  const files=input.files;
+  if(!files||!files.length){out.style.color="#e8a13a";out.textContent="Please choose some photos or videos first.";return;}
+  if(!window.__actId){out.style.color="#e2614b";out.textContent="Couldn't identify your act — please reopen your link.";return;}
+  const fd=new FormData();
+  for(const f of files)fd.append("files",f);
+  btn.disabled=true;out.style.color="var(--muted)";out.textContent="Uploading "+files.length+" file(s)… please keep this page open.";
+  try{
+    const r=await fetch("/api/act-media?act="+encodeURIComponent(window.__actId),{method:"POST",body:fd});
+    const d=await r.json();
+    if(!r.ok){out.style.color="#e2614b";out.textContent=d.error||"Upload failed.";btn.disabled=false;return;}
+    out.style.color="#25d366";out.textContent="✓ Thanks! Uploaded "+d.uploaded+" file(s). The agency has them now.";
+    input.value="";
+  }catch(_){out.style.color="#e2614b";out.textContent="Upload failed — please try again.";}
+  btn.disabled=false;
+}
+async function saveCarReg(){
+  const btn=document.getElementById("carRegSave"), out=document.getElementById("carRegResult");
+  const reg=(document.getElementById("carRegInput").value||"").trim().toUpperCase();
+  document.getElementById("carRegInput").value=reg;
+  btn.disabled=true;out.textContent="Saving…";out.style.color="var(--muted)";
+  try{
+    const r=await fetch("/api/set-car-reg",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({actId:window.__actId,carReg:reg})});
+    const d=await r.json();
+    btn.disabled=false;
+    if(!r.ok){out.textContent=d.error||"Couldn't save.";out.style.color="var(--stop)";return;}
+    out.textContent="✓ Saved — venues will see this in your lineup.";out.style.color="var(--go)";
+  }catch(_){btn.disabled=false;out.textContent="Couldn't save.";out.style.color="var(--stop)";}
+}
+window.saveCarReg=saveCarReg;
+
+loadGigs();
+</script>
+</body>
+</html>

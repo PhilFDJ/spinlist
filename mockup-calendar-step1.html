@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GigConfirm — Calendar import, step 1 (mockup)</title>
+<style>
+  :root{--ink:#0f1720;--ink2:#16212e;--panel:#17222f;--line:#243040;--line2:#2c3a4a;--cream:#eef3f8;--muted:#93a3b4;--go:#25d366;--amber:#e8a13a;--stop:#e2614b;--navy:#0b1220}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--ink);color:var(--cream);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.5;padding:24px}
+  .note{max-width:640px;margin:0 auto 18px;background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.35);border-radius:10px;padding:12px 16px;font-size:13px;color:var(--muted)}
+  .note b{color:var(--cream)}
+  .stage{max-width:640px;margin:0 auto;background:rgba(0,0,0,.45);border-radius:16px;padding:30px 16px;display:flex;justify-content:center}
+  .modal{background:var(--ink2);border:1px solid var(--line2);border-radius:14px;padding:20px;width:min(480px,96vw)}
+  .m-title{font-weight:700;font-size:16px;margin-bottom:4px}
+  .m-sub{color:var(--muted);font-size:12px;margin-bottom:16px}
+  .lbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 5px}
+  .row{display:flex;gap:10px;margin-bottom:14px}
+  .row > div{flex:1}
+  .in{width:100%;background:var(--ink);border:1px solid var(--line2);color:var(--cream);border-radius:8px;padding:9px 11px;font-size:14px;font-family:inherit}
+  .calbox{border:1px solid var(--line2);border-radius:8px;padding:6px 10px;max-height:230px;overflow-y:auto}
+  .calgroup{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:10px 0 4px;padding-top:8px;border-top:1px solid var(--line)}
+  .calgroup:first-child{border-top:none;padding-top:2px;margin-top:2px}
+  .calrow{display:flex;align-items:center;gap:9px;padding:6px 2px;font-size:13.5px}
+  .calrow .sub{color:var(--muted);font-size:11.5px}
+  input[type=checkbox]{width:15px;height:15px;accent-color:var(--go)}
+  .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+  button{font-family:inherit;cursor:pointer;border-radius:9px;font-size:13px;padding:9px 16px;border:1px solid var(--line2)}
+  .btn-clear{background:none;color:var(--cream)}
+  .btn-go{background:var(--go);color:var(--navy);border:none;font-weight:700}
+  .cap{max-width:640px;margin:16px auto 0;font-size:12px;color:var(--muted);text-align:center}
+  /* faux date field styling so it reads clearly in the mock */
+  .datefield{position:relative}
+  .datefield::after{content:"📅";position:absolute;right:10px;top:50%;transform:translateY(-50%);opacity:.7;pointer-events:none}
+</style>
+</head>
+<body>
+
+<div class="note">
+  <b>Mockup only</b> — this is the <b>first step</b> of the calendar import: choose a date range and which calendars to pull from. Tap <b>Preview gigs</b> and you land on the review screen (the other mockup). Static preview; nothing here is live.
+</div>
+
+<div class="stage">
+  <div class="modal">
+    <div class="m-title">📅 Import from Google Calendar</div>
+    <div class="m-sub">Pick a date range and which calendars to pull gigs from, then review before anything sends.</div>
+
+    <div class="row">
+      <div>
+        <span class="lbl">From</span>
+        <div class="datefield"><input class="in" value="14/07/2026" readonly></div>
+      </div>
+      <div>
+        <span class="lbl">To</span>
+        <div class="datefield"><input class="in" value="20/07/2026" readonly></div>
+      </div>
+    </div>
+
+    <span class="lbl">Calendars</span>
+    <div class="calbox">
+      <div class="calgroup">Regular acts (one calendar each)</div>
+      <label class="calrow"><input type="checkbox" checked> Phil Freeman</label>
+      <label class="calrow"><input type="checkbox" checked> DJ Sparkle</label>
+      <label class="calrow"><input type="checkbox" checked> The Reels</label>
+      <label class="calrow"><input type="checkbox" checked> Maya Collins</label>
+      <label class="calrow"><input type="checkbox"> Acoustic Anna <span class="sub">— on holiday this week</span></label>
+
+      <div class="calgroup">Ad-hoc bookings</div>
+      <label class="calrow"><input type="checkbox" checked> Master Booking Calendar <span class="sub">— act read from event title</span></label>
+
+      <div class="calgroup">Other</div>
+      <label class="calrow"><input type="checkbox"> phil@ldagency.co.uk <span class="sub">(primary)</span></label>
+      <label class="calrow"><input type="checkbox"> Holidays &amp; admin</label>
+    </div>
+
+    <div class="foot">
+      <button class="btn-clear">Cancel</button>
+      <button class="btn-go">Preview gigs</button>
+    </div>
+  </div>
+</div>
+
+<div class="cap">The real date fields open a calendar picker. Your per-act calendars and the master calendar both appear here to tick; unrelated calendars (primary, holidays) are left unticked by default.</div>
+
+</body>
+</html>
