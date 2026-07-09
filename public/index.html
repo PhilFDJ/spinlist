@@ -1236,13 +1236,27 @@ function onSearchInput(){
   searchTimer=setTimeout(()=>doSearch(q),320); // debounce
 }
 
-async function doSearch(q){
+async function doSearch(q, attempt){
+  attempt = attempt || 0;
   const seq=++searchSeq;               // guard against out-of-order responses
   const bar=document.getElementById('search-bar');
   bar.classList.add('loading');
   document.getElementById('api-warn').style.display='none';
   try{
     const r=await fetch('/api/search?q='+encodeURIComponent(q)+'&limit=10');
+    if(r.status===429){
+      // Busy / rate-limited. Wait the suggested time and retry a couple of times.
+      if(seq!==searchSeq)return;        // a newer search already fired
+      let wait=2;
+      try{ const d=await r.json(); if(d&&d.retryAfter)wait=d.retryAfter; }catch(_){}
+      const ra=parseInt(r.headers.get('retry-after')||wait,10)||2;
+      if(attempt<2){
+        document.getElementById('search-results').innerHTML='<div class="empty">Lots of people searching right now — just a moment…</div>';
+        setTimeout(()=>{ if(seq===searchSeq)doSearch(q, attempt+1); }, Math.min(ra,5)*1000);
+        return;
+      }
+      throw new Error('busy');
+    }
     if(!r.ok)throw new Error('status '+r.status);
     const data=await r.json();
     if(seq!==searchSeq)return;          // a newer search already fired
@@ -1250,7 +1264,7 @@ async function doSearch(q){
   }catch(err){
     if(seq!==searchSeq)return;
     document.getElementById('api-warn').style.display='block';
-    document.getElementById('search-results').innerHTML='<div class="empty">Search is unavailable right now.</div>';
+    document.getElementById('search-results').innerHTML='<div class="empty">Search is busy right now — please wait a few seconds and try again.</div>';
   }finally{
     if(seq===searchSeq)bar.classList.remove('loading');
   }

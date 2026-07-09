@@ -2090,6 +2090,14 @@ app.post('/api/weddings/:id/blocks/:blockId/export-spotify', auth.requireAuth, a
    SPOTIFY SEARCH PROXY (unchanged)
    ========================================================= */
 let cachedToken = null;
+
+/* Short-lived in-memory cache of search results. At a busy event many guests
+   type the same songs; caching means Spotify sees one request per unique query
+   per window instead of hundreds, keeping us under its rate limit. */
+const searchCache = new Map();       // key -> { value, expiresAt }
+const SEARCH_CACHE_MS = 60_000;      // reuse identical searches for 60s
+const SEARCH_CACHE_MAX = 2000;       // cap entries so memory stays bounded
+
 async function getAppToken() {
   if (cachedToken && Date.now() < cachedToken.expiresAt - 30_000) return cachedToken.value;
   const creds = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
@@ -2109,6 +2117,17 @@ app.get('/api/search', async (req, res) => {
   if (!q) return res.json({ tracks: [] });
   const limit = Math.min(parseInt(req.query.limit, 10) || 10, 10); // Spotify caps at 10
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  // Serve identical searches from a short-lived cache so a busy event
+  // (many guests searching the same songs) doesn't hammer Spotify and
+  // trip its rate limit. Key on the normalised query + paging.
+  const cacheKey = `${q.toLowerCase()}|${limit}|${offset}`;
+  const now = Date.now();
+  const hit = searchCache.get(cacheKey);
+  if (hit && now < hit.expiresAt) {
+    return res.json(hit.value);
+  }
+
   try {
     const token = await getAppToken();
     const url = new URL('https://api.spotify.com/v1/search');
@@ -2119,8 +2138,25 @@ app.get('/api/search', async (req, res) => {
     url.searchParams.set('market', SPOTIFY_MARKET);
     let r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (r.status === 401) { cachedToken = null; const t2 = await getAppToken(); r = await fetch(url, { headers: { Authorization: `Bearer ${t2}` } }); }
+    if (r.status === 429) {
+      // Spotify is rate-limiting us. Respect Retry-After, and if we have a
+      // stale cached result for this query, serve it rather than failing.
+      const retryAfter = parseInt(r.headers.get('retry-after') || '2', 10);
+      if (hit) return res.json(hit.value);
+      res.set('Retry-After', String(retryAfter));
+      return res.status(429).json({ error: 'Busy right now — please wait a moment and try again.', retryAfter });
+    }
     if (!r.ok) return res.status(r.status).json({ error: 'Spotify search failed' });
-    res.json(shapeResults(await r.json()));
+    const shaped = shapeResults(await r.json());
+    // Cache successful results for a short window.
+    searchCache.set(cacheKey, { value: shaped, expiresAt: now + SEARCH_CACHE_MS });
+    if (searchCache.size > SEARCH_CACHE_MAX) {
+      // Simple trim: drop the oldest ~10% when we grow too big.
+      const drop = Math.ceil(SEARCH_CACHE_MAX * 0.1);
+      let i = 0;
+      for (const k of searchCache.keys()) { searchCache.delete(k); if (++i >= drop) break; }
+    }
+    res.json(shaped);
   } catch (err) {
     console.error('search error:', err.message);
     res.status(500).json({ error: 'Search failed' });
