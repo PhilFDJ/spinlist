@@ -2217,13 +2217,28 @@ async function searchAppleMusic(q, limit) {
    needing Spotify to be rate-limited first. Reports config state and does a
    live test search. Handy for confirming the key is set up correctly. */
 app.get('/api/search/apple-test', async (req, res) => {
+  // A healthy pkcs8 EC private key normalises to ~230-260 chars of PEM.
+  // Reporting length + a hash (not the key) tells us if Render has the full
+  // value and whether it changed, without ever exposing the secret.
+  const rawEnv = process.env.APPLE_MUSIC_KEY || '';
+  const bodyOnly = APPLE_MUSIC_KEY
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----/, '')
+    .replace(/-----END [A-Z ]*PRIVATE KEY-----/, '')
+    .replace(/\s/g, '');
   const status = {
     configured: APPLE_MUSIC_ENABLED,
     hasKey: !!APPLE_MUSIC_KEY,
     keyLooksValid: /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(APPLE_MUSIC_KEY),
     hasKeyId: !!APPLE_MUSIC_KEY_ID,
+    keyIdLength: APPLE_MUSIC_KEY_ID.length,      // should be 10
     teamId: APPLE_MUSIC_TEAM_ID ? APPLE_MUSIC_TEAM_ID.slice(0, 4) + '…' : '(none)',
     storefront: APPLE_MUSIC_STOREFRONT,
+    rawEnvLength: rawEnv.length,                 // what Render stores, before normalise
+    normalisedLength: APPLE_MUSIC_KEY.length,    // after our cleanup
+    keyBodyLength: bodyOnly.length,              // just the base64 (healthy ~200+)
+    keyFingerprint: crypto.createHash('sha256').update(APPLE_MUSIC_KEY).digest('hex').slice(0, 12),
+    hasBackslashN: rawEnv.includes('\\n'),
+    hasRealNewlines: rawEnv.includes('\n'),
   };
   if (!APPLE_MUSIC_ENABLED) {
     return res.status(200).json({ ok: false, step: 'config', message: 'Apple Music is not configured — APPLE_MUSIC_KEY and APPLE_MUSIC_KEY_ID must both be set.', status });
