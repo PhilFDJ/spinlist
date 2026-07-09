@@ -81,6 +81,23 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
   process.exit(1);
 }
 
+/* Apple Music — optional fallback search source. Used only when Spotify
+   returns 429 (rate limited), so guests never see a dead search at busy
+   events. Catalogue search needs just a developer token, which we sign
+   ourselves from your MusicKit private key. Set in the environment:
+     APPLE_MUSIC_KEY        — contents of the .p8 private key file
+                              (the whole -----BEGIN PRIVATE KEY----- block)
+     APPLE_MUSIC_KEY_ID     — the 10-char Key ID (from the .p8 filename)
+     APPLE_MUSIC_TEAM_ID    — your Apple Team ID (defaults to the app one)
+     APPLE_MUSIC_STOREFRONT — catalogue storefront, defaults to 'gb'
+   If APPLE_MUSIC_KEY / APPLE_MUSIC_KEY_ID are absent, the fallback is simply
+   inactive and Spotify behaves exactly as before. */
+const APPLE_MUSIC_KEY = (process.env.APPLE_MUSIC_KEY || '').replace(/\\n/g, '\n');
+const APPLE_MUSIC_KEY_ID = process.env.APPLE_MUSIC_KEY_ID || '';
+const APPLE_MUSIC_TEAM_ID = process.env.APPLE_MUSIC_TEAM_ID || process.env.APPLE_TEAM_ID || '3LVYMTC2X7';
+const APPLE_MUSIC_STOREFRONT = (process.env.APPLE_MUSIC_STOREFRONT || 'gb').toLowerCase();
+const APPLE_MUSIC_ENABLED = !!(APPLE_MUSIC_KEY && APPLE_MUSIC_KEY_ID);
+
 /* ---------- Stripe config (optional until you add keys) ---------- */
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
@@ -2112,6 +2129,68 @@ async function getAppToken() {
   return cachedToken.value;
 }
 
+/* ---- Apple Music fallback ------------------------------------------------
+   A developer token is a JWT signed with your MusicKit private key (ES256).
+   We sign it ourselves with Node's crypto (no extra dependency) and cache it.
+   Apple lets tokens live up to 6 months; we use a shorter life and refresh. */
+function base64url(input) {
+  return Buffer.from(input).toString('base64')
+    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+let appleTokenCache = null;
+function getAppleDevToken() {
+  if (!APPLE_MUSIC_ENABLED) throw new Error('Apple Music not configured');
+  if (appleTokenCache && Date.now() < appleTokenCache.expiresAt - 60_000) return appleTokenCache.value;
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + 60 * 60 * 12;          // 12 hours
+  const header = { alg: 'ES256', kid: APPLE_MUSIC_KEY_ID };
+  const payload = { iss: APPLE_MUSIC_TEAM_ID, iat, exp };
+  const signingInput = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
+  // ES256 = ECDSA P-256 SHA-256; Node returns DER, JWT needs raw R||S (64 bytes).
+  const der = crypto.sign('SHA256', Buffer.from(signingInput),
+    { key: APPLE_MUSIC_KEY, dsaEncoding: 'ieee-p1363' });
+  const jwt = `${signingInput}.${base64url(der)}`;
+  appleTokenCache = { value: jwt, expiresAt: exp * 1000 };
+  return jwt;
+}
+
+// Shape Apple Music results to the same structure as Spotify results.
+function shapeAppleResults(json) {
+  const items = (json && json.results && json.results.songs && json.results.songs.data) || [];
+  return {
+    source: 'apple',
+    tracks: items.map(s => {
+      const a = s.attributes || {};
+      let art = '';
+      if (a.artwork && a.artwork.url) {
+        art = a.artwork.url.replace('{w}', '200').replace('{h}', '200');
+      }
+      return {
+        id: s.id,
+        uri: a.url || '',                 // Apple has no spotify: URI; use the web URL
+        title: a.name || '',
+        artist: a.artistName || '',
+        album: a.albumName || '',
+        art,
+        durationMs: a.durationInMillis || 0,
+        isrc: a.isrc || '',               // ISRC lets us cross-reference to Spotify later
+        appleUrl: a.url || '',
+      };
+    }),
+  };
+}
+
+async function searchAppleMusic(q, limit) {
+  const token = getAppleDevToken();
+  const url = new URL(`https://api.music.apple.com/v1/catalog/${APPLE_MUSIC_STOREFRONT}/search`);
+  url.searchParams.set('term', q);
+  url.searchParams.set('types', 'songs');
+  url.searchParams.set('limit', String(Math.min(limit || 10, 25)));
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`Apple search failed (${r.status})`);
+  return shapeAppleResults(await r.json());
+}
+
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) return res.json({ tracks: [] });
@@ -2139,29 +2218,55 @@ app.get('/api/search', async (req, res) => {
     let r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (r.status === 401) { cachedToken = null; const t2 = await getAppToken(); r = await fetch(url, { headers: { Authorization: `Bearer ${t2}` } }); }
     if (r.status === 429) {
-      // Spotify is rate-limiting us. Respect Retry-After, and if we have a
-      // stale cached result for this query, serve it rather than failing.
+      // Spotify is rate-limiting us. First try to keep search alive:
+      //   1. serve a stale cached result for this query if we have one, else
+      //   2. fall back to Apple Music (if configured), else
+      //   3. ask the guest to wait a moment.
       const retryAfter = parseInt(r.headers.get('retry-after') || '2', 10);
       if (hit) return res.json(hit.value);
+      const viaApple = await tryAppleFallback(q, limit, cacheKey, now);
+      if (viaApple) return res.json(viaApple);
       res.set('Retry-After', String(retryAfter));
       return res.status(429).json({ error: 'Busy right now — please wait a moment and try again.', retryAfter });
     }
     if (!r.ok) return res.status(r.status).json({ error: 'Spotify search failed' });
     const shaped = shapeResults(await r.json());
     // Cache successful results for a short window.
-    searchCache.set(cacheKey, { value: shaped, expiresAt: now + SEARCH_CACHE_MS });
-    if (searchCache.size > SEARCH_CACHE_MAX) {
-      // Simple trim: drop the oldest ~10% when we grow too big.
-      const drop = Math.ceil(SEARCH_CACHE_MAX * 0.1);
-      let i = 0;
-      for (const k of searchCache.keys()) { searchCache.delete(k); if (++i >= drop) break; }
-    }
+    cacheSearch(cacheKey, shaped, now);
     res.json(shaped);
   } catch (err) {
+    // Spotify unreachable (network/timeout). Try Apple Music before giving up.
     console.error('search error:', err.message);
+    const viaApple = await tryAppleFallback(q, limit, cacheKey, Date.now());
+    if (viaApple) return res.json(viaApple);
     res.status(500).json({ error: 'Search failed' });
   }
 });
+
+// Store a result in the short-lived cache, trimming if it grows too large.
+function cacheSearch(cacheKey, shaped, now) {
+  searchCache.set(cacheKey, { value: shaped, expiresAt: now + SEARCH_CACHE_MS });
+  if (searchCache.size > SEARCH_CACHE_MAX) {
+    const drop = Math.ceil(SEARCH_CACHE_MAX * 0.1);
+    let i = 0;
+    for (const k of searchCache.keys()) { searchCache.delete(k); if (++i >= drop) break; }
+  }
+}
+
+// Attempt an Apple Music search as a fallback. Returns the shaped result
+// (also caching it) or null if Apple isn't configured or the search fails.
+async function tryAppleFallback(q, limit, cacheKey, now) {
+  if (!APPLE_MUSIC_ENABLED) return null;
+  try {
+    const shaped = await searchAppleMusic(q, limit);
+    cacheSearch(cacheKey, shaped, now);
+    console.log('search: served via Apple Music fallback');
+    return shaped;
+  } catch (e) {
+    console.error('apple fallback failed:', e.message);
+    return null;
+  }
+}
 function shapeResults(json) {
   const items = json?.tracks?.items || [];
   return {
