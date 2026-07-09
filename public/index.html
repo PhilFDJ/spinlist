@@ -874,7 +874,7 @@ function renderDashboard(){
   const closed=EVENT.closed||EVENT.locked||(EVENT.deadline&&Date.now()>EVENT.deadline);
   const st=document.getElementById('dash-status');
   st.textContent=closed?'Voting closed':'Voting open';
-  st.style.background=closed?'var(--coral)':'var(--neon)';st.style.color=closed?'#fff':'var(--ink)';
+  st.style.background=closed?'var(--coral)':'var(--neon)';st.style.color=closed?'#fff':'#0a1228';
   document.getElementById('close-btn').textContent=closed?'Unlock voting':'Lock voting';
   const link=location.origin+location.pathname+'#vote/'+EVENT.id+(EVENT.hostId?('/'+EVENT.hostId):'');
   document.getElementById('share-link').value=link;
