@@ -1,20 +1,71 @@
 {
-  "name": "spinlist-spotify-proxy",
-  "version": "2.0.0",
-  "description": "Spinlist — event song-voting app with live Spotify search, host accounts, and Stripe subscriptions",
-  "main": "app.js",
-  "type": "commonjs",
+  "name": "spinlist-music-manager",
+  "productName": "Spinlist Music Manager",
+  "version": "1.4.0",
+  "description": "Scan your music library and sync it to your Spinlist account for song prep.",
+  "author": "Spinlist",
+  "license": "UNLICENSED",
+  "main": "main.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
   },
-  "engines": {
-    "node": ">=18"
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "@electron/notarize": "^2.3.2"
   },
-  "dependencies": {
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "multer": "^1.4.5-lts.1",
-    "stripe": "^17.0.0"
+  "build": {
+    "appId": "co.uk.spinlist.musicmanager",
+    "productName": "Spinlist Music Manager",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.html",
+      "renderer.js",
+      "assets/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "universal"
+        },
+        {
+          "target": "zip",
+          "arch": "universal"
+        }
+      ],
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Spinlist Music Manager"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Audio"
+    },
+    "afterSign": "notarize.js"
   }
 }
