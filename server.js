@@ -95,19 +95,21 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
 function normalizeApplePem(raw) {
   if (!raw) return '';
   let s = String(raw).trim();
-  // Turn any literal backslash-n into real newlines first.
-  s = s.replace(/\\n/g, '\n');
-  // Some hosts flatten the key: newlines become spaces or vanish. Rebuild a
-  // clean PEM from just the base64 body so it decodes regardless of paste.
+  // Unwrap escaping layers in order, because a value can arrive double-escaped
+  // depending on how it was pasted/stored:
+  //   \\n (backslash backslash n) -> real newline
+  //   \n  (backslash n)           -> real newline
+  //   \r  variants                -> dropped
+  s = s.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '');
   const beginRe = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
   const endRe = /-----END [A-Z ]*PRIVATE KEY-----/;
   const begin = (s.match(beginRe) || [])[0];
   const end = (s.match(endRe) || [])[0];
   if (begin && end) {
-    // Extract everything between the header and footer, strip all whitespace,
-    // then re-wrap the base64 at 64 chars per line (standard PEM layout).
+    // Rebuild a clean PEM from just the base64 body, so it decodes no matter
+    // how the whitespace/escaping arrived.
     let body = s.slice(s.indexOf(begin) + begin.length, s.indexOf(end));
-    body = body.replace(/[\s]/g, '');
+    body = body.replace(/\s+/g, '').replace(/\\/g, ''); // strip whitespace + stray backslashes
     const wrapped = body.match(/.{1,64}/g) || [];
     return `${begin}\n${wrapped.join('\n')}\n${end}\n`;
   }
