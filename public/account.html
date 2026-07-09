@@ -205,12 +205,22 @@ async function boot(){
       </div>
     ` : ''}
 
+    <div class="panel">
+      <h2>Gig diary (calendar feed)</h2>
+      <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">Subscribe to your Spinlist gigs in your phone or computer calendar — Apple Calendar, Google Calendar, Outlook and more. Your events and weddings show up automatically, and new ones appear whenever you add them.</p>
+      <div id="cal-box"><p style="color:var(--muted);font-size:.9rem">Loading your calendar link…</p></div>
+    </div>
+
     <div class="actions">
       <a class="btn btn-primary" href="/">Create an event</a>
       ${(noPlan||isComp||isTrial)
         ? '<a class="btn btn-ghost" href="/pricing.html">See plans</a>'
         : '<button class="btn btn-ghost" onclick="portal()">Manage billing</button>'}
-    </div>`;
+    </div>
+    ${(noPlan||isComp||isTrial) ? '' : `
+    <p class="muted" style="margin-top:10px;font-size:.9em">
+      Need to cancel? <a href="#" onclick="portal();return false;" style="color:inherit;text-decoration:underline">Cancel your subscription</a> — you can update your card or cancel anytime.
+    </p>`}`;
 
   // keep the colour picker and hex box in sync
   const cp=document.getElementById('brand-color'), hx=document.getElementById('brand-color-hex');
@@ -226,6 +236,62 @@ async function boot(){
   });
   if(plan.spotifyExport)loadSpotify();
   if(d.user.emailInvites)loadResend();
+  loadCalendar();
+}
+
+// --- Gig diary (iCal) ---
+async function loadCalendar(){
+  const box=document.getElementById('cal-box');
+  if(!box)return;
+  try{
+    const r=await fetch('/api/calendar/url');
+    const d=await r.json();
+    if(!d.url)throw new Error('no url');
+    renderCalendar(d.url);
+  }catch(e){
+    box.innerHTML='<p style="color:var(--muted);font-size:.9rem">Couldn\u2019t load your calendar link. Please refresh.</p>';
+  }
+}
+function renderCalendar(url){
+  const box=document.getElementById('cal-box');
+  // webcal:// makes calendar apps subscribe (auto-refresh) rather than one-off import.
+  const webcal=url.replace(/^https?:\/\//,'webcal://');
+  box.innerHTML=`
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <a class="btn btn-primary" href="${webcal}" style="text-decoration:none">＋ Subscribe in calendar</a>
+      <button class="btn btn-ghost" onclick="copyCalUrl()">Copy link</button>
+    </div>
+    <p style="font-size:.82rem;color:var(--muted);margin-top:12px">Tap <b>Subscribe in calendar</b> on your phone or Mac to add it to Apple Calendar. For Google Calendar, choose “From URL” and paste the link below. For Outlook, add a calendar “From the internet”.</p>
+    <input id="cal-url" readonly value="${url}" onclick="this.select()"
+      style="width:100%;margin-top:8px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.04);color:var(--ink);font-size:.82rem">
+    <p id="cal-msg" style="font-size:.82rem;color:var(--muted);margin-top:8px;min-height:14px"></p>
+    <p style="font-size:.78rem;color:var(--muted);margin-top:6px">
+      This link is private to you. <a href="#" onclick="resetCal();return false;" style="color:inherit;text-decoration:underline">Reset the link</a> if you ever need to revoke access (you’ll need to re-subscribe).
+    </p>`;
+}
+function copyCalUrl(){
+  const inp=document.getElementById('cal-url');const msg=document.getElementById('cal-msg');
+  inp.select();
+  navigator.clipboard.writeText(inp.value).then(()=>{
+    if(msg){msg.style.color='var(--neon-dim,#a8d63f)';msg.textContent='Link copied.';}
+  }).catch(()=>{
+    if(msg){msg.style.color='var(--muted)';msg.textContent='Press Cmd/Ctrl+C to copy.';}
+  });
+}
+async function resetCal(){
+  if(!confirm('Reset your calendar link? Your current subscription will stop updating and you\u2019ll need to subscribe again with the new link.'))return;
+  const msg=document.getElementById('cal-msg');
+  if(msg){msg.style.color='var(--muted)';msg.textContent='Resetting…';}
+  try{
+    const r=await fetch('/api/calendar/reset',{method:'POST'});
+    const d=await r.json();
+    if(!d.url)throw new Error('failed');
+    renderCalendar(d.url);
+    const m2=document.getElementById('cal-msg');
+    if(m2){m2.style.color='var(--neon-dim,#a8d63f)';m2.textContent='Link reset — re-subscribe with the new link.';}
+  }catch(e){
+    if(msg){msg.style.color='#ff6b5e';msg.textContent='Could not reset — please try again.';}
+  }
 }
 
 async function toggleDigest(on){

@@ -529,6 +529,131 @@ app.get('/api/my-events', auth.requireAuth, (req, res) => {
   res.json({ events: [...own, ...assigned] });
 });
 
+/* =========================================================
+   CALENDAR FEED (iCal / .ics) — DJs subscribe to their gigs
+   ========================================================= */
+
+// Escape text for iCal per RFC 5545 (commas, semicolons, backslashes, newlines).
+function icsEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,')
+    .replace(/\r?\n/g, '\\n');
+}
+// Format a timestamp (ms) as an all-day iCal date (YYYYMMDD) in local terms.
+function icsDate(ms) {
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
+}
+function icsStamp(ms) {
+  // UTC timestamp for DTSTAMP: YYYYMMDDTHHMMSSZ
+  return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+// Fold long lines to 75 octets per RFC 5545.
+function icsFold(line) {
+  if (line.length <= 73) return line;
+  const parts = [];
+  let s = line;
+  parts.push(s.slice(0, 73));
+  s = s.slice(73);
+  while (s.length) { parts.push(' ' + s.slice(0, 72)); s = s.slice(72); }
+  return parts.join('\r\n');
+}
+
+// Build the full iCal document for a given DJ (their own + assigned gigs).
+function buildCalendarForUser(user) {
+  const isSub = user.role === 'subdj';
+  const liveIds = new Set(db.allWeddingLiveEventIds());
+
+  // Collect events: own + assigned (sub-DJs get assigned only).
+  let events = [];
+  if (isSub) {
+    events = db.listEventsAssignedTo(user.id);
+  } else {
+    events = db.listEventsByHost(user.id)
+      .concat(db.listEventsAssignedTo(user.id).filter(e => e.host_id !== user.id));
+  }
+  events = events.filter(e => !liveIds.has(e.id) && !e.archived && e.event_date);
+
+  // Collect weddings similarly.
+  let weddings = [];
+  if (isSub) {
+    weddings = db.listWeddingsAssignedTo(user.id);
+  } else {
+    weddings = db.listWeddingsByHost(user.id)
+      .concat(db.listWeddingsAssignedTo(user.id).filter(w => w.host_id !== user.id));
+  }
+  weddings = weddings.filter(w => !w.archived && w.wedding_date);
+
+  const now = Date.now();
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Spinlist//DJ Diary//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:Spinlist Gigs',
+    'X-WR-CALDESC:Your Spinlist events and weddings',
+  ];
+
+  const pushEvent = (uid, dateMs, title, desc) => {
+    lines.push('BEGIN:VEVENT');
+    lines.push(`UID:${uid}@spinlist.co.uk`);
+    lines.push(`DTSTAMP:${icsStamp(now)}`);
+    // All-day event: DTSTART date-only, DTEND next day.
+    lines.push(`DTSTART;VALUE=DATE:${icsDate(dateMs)}`);
+    lines.push(`DTEND;VALUE=DATE:${icsDate(dateMs + 86400000)}`);
+    lines.push(icsFold(`SUMMARY:${icsEscape(title)}`));
+    if (desc) lines.push(icsFold(`DESCRIPTION:${icsEscape(desc)}`));
+    lines.push('END:VEVENT');
+  };
+
+  for (const e of events) {
+    const label = e.assigned_dj === user.id && e.host_id !== user.id ? ' (assigned)' : '';
+    pushEvent(`event-${e.id}`, e.event_date,
+      `${e.name || 'Event'}${label}`,
+      `${e.type || 'Event'} · Spinlist\nhttps://www.spinlist.co.uk/`);
+  }
+  for (const w of weddings) {
+    const label = w.assigned_dj === user.id && w.host_id !== user.id ? ' (assigned)' : '';
+    const who = w.couple_names ? ` — ${w.couple_names}` : '';
+    pushEvent(`wedding-${w.id}`, w.wedding_date,
+      `${w.name || 'Wedding'}${who}${label}`,
+      `Wedding · Spinlist\nhttps://www.spinlist.co.uk/`);
+  }
+
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n') + '\r\n';
+}
+
+// Public iCal feed. Uses a private token in the URL (calendar apps aren't
+// logged in), so the token must be unguessable and can be reset by the DJ.
+app.get('/calendar/:token.ics', (req, res) => {
+  const user = db.getUserByCalToken(req.params.token);
+  if (!user) return res.status(404).type('text/plain').send('Calendar not found.');
+  const ics = buildCalendarForUser(user);
+  res.set('Content-Type', 'text/calendar; charset=utf-8');
+  res.set('Content-Disposition', 'inline; filename="spinlist.ics"');
+  res.set('Cache-Control', 'public, max-age=3600');   // calendar apps re-poll
+  res.send(ics);
+});
+
+// Authenticated: get (creating if needed) this DJ's calendar feed URL.
+app.get('/api/calendar/url', auth.requireAuth, (req, res) => {
+  const token = db.getOrCreateCalToken(req.user.id);
+  if (!token) return res.status(500).json({ error: 'Could not create calendar link.' });
+  res.json({ url: `${BASE_URL}/calendar/${token}.ics` });
+});
+
+// Authenticated: reset the token (invalidates the old feed URL everywhere).
+app.post('/api/calendar/reset', auth.requireAuth, (req, res) => {
+  const token = db.resetCalToken(req.user.id);
+  if (!token) return res.status(500).json({ error: 'Could not reset calendar link.' });
+  res.json({ url: `${BASE_URL}/calendar/${token}.ics` });
+});
+
 // --- get one event (PUBLIC — guests load this by id) ---
 app.get('/api/events/:id', (req, res) => {
   const e = db.getEvent(req.params.id);
@@ -2218,11 +2343,17 @@ async function searchAppleMusic(q, limit) {
 /* Diagnostic: check whether Apple Music search is actually working, without
    needing Spotify to be rate-limited first. Reports config state and does a
    live test search. Handy for confirming the key is set up correctly. */
-app.get('/api/search/apple-test', async (req, res) => {
+app.get('/api/search/apple-test', requireAdmin, async (req, res) => {
   // A healthy pkcs8 EC private key normalises to ~230-260 chars of PEM.
   // Reporting length + a hash (not the key) tells us if Render has the full
   // value and whether it changed, without ever exposing the secret.
   const rawEnv = process.env.APPLE_MUSIC_KEY || '';
+  // Show the exact character codes of the first stretch of the raw value so we
+  // can see precisely how it's escaped (real newline=10, backslash=92, etc.)
+  // without ever revealing key material — the header text isn't secret.
+  const rawHead = rawEnv.slice(0, 45);
+  const rawHeadCodes = Array.from(rawHead).map(c => c.charCodeAt(0)).join(',');
+  const rawHeadShown = JSON.stringify(rawHead);
   const bodyOnly = APPLE_MUSIC_KEY
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----/, '')
     .replace(/-----END [A-Z ]*PRIVATE KEY-----/, '')
@@ -2241,6 +2372,8 @@ app.get('/api/search/apple-test', async (req, res) => {
     keyFingerprint: crypto.createHash('sha256').update(APPLE_MUSIC_KEY).digest('hex').slice(0, 12),
     hasBackslashN: rawEnv.includes('\\n'),
     hasRealNewlines: rawEnv.includes('\n'),
+    rawHeadShown,
+    rawHeadCodes,
   };
   if (!APPLE_MUSIC_ENABLED) {
     return res.status(200).json({ ok: false, step: 'config', message: 'Apple Music is not configured — APPLE_MUSIC_KEY and APPLE_MUSIC_KEY_ID must both be set.', status });
@@ -2344,6 +2477,7 @@ async function tryAppleFallback(q, limit, cacheKey, now) {
 function shapeResults(json) {
   const items = json?.tracks?.items || [];
   return {
+    source: 'spotify',
     tracks: items.map(t => ({
       id: t.id, uri: t.uri, title: t.name,
       artist: (t.artists || []).map(a => a.name).join(', '),
