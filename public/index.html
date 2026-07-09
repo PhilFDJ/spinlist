@@ -260,8 +260,28 @@
           <h3 style="font-size:1.2rem">Live leaderboard</h3>
           <div style="display:flex;align-items:center;gap:12px">
             <span style="color:var(--muted);font-size:.85rem" id="total-votes"></span>
+            <button class="btn btn-neon" style="padding:7px 14px;font-size:.82rem" onclick="toggleAddSong()">＋ Add a song</button>
             <button class="btn btn-ghost" style="padding:7px 14px;font-size:.82rem" onclick="openEventGig()">📺 Gig window</button>
           </div>
+        </div>
+        <div id="dj-add-panel" style="display:none;background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <b style="font-size:.95rem">Add a song for someone who asked at the booth</b>
+            <button onclick="toggleAddSong()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem">✕</button>
+          </div>
+          <input id="dj-add-search" placeholder="Search Spotify for a song or artist…" oninput="djAddSearchInput()"
+            style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--paper);color:var(--ink);font-size:.92rem">
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <label style="font-size:.82rem;color:var(--muted)">Start with</label>
+            <select id="dj-add-votes" style="padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink);font-size:.85rem">
+              <option value="1">1 vote</option>
+              <option value="3">3 votes</option>
+              <option value="5">5 votes</option>
+              <option value="10">10 votes</option>
+            </select>
+            <span style="font-size:.78rem;color:var(--muted)">so it lands where you want in the list</span>
+          </div>
+          <div id="dj-add-results" style="margin-top:10px"></div>
         </div>
         <div id="sort-toggle" style="display:flex;gap:6px;background:var(--paper-2);padding:4px;border-radius:100px;margin-bottom:14px;width:fit-content">
           <button class="seg-btn on" data-s="voted" onclick="setSort('voted')">Top voted</button>
@@ -916,6 +936,8 @@ function renderLeaderboard(target){
       <div class="votes-pill">${t.votes}</div>
       <button class="mini-btn" title="Copy song" onclick="copySong('${esc(t.id)}')">Copy</button>
       <button class="mini-btn ${played?'done':''}" onclick="togglePlayed('${esc(t.id)}')">${played?'✓ Played':'Mark played'}</button>
+      <button class="mini-btn" title="Remove one vote" onclick="unvoteOne('${esc(t.id)}')">−1</button>
+      <button class="mini-btn" title="Remove song from list" onclick="removeSong('${esc(t.id)}')" style="color:#ff6b5e">✕</button>
     </div>`;
   }).join(''):'<div class="empty">No votes yet — share the link to get the room started.</div>';
 }
@@ -945,6 +967,92 @@ async function togglePlayed(id){
     applyServerEvent(d.event);
     renderLeaderboard('leaderboard');
     toast(want?'Marked played':'Unmarked');
+  }catch(e){ toast('Network error'); }
+}
+
+// Host knocks one vote off a song (e.g. to nudge the order). Song stays even at 0.
+async function unvoteOne(id){
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/adjust-votes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trackId:id,delta:-1})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not update');return;}
+    applyServerEvent(d.event);
+    renderLeaderboard('leaderboard');
+    toast('Removed one vote');
+  }catch(e){ toast('Network error'); }
+}
+// Host removes a song from the leaderboard entirely (joke/dupe/inappropriate).
+async function removeSong(id){
+  const t=(window.__ht&&window.__ht[id])||EVENT.tracks[id];
+  const name=t?`"${t.title}"`:'this song';
+  if(!confirm(`Remove ${name} from the leaderboard? This deletes it and all its votes.`))return;
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/remove-track',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trackId:id})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not remove');return;}
+    applyServerEvent(d.event);
+    renderLeaderboard('leaderboard');
+    toast('Song removed');
+  }catch(e){ toast('Network error'); }
+}
+
+// --- DJ adds a song directly (guest asked at the booth) ---
+let djAddT=null;
+function toggleAddSong(){
+  const p=document.getElementById('dj-add-panel');
+  const show=p.style.display==='none';
+  p.style.display=show?'block':'none';
+  if(show){
+    document.getElementById('dj-add-search').value='';
+    document.getElementById('dj-add-results').innerHTML='';
+    setTimeout(()=>document.getElementById('dj-add-search').focus(),50);
+  }
+}
+function djAddSearchInput(){
+  clearTimeout(djAddT);
+  const q=document.getElementById('dj-add-search').value.trim();
+  if(!q){document.getElementById('dj-add-results').innerHTML='';return;}
+  djAddT=setTimeout(()=>djAddSearch(q),320);
+}
+async function djAddSearch(q){
+  const box=document.getElementById('dj-add-results');
+  box.innerHTML='<div class="empty" style="padding:8px">Searching…</div>';
+  try{
+    const r=await fetch('/api/search?q='+encodeURIComponent(q)+'&limit=8');
+    if(!r.ok)throw new Error('search failed');
+    const d=await r.json();
+    const tracks=d.tracks||[];
+    if(!tracks.length){box.innerHTML='<div class="empty" style="padding:8px">No matches. Try another song.</div>';return;}
+    window.__djsr={};
+    box.innerHTML=tracks.map(t=>{
+      window.__djsr[t.id]=t;
+      const art=t.art?`<img class="art" src="${esc(t.art)}" alt="">`:`<div class="art">${esc((t.title||'?')[0])}</div>`;
+      const already=EVENT.tracks[t.id];
+      return `<div class="track">${art}
+        <div class="meta"><b>${esc(t.title)}</b><small>${esc(t.artist)}${t.explicit?' · 🅴':''}${already?` · already on list (${already.votes})`:''}</small></div>
+        <button class="vote-btn" onclick="djAddSong('${esc(t.id)}')">＋ Add</button>
+      </div>`;
+    }).join('');
+  }catch(e){
+    box.innerHTML='<div class="empty" style="padding:8px">Search is busy — try again in a moment.</div>';
+  }
+}
+async function djAddSong(id){
+  const t=window.__djsr&&window.__djsr[id];if(!t)return;
+  const votes=parseInt(document.getElementById('dj-add-votes').value,10)||1;
+  try{
+    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/add-song',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track:{id:t.id,uri:t.uri||null,title:t.title,artist:t.artist,art:t.art||''},votes})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not add');return;}
+    applyServerEvent(d.event);
+    renderLeaderboard('leaderboard');
+    const tv=document.getElementById('total-votes');
+    if(tv)tv.textContent=totalVotes()+' votes · '+ranked().length+' songs';
+    toast('Added: '+t.title);
+    // clear the search so they can add another quickly
+    document.getElementById('dj-add-search').value='';
+    document.getElementById('dj-add-results').innerHTML='';
+    document.getElementById('dj-add-search').focus();
   }catch(e){ toast('Network error'); }
 }
 async function toggleDeadline(){

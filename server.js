@@ -737,6 +737,50 @@ app.post('/api/events/:id/played', auth.requireAuth, (req, res) => {
   res.json({ event: publicEvent(updated) });
 });
 
+// --- host adjusts a song's votes (e.g. knock one off) — host/sub-DJ only ---
+app.post('/api/events/:id/adjust-votes', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (!canAccessEvent(req.user, e)) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  if (!b.trackId) return res.status(400).json({ error: 'trackId required.' });
+  // Only allow small nudges; default -1. Positive allowed too (undo a knock-off).
+  let delta = parseInt(b.delta, 10);
+  if (!Number.isFinite(delta)) delta = -1;
+  delta = Math.max(-100, Math.min(100, delta));
+  const updated = db.adjustVotes(e.id, b.trackId, delta);
+  res.json({ event: publicEvent(updated, true) });
+});
+
+// --- host adds a song directly (guest asked at the booth) — host/sub-DJ only ---
+app.post('/api/events/:id/add-song', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (!canAccessEvent(req.user, e)) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  const t = b.track;
+  if (!t || !t.id || !t.title) return res.status(400).json({ error: 'A song is required.' });
+  // How many votes to seed it with (default 1 — as if one person asked).
+  let votes = parseInt(b.votes, 10);
+  if (!Number.isFinite(votes) || votes < 1) votes = 1;
+  votes = Math.min(votes, 999);
+  const updated = db.hostAddSong(e.id, {
+    id: t.id, uri: t.uri || null, title: t.title, artist: t.artist || '', art: t.art || '',
+  }, votes);
+  res.json({ event: publicEvent(updated, true) });
+});
+
+// --- host removes a song from the leaderboard entirely — host/sub-DJ only ---
+app.post('/api/events/:id/remove-track', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (!canAccessEvent(req.user, e)) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  if (!b.trackId) return res.status(400).json({ error: 'trackId required.' });
+  const updated = db.removeTrack(e.id, b.trackId);
+  res.json({ event: publicEvent(updated, true) });
+});
+
 // --- cast votes (PUBLIC — guests). body: { add:[track], remove:[trackId] } ---
 app.post('/api/events/:id/vote', (req, res) => {
   const e = db.getEvent(req.params.id);
