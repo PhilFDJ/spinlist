@@ -1,116 +1,111 @@
-# Spinlist Music Manager — desktop app
+# Spinlist
 
-A small Mac/Windows app that scans a DJ's music library **natively** (fast, no browser
-limits) and syncs the track list to their Spinlist account. Once synced, the Spinlist
-wedding planner's **Prep** tool uses that library to match songs and export playlists —
-no re-scanning in the browser.
+Event song-voting app. Hosts create an event, share a link or QR code, guests
+search **live Spotify** and vote, and at the deadline the DJ gets a ranked **PDF**
+plus a **Spotify playlist** export.
 
-This is the fast alternative to the in-browser folder scan, and the answer to Safari
-being slow: the app uses Node's native file access instead of a browser file API.
+**Hosts pay. Guests are always free and never sign in.**
+There is no free host tier — new accounts must subscribe (Pro/Studio) or redeem a
+complimentary code before they can create events.
 
-Only the **track list** (title, artist, file path, size, modified-date, video flag) is
-sent to Spinlist. The actual music files never leave the computer.
+## Project layout
 
----
-
-## What's here
-
-| File | Purpose |
-|------|---------|
-| `main.js` | Electron main process — native folder scan, tag reading (MP3 ID3 + MP4/M4A atoms), and calls to the Spinlist API |
-| `preload.js` | Secure bridge between the UI and the main process |
-| `renderer.html` / `renderer.js` | The app window UI (sign in → choose folder → scan → sync) |
-| `package.json` | Dependencies + build config (electron-builder) for Mac, Windows, Linux |
-| `assets/` | App icons (you supply `icon.icns` for Mac, `icon.ico` for Windows — see below) |
-
----
-
-## Run it locally (to try it before building installers)
-
-You need **Node.js 18+** installed (https://nodejs.org).
-
-```bash
-cd spinlist-desktop
-npm install          # downloads Electron + build tools (~200MB, one time)
-npm start            # launches the app
+```
+spinlist-backend/
+├─ server.js              Express: auth, billing, codes, branding, gating, Spotify search
+├─ lib/
+│  ├─ db.js               SQLite store (users, sessions, codes, redemptions, usage)
+│  ├─ auth.js             scrypt password hashing + session cookies
+│  └─ plans.js            Pro / Studio limits — single source of truth
+├─ public/
+│  ├─ index.html          The app (create / host / guest), dark-blue theme
+│  ├─ pricing.html        Plans + signup/login + Stripe Checkout + redeem box
+│  ├─ account.html        Plan, usage, comp status, branding editor, redeem
+│  └─ admin.html          Create & manage complimentary / discount codes
+├─ .env.example
+└─ package.json
 ```
 
-Sign in with a Spinlist email/password (must be a plan that includes Prep — i.e. not
-Basic). Choose your music folder; it scans and syncs. Test a rescan to confirm it only
-re-reads changed files.
+## Setup
 
-> By default the app talks to `https://www.spinlist.co.uk`. To point at a different
-> backend (e.g. for testing), set an environment variable before launching:
-> `SPINLIST_URL=https://staging.example.com npm start`
-
----
-
-## Build the installers
-
-The finished `.dmg` (Mac) and `.exe` (Windows) **must be built on each platform** —
-Electron compiles per-OS. You can't build a Mac app on Windows or vice-versa (without
-extra CI setup).
-
-### Mac (build on a Mac)
 ```bash
-npm run dist:mac
-```
-Output appears in `dist/`: a `.dmg` installer and a `.zip`.
-
-### Windows (build on a Windows PC)
-```bash
-npm run dist:win
-```
-Output appears in `dist/`: an NSIS `.exe` installer.
-
-### Both / Linux
-```bash
-npm run dist        # builds for the current platform
+cd spinlist-backend
+cp .env.example .env      # fill in Spotify + Stripe + admin values
+npm install
+npm start                 # http://localhost:3000
 ```
 
----
+### 1. Spotify (song search)
+Create an app at https://developer.spotify.com/dashboard (choose **Web API**),
+put the Client ID/Secret in `.env`. Since the Feb 2026 API changes, Development
+Mode requires the app owner to hold Spotify **Premium**; for a live product apply
+for **Extended Quota Mode**.
 
-## Icons (before building)
+### 2. Stripe (subscriptions + discount codes)
+1. Test keys from https://dashboard.stripe.com/apikeys → `STRIPE_SECRET_KEY`.
+2. Create two recurring **Prices** (Pro, Studio); paste IDs into
+   `STRIPE_PRICE_PRO` / `STRIPE_PRICE_STUDIO`.
+3. Webhook for local dev:
+   ```bash
+   stripe listen --forward-to localhost:3000/api/stripe/webhook
+   ```
+   Put the `whsec_...` into `STRIPE_WEBHOOK_SECRET`. In production add an endpoint
+   at `https://yourdomain/api/stripe/webhook` subscribed to:
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`,
+   `invoice.payment_failed`.
 
-Put your app icons in `assets/`:
-- `assets/icon.icns` — macOS (1024×1024 source, converted to .icns)
-- `assets/icon.ico` — Windows (256×256 .ico)
+Billing is optional to boot: with no Stripe key the app still runs; comp codes
+work, paid checkout and discount codes return a "not configured" notice.
 
-Quick way to make them from a PNG:
-- Mac `.icns`: use an app like Image2icon, or `iconutil` from a set of PNGs.
-- Windows `.ico`: any online PNG→ICO converter, or ImageMagick:
-  `magick icon.png -define icon:auto-resize=256,128,64,48,32,16 icon.ico`
+### 3. Admin (codes)
+Set `ADMIN_EMAILS` to a comma-separated list of accounts allowed to manage codes.
+Those users see **/admin.html**. Everyone else is blocked from the admin API.
 
-If you skip icons, the app still builds and runs — it just uses Electron's default icon.
+## How access works
 
----
+- **Sign up / log in** (email + password, scrypt-hashed, httpOnly session cookie)
+  creates an account with **no plan**.
+- **Plans** (`lib/plans.js`): Pro = 20 events/mo, 300 guests; Studio = unlimited.
+  Both include custom branding.
+- **Gating is server-side.** `POST /api/events` checks the plan/usage before
+  issuing an event ID, so limits can't be bypassed in the browser.
+- **Stripe webhook** is the source of truth for paid plans: provisions on
+  subscription events, drops to `none` on cancellation. Signature-verified
+  against the raw body and idempotent (handled event IDs are logged).
 
-## Signing & distribution (important, real-world step)
+## Complimentary & discount codes
 
-To hand the app to other DJs without scary warnings, it needs to be **code-signed**:
+Generated and managed by admins at **/admin.html**; redeemed by any signed-in
+user on the pricing or account page.
 
-- **macOS:** requires an Apple Developer account (~£79/$99 per year). The app must be
-  signed and **notarised** by Apple, or users see "cannot be opened because Apple cannot
-  check it for malicious software." electron-builder can notarise automatically once you
-  add your Apple credentials — see https://www.electron.build/code-signing
-- **Windows:** unsigned `.exe`s trigger a SmartScreen "unknown publisher" warning. A
-  Windows code-signing certificate (from a CA) removes it. Optional but recommended for
-  a public download.
+- **Comp codes** grant a free plan (Pro or Studio), per-code, for N months or
+  forever. Support max-uses, expiry date, and a private note. One redemption per
+  user. Expired comps automatically revert the account to no-access.
+- **Discount codes** create a matching Stripe coupon + promotion code, applied
+  automatically at checkout (Stripe tracks the redemptions).
 
-For **just yourself / a few trusted DJs**, you can skip signing — you'll click through a
-one-time "open anyway" warning (Mac: right-click → Open; Windows: More info → Run anyway).
+## Branding (Pro & Studio)
 
-Host the finished installers wherever you like (your site, GitHub Releases, Dropbox).
-When you have download URLs, tell me and I'll wire a **"Download the desktop app"**
-section into the Spinlist account page next to the web option.
+Hosts upload a logo (PNG/JPG/WebP/SVG, ≤2 MB), pick an accent colour, and set a
+tagline. These appear on the guest voting page and the exported PDF. Logos are
+validated server-side and stored under `/uploads`.
 
----
+## Pricing is a placeholder
 
-## How it fits with the web version
+Numbers in `lib/plans.js` and labels on the pricing page are examples. Set real
+prices in Stripe and update the labels. Pricing, refunds, and terms are
+business/legal decisions this scaffold doesn't make for you.
 
-Both use the **same** Spinlist account and the **same** saved library:
-- Scan in the **desktop app** (fast) → it syncs to your account.
-- Open **Prep in a wedding** on the website → it auto-loads that library and matches songs.
+## Still to build (next steps)
 
-DJs can use whichever they prefer. The desktop app is the recommended way to do the
-initial scan of a large library (especially on Mac/Safari).
+- **Shared vote storage** so all guests + host see one live tally (votes are
+  currently per-browser). The accounts/DB layer here is the foundation.
+- **Spotify playlist export** via the DJ Authorization Code login (track URIs are
+  already captured on each voted song).
+- Email verification + password reset.
+
+## Don't commit secrets
+
+`.gitignore` excludes `.env`, the SQLite files, `node_modules/`, and `uploads/`.
+Set environment variables in your host's dashboard for production.
