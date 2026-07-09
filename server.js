@@ -92,10 +92,32 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
      APPLE_MUSIC_STOREFRONT — catalogue storefront, defaults to 'gb'
    If APPLE_MUSIC_KEY / APPLE_MUSIC_KEY_ID are absent, the fallback is simply
    inactive and Spotify behaves exactly as before. */
-const APPLE_MUSIC_KEY = (process.env.APPLE_MUSIC_KEY || '').replace(/\\n/g, '\n');
-const APPLE_MUSIC_KEY_ID = process.env.APPLE_MUSIC_KEY_ID || '';
-const APPLE_MUSIC_TEAM_ID = process.env.APPLE_MUSIC_TEAM_ID || process.env.APPLE_TEAM_ID || '3LVYMTC2X7';
-const APPLE_MUSIC_STOREFRONT = (process.env.APPLE_MUSIC_STOREFRONT || 'gb').toLowerCase();
+function normalizeApplePem(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim();
+  // Turn any literal backslash-n into real newlines first.
+  s = s.replace(/\\n/g, '\n');
+  // Some hosts flatten the key: newlines become spaces or vanish. Rebuild a
+  // clean PEM from just the base64 body so it decodes regardless of paste.
+  const beginRe = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+  const endRe = /-----END [A-Z ]*PRIVATE KEY-----/;
+  const begin = (s.match(beginRe) || [])[0];
+  const end = (s.match(endRe) || [])[0];
+  if (begin && end) {
+    // Extract everything between the header and footer, strip all whitespace,
+    // then re-wrap the base64 at 64 chars per line (standard PEM layout).
+    let body = s.slice(s.indexOf(begin) + begin.length, s.indexOf(end));
+    body = body.replace(/[\s]/g, '');
+    const wrapped = body.match(/.{1,64}/g) || [];
+    return `${begin}\n${wrapped.join('\n')}\n${end}\n`;
+  }
+  // No recognisable header/footer — return as-is and let it fail loudly.
+  return s;
+}
+const APPLE_MUSIC_KEY = normalizeApplePem(process.env.APPLE_MUSIC_KEY || '');
+const APPLE_MUSIC_KEY_ID = (process.env.APPLE_MUSIC_KEY_ID || '').trim();
+const APPLE_MUSIC_TEAM_ID = (process.env.APPLE_MUSIC_TEAM_ID || process.env.APPLE_TEAM_ID || '3LVYMTC2X7').trim();
+const APPLE_MUSIC_STOREFRONT = (process.env.APPLE_MUSIC_STOREFRONT || 'gb').toLowerCase().trim();
 const APPLE_MUSIC_ENABLED = !!(APPLE_MUSIC_KEY && APPLE_MUSIC_KEY_ID);
 
 /* ---------- Stripe config (optional until you add keys) ---------- */
@@ -2190,6 +2212,41 @@ async function searchAppleMusic(q, limit) {
   if (!r.ok) throw new Error(`Apple search failed (${r.status})`);
   return shapeAppleResults(await r.json());
 }
+
+/* Diagnostic: check whether Apple Music search is actually working, without
+   needing Spotify to be rate-limited first. Reports config state and does a
+   live test search. Handy for confirming the key is set up correctly. */
+app.get('/api/search/apple-test', async (req, res) => {
+  const status = {
+    configured: APPLE_MUSIC_ENABLED,
+    hasKey: !!APPLE_MUSIC_KEY,
+    keyLooksValid: /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(APPLE_MUSIC_KEY),
+    hasKeyId: !!APPLE_MUSIC_KEY_ID,
+    teamId: APPLE_MUSIC_TEAM_ID ? APPLE_MUSIC_TEAM_ID.slice(0, 4) + '…' : '(none)',
+    storefront: APPLE_MUSIC_STOREFRONT,
+  };
+  if (!APPLE_MUSIC_ENABLED) {
+    return res.status(200).json({ ok: false, step: 'config', message: 'Apple Music is not configured — APPLE_MUSIC_KEY and APPLE_MUSIC_KEY_ID must both be set.', status });
+  }
+  // Step 1: can we sign a token?
+  let token;
+  try {
+    token = getAppleDevToken();
+  } catch (e) {
+    return res.status(200).json({ ok: false, step: 'sign-token', message: 'Could not sign a developer token from the key. This usually means the key text is wrong or incomplete.', error: e.message, status });
+  }
+  // Step 2: can we actually search?
+  try {
+    const result = await searchAppleMusic(req.query.q ? String(req.query.q) : 'test', 3);
+    return res.status(200).json({ ok: true, step: 'done', message: 'Apple Music is working.', sampleCount: result.tracks.length, sample: result.tracks.slice(0, 3).map(t => `${t.title} — ${t.artist}`), status });
+  } catch (e) {
+    // Common: 401 = bad key/keyId/teamId mismatch; 403 = key not enabled for MusicKit
+    let hint = '';
+    if (/\(401\)/.test(e.message)) hint = 'A 401 usually means the Key ID, Team ID, or the key itself don\'t match. Double-check the Key ID matches this exact .p8 file, and the Team ID is 3LVYMTC2X7.';
+    else if (/\(403\)/.test(e.message)) hint = 'A 403 usually means the key isn\'t enabled for MusicKit, or the MusicKit identifier wasn\'t set up. Check the key has MusicKit ticked in your Apple account.';
+    return res.status(200).json({ ok: false, step: 'search', message: 'Signed a token, but the Apple search request failed.', error: e.message, hint, status });
+  }
+});
 
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
