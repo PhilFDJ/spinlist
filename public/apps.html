@@ -90,6 +90,21 @@
       </div>
       <p class="note" id="gw-note"></p>
     </div>
+
+    <div class="app">
+      <div class="ico">🎚️</div>
+      <h2>Crate Converter</h2>
+      <p>Turns your <b>.m3u / .m3u8</b> playlists — like the ones Prep exports — into Serato crates, ready to load. Just drag your playlists onto the window.</p>
+      <ul>
+        <li>Drag &amp; drop playlists → Serato crates</li>
+        <li>Writes straight to your Serato Subcrates folder</li>
+        <li>Flags any missing tracks so you can spot gaps</li>
+      </ul>
+      <div class="dl">
+        <a class="btn btn-neon" id="cc-mac" href="#">⬇ Mac</a>
+      </div>
+      <p class="note" id="cc-note">Quit Serato before converting, then reopen it to see your new crates.</p>
+    </div>
   </div>
 
   <div class="privacy">
@@ -112,6 +127,7 @@
     mmWin: 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.4.0/Spinlist.Music.Manager.Setup.1.4.0.exe',
     gwMac: 'https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/v1.2.0/Spinlist.Gig.Window-1.2.0-universal.dmg',   // Gig Window Mac
     gwWin: 'https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/v1.2.0/Spinlist.Gig.Window.Setup.1.2.0.exe',
+    ccMac: 'https://github.com/PhilFDJ/Spinlist-Crate-Converter/releases/download/v1.0/Spinlist.Crate.Converter.dmg',   // Crate Converter (Mac only)
   };
   // ===================================================================
   function wire(id, url){
@@ -122,6 +138,7 @@
   }
   wire('mm-mac', APPS.mmMac); wire('mm-win', APPS.mmWin);
   wire('gw-mac', APPS.gwMac); wire('gw-win', APPS.gwWin);
+  wire('cc-mac', APPS.ccMac);
   const macNote = 'Mac: open the .dmg and drag the app into your Applications folder, then open it — no security warning.';
   const winNote = 'Windows: run the installer; if a "protected your PC" notice appears, click More info → Run anyway.';
   document.getElementById('mm-note').textContent = macNote + '  ' + winNote;
