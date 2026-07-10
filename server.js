@@ -2651,7 +2651,8 @@ function ensureDemoEvent() {
 ensureDemoEvent();
 setInterval(buildDemoEvent, 60 * 60 * 1000);
 
-
+const underPassenger = !!(process.env.PASSENGER_BASE_URI || process.env.PASSENGER_APP_ENV ||
+  (typeof PhusionPassenger !== 'undefined'));
 
 if (underPassenger) {
   module.exports = app;
