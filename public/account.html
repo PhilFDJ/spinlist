@@ -173,6 +173,27 @@ async function boot(){
       </div>
     ` : ''}
 
+    ${d.user.appleSearchAvailable ? `
+      <div class="panel">
+        <h2>Guest search catalogue</h2>
+        <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">Choose which music catalogue your guests search when they vote. This applies to <b>new</b> events you create.</p>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+            <input type="radio" name="searchsrc" value="spotify" ${d.user.searchSource !== 'apple' ? 'checked' : ''} onchange="setSearchSource('spotify')" style="width:18px;height:18px;accent-color:var(--plum)">
+            <span style="font-size:.95rem"><b>Spotify</b> — includes one-click native Spotify playlist export</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+            <input type="radio" name="searchsrc" value="apple" ${d.user.searchSource === 'apple' ? 'checked' : ''} onchange="setSearchSource('apple')" style="width:18px;height:18px;accent-color:var(--plum)">
+            <span style="font-size:.95rem"><b>Apple Music</b> — export via the playlist tool (TuneMyMusic) to any service</span>
+          </label>
+        </div>
+        <div style="background:rgba(255,203,71,.1);border-left:3px solid #ffcb47;border-radius:8px;padding:10px 14px;margin-top:14px">
+          <p style="font-size:.85rem;color:var(--ink-2);margin:0">With <b>Apple Music</b> search, the one-click "Export to Spotify" button won't apply to those songs (they're Apple tracks). You can still export to Spotify, Apple Music or Tidal using the playlist export tool.</p>
+        </div>
+        <p id="searchsrc-msg" style="font-size:.85rem;color:var(--muted);margin-top:8px;min-height:16px"></p>
+      </div>
+    ` : ''}
+
     ${d.user.emailInvites ? `
       <div class="panel">
         <h2>Email invites (Resend)</h2>
@@ -298,6 +319,18 @@ async function resetCal(){
   }
 }
 
+async function setSearchSource(source){
+  const msg=document.getElementById('searchsrc-msg');
+  if(msg){msg.style.color='var(--muted)';msg.textContent='Saving…';}
+  try{
+    const r=await fetch('/api/search-source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source})});
+    if(!r.ok)throw new Error('failed');
+    const d=await r.json();
+    if(msg){msg.textContent=d.searchSource==='apple'?'Saved — new events will search Apple Music.':'Saved — new events will search Spotify.';}
+  }catch(e){
+    if(msg){msg.style.color='#ff6b5e';msg.textContent='Could not save — please try again.';}
+  }
+}
 async function toggleDigest(on){
   const msg=document.getElementById('digest-msg');
   if(msg){msg.style.color='var(--muted)';msg.textContent='Saving…';}

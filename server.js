@@ -495,6 +495,9 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
     locked: false,
     ask_name: !!b.askName,
     ask_nationality: !!b.askNationality,
+    // Use the host's preferred search source, but only honour 'apple' when
+    // Apple Music is actually configured on the server.
+    search_source: (APPLE_MUSIC_ENABLED && req.user.search_source === 'apple') ? 'apple' : 'spotify',
     created_at: Date.now(),
   });
   res.json({
@@ -819,6 +822,7 @@ function publicEvent(e, hostView) {
     id: e.id, name: e.name, type: e.type, host: e.host,
     votesPer: e.votes_per, deadline: e.deadline, eventDate: e.event_date || null,
     locked: !!e.locked, hostId: e.host_id,
+    searchSource: e.search_source === 'apple' ? 'apple' : 'spotify',
     dj: e.assigned_dj ? db.djProfileFor(e.host_id, e.assigned_dj) : null,
     askName: !!e.ask_name, askNationality: !!e.ask_nationality,
     tracks: Object.values(e.tracks || {})
@@ -1768,6 +1772,28 @@ app.post('/api/notifications/digest', auth.requireAuth, (req, res) => {
   res.json({ ok: true, dailyDigest: on });
 });
 
+// Set the host's preferred guest-search source for NEW events.
+// Only 'apple' when Apple Music is configured; otherwise always 'spotify'.
+app.post('/api/search-source', auth.requireAuth, (req, res) => {
+  let source = ((req.body || {}).source || 'spotify').toString();
+  if (source === 'apple' && !APPLE_MUSIC_ENABLED) source = 'spotify';
+  db.setSearchSource(req.user.id, source);
+  res.json({ ok: true, searchSource: source, appleAvailable: APPLE_MUSIC_ENABLED });
+});
+
+// Apple Music developer token for MusicKit JS (browser-side "Add to Apple
+// Music"). This is the DEVELOPER token only (signed from our .p8) — it does
+// NOT grant library access. The host still authorises in Apple's own popup,
+// and needs an Apple Music subscription to actually save a playlist.
+app.get('/api/apple/dev-token', auth.requireAuth, (req, res) => {
+  if (!APPLE_MUSIC_ENABLED) return res.status(404).json({ error: 'Apple Music not configured' });
+  try {
+    res.json({ token: getAppleDevToken(), storefront: APPLE_MUSIC_STOREFRONT });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not create Apple token' });
+  }
+});
+
 // Guard: Prep endpoints require prep access (everyone except Basic).
 function requirePrep(req, res, next) {
   if (!userHasPrepAccess(req.user)) return res.status(403).json({ error: 'Your plan doesn\u2019t include the music library. Upgrade to use Prep.' });
@@ -2563,15 +2589,25 @@ app.get('/api/search', async (req, res) => {
   if (!q) return res.json({ tracks: [] });
   const limit = Math.min(parseInt(req.query.limit, 10) || 10, 10); // Spotify caps at 10
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  const source = (req.query.source || '').toString() === 'apple' ? 'apple' : 'spotify';
 
   // Serve identical searches from a short-lived cache so a busy event
-  // (many guests searching the same songs) doesn't hammer Spotify and
-  // trip its rate limit. Key on the normalised query + paging.
-  const cacheKey = `${q.toLowerCase()}|${limit}|${offset}`;
+  // (many guests searching the same songs) doesn't hammer the source and
+  // trip its rate limit. Key on the normalised query + paging + source.
+  const cacheKey = `${source}|${q.toLowerCase()}|${limit}|${offset}`;
   const now = Date.now();
   const hit = searchCache.get(cacheKey);
   if (hit && now < hit.expiresAt) {
     return res.json(hit.value);
+  }
+
+  // If this event prefers Apple, search Apple first. Fall back to Spotify
+  // if Apple isn't configured or the search fails, so guests are never stuck.
+  if (source === 'apple' && APPLE_MUSIC_ENABLED) {
+    try {
+      const apple = await tryAppleFallback(q, limit, cacheKey, now);
+      if (apple) return res.json(apple);
+    } catch (_) { /* fall through to Spotify */ }
   }
 
   try {
@@ -2654,7 +2690,7 @@ function shapeResults(json) {
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
   const p = PLANS[u.plan];
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u) };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED };
 }
 // Shareable public demo — a clean URL for socials/marketing that drops
 // anyone straight into the live guest voting experience.

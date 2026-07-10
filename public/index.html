@@ -297,6 +297,7 @@
           <button class="btn btn-ghost" onclick="downloadSongCSV()">⬇ Export CSV</button>
           <button class="btn btn-neon" id="playlist-btn" onclick="openExportModal()" style="display:none">🎵 Export playlist ▸</button>
           <button class="btn btn-neon" id="spotify-btn" onclick="exportSpotify()" style="display:none">Export to Spotify ▸</button>
+          <button class="btn btn-neon" id="apple-btn" onclick="exportApple()" style="display:none">Export to Apple Music ▸</button>
           <a class="btn btn-ghost" id="dash-prep-btn" target="_blank" style="display:none;text-decoration:none">🎧 Prep</a>
           <button class="btn btn-ghost" onclick="toggleDeadline()" id="close-btn">Close voting now</button>
           <button class="btn btn-ghost" onclick="openEditModal(EVENT.id)">✎ Edit event</button>
@@ -882,8 +883,12 @@ function renderDashboard(){
   document.getElementById('dash-name').textContent=EVENT.name;
   document.getElementById('dash-type').textContent=EVENT.type;
   document.getElementById('dash-host').textContent='Hosted by '+EVENT.host;
-  // Spotify export is Studio-only
-  const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
+  // Spotify export is Studio-only, and only for Spotify-sourced events
+  // (Apple-picked songs have no Spotify URIs). The general "Export playlist"
+  // button (TuneMyMusic) still works for any source.
+  const isAppleEvent=EVENT.searchSource==='apple';
+  const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport&&!isAppleEvent)?'inline-flex':'none';
+  const ab=document.getElementById('apple-btn');if(ab)ab.style.display=(ME&&ME.spotifyExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
   const pb=document.getElementById('playlist-btn');if(pb)pb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
   // Prep button — available to all tiers except Basic (and not couples).
   const prepBtn=document.getElementById('dash-prep-btn');
@@ -1038,7 +1043,8 @@ async function djAddSearch(q){
   const box=document.getElementById('dj-add-results');
   box.innerHTML='<div class="empty" style="padding:8px">Searching…</div>';
   try{
-    const r=await fetch('/api/search?q='+encodeURIComponent(q)+'&limit=8');
+    const src=(EVENT&&EVENT.searchSource==='apple')?'&source=apple':'';
+    const r=await fetch('/api/search?q='+encodeURIComponent(q)+'&limit=8'+src);
     if(!r.ok)throw new Error('search failed');
     const d=await r.json();
     const tracks=d.tracks||[];
@@ -1276,6 +1282,91 @@ function copySongList(){
   }else fallbackCopy(text);
 }
 
+/* ---------- APPLE MUSIC EXPORT (MusicKit JS) ----------
+   Real "Add to Apple Music": loads Apple's MusicKit JS, has the host authorise
+   in Apple's own popup, then creates a library playlist with the event's Apple
+   tracks. Requires the host to have an Apple Music SUBSCRIPTION — non-subscribers
+   are told clearly rather than left with a silent failure. */
+let musicKitInstance=null;
+function loadMusicKitScript(){
+  return new Promise((resolve,reject)=>{
+    if(window.MusicKit)return resolve();
+    const s=document.createElement('script');
+    s.src='https://js-cdn.music.apple.com/musickit/v3/musickit.js';
+    s.async=true;
+    s.onload=()=>resolve();
+    s.onerror=()=>reject(new Error('Could not load Apple MusicKit'));
+    document.head.appendChild(s);
+  });
+}
+async function getMusicKit(){
+  if(musicKitInstance)return musicKitInstance;
+  await loadMusicKitScript();
+  // MusicKit fires 'musickitloaded' when ready to configure.
+  if(!window.MusicKit){await new Promise(r=>{document.addEventListener('musickitloaded',r,{once:true});setTimeout(r,3000);});}
+  const tr=await fetch('/api/apple/dev-token');
+  if(!tr.ok)throw new Error('Apple Music not configured');
+  const {token}=await tr.json();
+  await window.MusicKit.configure({
+    developerToken:token,
+    app:{name:'Spinlist',build:'1.0'},
+  });
+  musicKitInstance=window.MusicKit.getInstance();
+  return musicKitInstance;
+}
+async function exportApple(){
+  if(!ME||!ME.spotifyExport){toast('Playlist export is not enabled on your account.');return;}
+  const list=ranked();
+  if(!list.length){toast('No songs yet — nothing to export');return;}
+  // Only Apple-catalogue tracks can be added (Apple numeric IDs). Filter to those.
+  const appleIds=list.map(t=>t.id).filter(id=>id&&/^\d+$/.test(String(id)));
+  if(!appleIds.length){toast('These songs aren\u2019t Apple Music tracks, so they can\u2019t be added to an Apple playlist. Use the Export playlist tool instead.');return;}
+  toast('Opening Apple Music…');
+  try{
+    const mk=await getMusicKit();
+    // Ask the host to authorise (Apple's own popup). Requires a subscription.
+    await mk.authorize();
+    if(!mk.isAuthorized){toast('Please sign in to Apple Music to export.');return;}
+
+    // Use the documented Apple Music REST API directly, with the developer
+    // token + the Music-User-Token MusicKit gives us after authorization.
+    // This is version-stable, unlike the thinner MusicKit-JS library helpers.
+    const devToken=mk.developerToken||(await (await fetch('/api/apple/dev-token')).json()).token;
+    const userToken=mk.musicUserToken;
+    if(!userToken){toast('Apple Music sign-in didn\u2019t complete — please try again.');return;}
+    const headers={
+      'Authorization':'Bearer '+devToken,
+      'Music-User-Token':userToken,
+      'Content-Type':'application/json',
+    };
+    const name=(EVENT.name||'Spinlist event')+' — voted songs';
+    const body={
+      attributes:{name,description:'Created by Spinlist from guest votes.'},
+      relationships:{tracks:{data:appleIds.map(id=>({id:String(id),type:'songs'}))}},
+    };
+    const resp=await fetch('https://api.music.apple.com/v1/me/library/playlists',{
+      method:'POST',headers,body:JSON.stringify(body),
+    });
+    if(resp.ok){
+      toast('✓ Playlist added to your Apple Music library!');
+      return;
+    }
+    if(resp.status===403){toast('Adding to Apple Music needs an active Apple Music subscription.');return;}
+    toast('Could not create the Apple playlist — you can use the Export playlist tool instead.');
+    console.error('apple export status:',resp.status);
+  }catch(e){
+    const msg=(e&&e.message)||'';
+    if(/subscription|unauthorized|403/i.test(msg)){
+      toast('Adding to Apple Music needs an active Apple Music subscription.');
+    }else if(/cancel|denied|popup/i.test(msg)){
+      toast('Apple Music sign-in was cancelled.');
+    }else{
+      toast('Could not export to Apple Music — you can use the Export playlist tool instead.');
+    }
+    console.error('apple export:',msg);
+  }
+}
+
 async function exportSpotify(){
   if(!ME||!ME.spotifyExport){toast('Spotify export is not enabled on your account.');return;}
   const list=ranked();
@@ -1371,7 +1462,8 @@ async function doSearch(q, attempt){
   bar.classList.add('loading');
   document.getElementById('api-warn').style.display='none';
   try{
-    const r=await fetch('/api/search?q='+encodeURIComponent(q)+'&limit=10');
+    const src=(EVENT&&EVENT.searchSource==='apple')?'&source=apple':'';
+    const r=await fetch('/api/search?q='+encodeURIComponent(q)+'&limit=10'+src);
     if(r.status===429){
       // Busy / rate-limited. Wait the suggested time and retry a couple of times.
       if(seq!==searchSeq)return;        // a newer search already fired
