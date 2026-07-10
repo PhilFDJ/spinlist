@@ -1434,10 +1434,11 @@ async function loadMe(){
 function planLabel(p){return p==='none'||!p?'no plan':p;}
 function renderAcctNav(){
   const el=document.getElementById('acct-nav');if(!el)return;
-  // Inject feature links into the central nav pills (after the built-in tabs).
-  renderMainNavExtras();
+  // Set the name/plan FIRST (this replaces acct-nav's contents)...
   if(ME){el.innerHTML=`<a href="/account.html" style="color:var(--ink);text-decoration:none;display:flex;flex-direction:column;align-items:flex-end;line-height:1.15"><span>${esc(ME.name||ME.email.split('@')[0])}</span><span style="font-size:.7rem;font-weight:600;color:var(--muted)">${esc(ME.planName||planLabel(ME.plan))}</span></a>`;}
   else{el.innerHTML=`<a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
+  // ...THEN inject the menu extras + the bell (so the bell isn't wiped out).
+  renderMainNavExtras();
 }
 // Add Wedding Planner / My DJs / Contact as pill buttons in the main central menu.
 function renderMainNavExtras(){

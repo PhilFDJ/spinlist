@@ -40,7 +40,6 @@
       items.push(['Home', '/index.html#home', 'home']);
       if (!isSubDj) items.push(['Create', '/index.html#create', 'create']);
       items.push(['My Events', '/index.html#events', 'events']);
-      items.push(['Host', '/index.html#dashboard', 'dashboard']);
       if (multiOp) items.push(['My DJs', '/team.html', 'team']);
       if (planner) items.push(['Wedding Planner', '/wedding.html', 'wedding']);
       items.push(['Apps', '/apps.html', 'apps']);
