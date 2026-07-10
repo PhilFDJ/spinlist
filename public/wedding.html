@@ -380,6 +380,11 @@ async function boot(){
   const wn=document.getElementById('wed-acct-name');
   if(wn&&ME){ wn.textContent=ME.name||(ME.email?ME.email.split('@')[0]:'Account'); wn.style.display='inline'; }
   renderDJHome();
+  // Deep-link from the My Events page: #new / #music-templates / #q-templates
+  const h=(location.hash||'').replace('#','').toLowerCase();
+  if(h==='new')setTimeout(()=>{try{openCreate();}catch(e){}},50);
+  else if(h==='music-templates')setTimeout(()=>{try{openBlockTemplates();}catch(e){}},50);
+  else if(h==='q-templates')setTimeout(()=>{try{openTemplates();}catch(e){}},50);
 }
 
 // ---- Public demo: a fully-populated example wedding, read-only ----

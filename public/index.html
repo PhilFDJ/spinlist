@@ -139,7 +139,7 @@
     <div class="logo" onclick="go('home')"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></div>
     <nav class="nav-pills" id="main-nav">
       <button data-v="home" class="active" onclick="go('home')">Home</button>
-      <button data-v="create" onclick="go('create')">Create</button>
+      <button data-v="create" onclick="go('create')" style="display:none">Create</button>
       <button data-v="events" onclick="go('events')">My Events</button>
       <button data-v="dashboard" onclick="go('dashboard')" style="display:none">Host</button>
     </nav>
@@ -224,8 +224,11 @@
 <section class="view" id="events">
   <div class="wrap">
     <div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px">
-      <div><h2>My Events</h2><p style="color:var(--muted)">All your events — grab a link, open the leaderboard, or lock voting.</p></div>
-      <button class="btn btn-neon" id="new-event-btn" onclick="go('create')" style="padding:10px 20px">+ New event</button>
+      <div><h2>My Events</h2><p style="color:var(--muted)">Everything in one place — voting events and weddings. Grab a link, open the leaderboard, or manage a wedding.</p></div>
+      <div id="events-actions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-neon" id="new-event-btn" onclick="go('create')" style="padding:10px 20px">+ New voting event</button>
+        <!-- Wedding actions injected here for Pro Wedding+ -->
+      </div>
     </div>
     <div id="events-list"></div>
   </div>
@@ -534,6 +537,23 @@ async function renderEvents(){
   const isSub=!!ME.isSubDj, isOwner=!!ME.multiOp;
   // Hide the create button + adjust header for sub-DJs.
   const newBtn=document.getElementById('new-event-btn');if(newBtn)newBtn.style.display=isSub?'none':'';
+  // Wedding actions (New wedding / Music templates / Questionnaire templates)
+  // shown only to Pro Wedding+ (not sub-DJs). Open the wedding planner screens.
+  const actions=document.getElementById('events-actions');
+  if(actions){
+    let wb=document.getElementById('events-wed-actions');
+    if(wb)wb.remove();
+    if(ME.weddingPlanner&&!isSub){
+      wb=document.createElement('span');
+      wb.id='events-wed-actions';
+      wb.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
+      wb.innerHTML=`
+        <button class="btn btn-neon" style="padding:10px 20px" onclick="location.href='/wedding.html#new'">+ New wedding</button>
+        <button class="btn btn-ghost" style="padding:10px 16px" onclick="location.href='/wedding.html#music-templates'">Music templates</button>
+        <button class="btn btn-ghost" style="padding:10px 16px" onclick="location.href='/wedding.html#q-templates'">Questionnaire templates</button>`;
+      actions.appendChild(wb);
+    }
+  }
   el.innerHTML='<div class="empty">Loading your events…</div>';
   try{
     const r=await fetch('/api/my-events');const d=await r.json();
@@ -1451,7 +1471,6 @@ function renderMainNavExtras(){
     nav.appendChild(a);
   };
   if(ME&&ME.multiOp)add('My DJs','/team.html');
-  if(ME&&ME.weddingPlanner)add('Wedding Planner','/wedding.html');
   add('Apps','/apps.html');
   add('Contact','/contact.html');
   // Notification bell — placed next to the account holder's name (in acct-nav),
