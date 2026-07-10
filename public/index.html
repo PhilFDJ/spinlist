@@ -1453,18 +1453,22 @@ function renderMainNavExtras(){
   if(ME&&ME.weddingPlanner)add('Wedding Planner','/wedding.html');
   add('Apps','/apps.html');
   add('Contact','/contact.html');
-  // Notification bell (for DJs and sub-DJs — not couples).
+  // Notification bell — placed next to the account holder's name (in acct-nav),
+  // matching the other pages. For DJs and sub-DJs, not couples.
   if(ME&&ME.role!=='couple'){
-    let bell=document.getElementById('home-notif-bell');
-    if(!bell){
-      bell=document.createElement('span');
-      bell.id='home-notif-bell';bell.setAttribute('data-extra','1');
-      bell.style.cssText='display:none;position:relative;cursor:pointer;margin-left:6px;font-size:1.1rem';
-      bell.onclick=toggleHomeNotifPanel;
-      bell.innerHTML='🔔<span id="home-notif-count" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--neon);color:#0a1228;font-size:.62rem;font-weight:800;min-width:16px;height:16px;border-radius:9px;align-items:center;justify-content:center;padding:0 3px"></span>';
-      nav.appendChild(bell);
+    const acct=document.getElementById('acct-nav');
+    if(acct){
+      let bell=document.getElementById('home-notif-bell');
+      if(!bell){
+        bell=document.createElement('span');
+        bell.id='home-notif-bell';
+        bell.style.cssText='display:none;position:relative;cursor:pointer;font-size:1.15rem;line-height:1;order:-1';
+        bell.onclick=toggleHomeNotifPanel;
+        bell.innerHTML='🔔<span id="home-notif-count" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--neon);color:#0a1228;font-size:.62rem;font-weight:800;min-width:16px;height:16px;border-radius:9px;align-items:center;justify-content:center;padding:0 3px"></span>';
+        acct.insertBefore(bell,acct.firstChild);
+      }
+      loadHomeNotifs(true);
     }
-    loadHomeNotifs(true);
   }
 }
 
