@@ -1453,7 +1453,61 @@ function renderMainNavExtras(){
   if(ME&&ME.weddingPlanner)add('Wedding Planner','/wedding.html');
   add('Apps','/apps.html');
   add('Contact','/contact.html');
+  // Notification bell (for DJs and sub-DJs — not couples).
+  if(ME&&ME.role!=='couple'){
+    let bell=document.getElementById('home-notif-bell');
+    if(!bell){
+      bell=document.createElement('span');
+      bell.id='home-notif-bell';bell.setAttribute('data-extra','1');
+      bell.style.cssText='display:none;position:relative;cursor:pointer;margin-left:6px;font-size:1.1rem';
+      bell.onclick=toggleHomeNotifPanel;
+      bell.innerHTML='🔔<span id="home-notif-count" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--neon);color:#0a1228;font-size:.62rem;font-weight:800;min-width:16px;height:16px;border-radius:9px;align-items:center;justify-content:center;padding:0 3px"></span>';
+      nav.appendChild(bell);
+    }
+    loadHomeNotifs(true);
+  }
 }
+
+/* ---------- Notifications (home page bell) ---------- */
+let HOME_NOTIFS=[],HOME_NOTIF_SEEN=0;
+async function loadHomeNotifs(firstLoad){
+  if(!ME||ME.role==='couple')return;
+  let d;
+  try{ d=await (await fetch('/api/notifications')).json(); }catch(e){ return; }
+  HOME_NOTIFS=d.notifications||[];
+  const bell=document.getElementById('home-notif-bell'),cnt=document.getElementById('home-notif-count');
+  if(bell)bell.style.display='inline-block';
+  if(cnt){ if(d.unread>0){cnt.style.display='flex';cnt.textContent=d.unread>9?'9+':d.unread;} else cnt.style.display='none'; }
+  if(!firstLoad){
+    HOME_NOTIFS.filter(n=>!n.read && (!HOME_NOTIF_SEEN||n.createdAt>HOME_NOTIF_SEEN)).slice(0,3).forEach(n=>toast('🔔 '+n.text));
+  }
+  if(HOME_NOTIFS.length)HOME_NOTIF_SEEN=Math.max(...HOME_NOTIFS.map(n=>n.createdAt));
+}
+function toggleHomeNotifPanel(e){
+  if(e)e.stopPropagation();
+  let p=document.getElementById('home-notif-panel');
+  if(!p){
+    p=document.createElement('div');
+    p.id='home-notif-panel';
+    p.style.cssText='display:none;position:fixed;top:60px;right:20px;width:340px;max-width:calc(100vw - 40px);max-height:70vh;overflow:auto;background:var(--paper-2,#16234a);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:300;padding:8px';
+    document.body.appendChild(p);
+  }
+  if(p.style.display==='block'){p.style.display='none';return;}
+  renderHomeNotifPanel();p.style.display='block';
+  fetch('/api/notifications/read',{method:'POST'}).then(()=>{const c=document.getElementById('home-notif-count');if(c)c.style.display='none';HOME_NOTIFS.forEach(n=>n.read=true);});
+}
+function renderHomeNotifPanel(){
+  const p=document.getElementById('home-notif-panel');if(!p)return;
+  if(!HOME_NOTIFS.length){p.innerHTML='<p class="muted" style="padding:16px;text-align:center;font-size:.88rem">No activity yet.</p>';return;}
+  const ago=ts=>{const s=(Date.now()-ts)/1000;if(s<60)return'just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';};
+  const icon=t=>t==='assignment'?'📌':t==='songs'?'🎵':t==='timeline'?'🕐':t==='answers'?'📋':'🔔';
+  p.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px 10px"><b style="font-size:.95rem">Notifications</b><button class="btn btn-ghost" style="padding:4px 10px;font-size:.8rem" onclick="toggleHomeNotifPanel(event)">Close</button></div>'+
+    HOME_NOTIFS.map(n=>`<div style="display:flex;gap:10px;padding:10px;border-radius:10px;${n.read?'':'background:rgba(198,242,78,.1)'}">
+      <span style="font-size:1.1rem">${icon(n.type)}</span>
+      <div style="flex:1;min-width:0"><div style="font-size:.86rem">${esc(n.text)}</div><div class="muted" style="font-size:.72rem;margin-top:2px">${ago(n.createdAt)}</div></div>
+    </div>`).join('');
+}
+document.addEventListener('click',e=>{const p=document.getElementById('home-notif-panel');const b=document.getElementById('home-notif-bell');if(p&&p.style.display==='block'&&!p.contains(e.target)&&b&&!b.contains(e.target))p.style.display='none';});
 
 window.addEventListener('load',async ()=>{
   await loadMe();

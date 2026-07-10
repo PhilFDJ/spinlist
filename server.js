@@ -909,7 +909,24 @@ function notifyCoupleActivity(w, actor, type, text) {
   if (!w || !actor) return;
   if (actor.id !== w.couple_id) return;          // only couple actions notify
   const label = w.couple_names || w.name || 'A couple';
-  db.addNotification(w.host_id, { type, weddingId: w.id, weddingName: w.name || '', text: `${label}: ${text}` });
+  const msg = `${label}: ${text}`;
+  // Notify the owner, and also the assigned sub-DJ (if any and different), so
+  // whoever is actually running the wedding hears about the couple's changes.
+  db.addNotification(w.host_id, { type, weddingId: w.id, weddingName: w.name || '', text: msg });
+  if (w.assigned_dj && w.assigned_dj !== w.host_id) {
+    db.addNotification(w.assigned_dj, { type, weddingId: w.id, weddingName: w.name || '', text: msg });
+  }
+}
+
+// Notify a DJ that they've been assigned an event or wedding.
+function notifyAssignment(djId, kind, id, name, dateMs) {
+  if (!djId) return;
+  const when = dateMs ? ` (${new Date(dateMs).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })})` : '';
+  const text = kind === 'wedding'
+    ? `You've been assigned a wedding: ${name}${when}`
+    : `You've been assigned an event: ${name}${when}`;
+  // weddingId carries the record id (event or wedding) for de-dupe + linking.
+  db.addNotification(djId, { type: 'assignment', weddingId: id, weddingName: name, text });
 }
 // Sub-DJ inherits planner access from their parent owner (so they can open weddings).
 function userHasPlannerAccess(user) {
@@ -1670,7 +1687,13 @@ app.post('/api/events/:id/assign', auth.requireAuth, requireMultiOp, (req, res) 
   const djId = (req.body || {}).djId || null;
   // Owner can assign to a team DJ, or to themselves.
   if (djId && djId !== req.user.id && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
+  const prev = e.assigned_dj || null;
   db.assignEventDj(e.id, djId);
+  // Notify the newly-assigned DJ (not the owner assigning to themselves, and
+  // only when it actually changed to a different DJ).
+  if (djId && djId !== req.user.id && djId !== prev) {
+    notifyAssignment(djId, 'event', e.id, e.name || 'an event', e.event_date);
+  }
   res.json({ ok: true, assignedDj: djId });
 });
 
@@ -1680,9 +1703,13 @@ app.post('/api/weddings/:id/assign', auth.requireAuth, requireMultiOp, (req, res
   if (!w || w.host_id !== req.user.id) return res.status(404).json({ error: 'Wedding not found.' });
   const djId = (req.body || {}).djId || null;
   if (djId && djId !== req.user.id && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
+  const prev = w.assigned_dj || null;
   db.assignWeddingDj(w.id, djId);
   // Keep the linked live-requests event assigned to the same DJ, so they can run it.
   if (w.live_event_id && db.getEvent(w.live_event_id)) db.assignEventDj(w.live_event_id, djId);
+  if (djId && djId !== req.user.id && djId !== prev) {
+    notifyAssignment(djId, 'wedding', w.id, w.couple_names || w.name || 'a wedding', w.wedding_date);
+  }
   res.json({ ok: true, assignedDj: djId });
 });
 
