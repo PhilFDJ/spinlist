@@ -2576,15 +2576,16 @@ app.get('/api/health', async (req, res) => {
     if (checks.spotify.status === 'down') ok = false;
   }
 
-  // 4) Apple Music fallback — configured, and is it ACTIVELY covering right now?
+  // 4) Apple Music — a primary search option (and also covers if Spotify throttles).
   if (!APPLE_MUSIC_ENABLED) {
     checks.appleFallback = { status: 'off' };
   } else {
-    const activelyCovering = searchHealth.lastAppleFallbackAt &&
+    const activelyServing = searchHealth.lastAppleFallbackAt &&
       (Date.now() - searchHealth.lastAppleFallbackAt < THROTTLE_WINDOW);
-    checks.appleFallback = activelyCovering
-      ? { status: 'active', note: 'covering for Spotify' }
-      : { status: 'configured' };
+    // 'up' shows as Operational; 'active' flags it's currently serving searches.
+    checks.appleFallback = activelyServing
+      ? { status: 'active', note: 'serving searches' }
+      : { status: 'up' };
   }
 
   // 5) Demo event — present?
