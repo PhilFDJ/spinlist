@@ -2506,19 +2506,35 @@ app.get('/api/health', async (req, res) => {
     ok = false;
   }
 
-  // 3) Spotify search — can we get an app token?
+  // 3) Spotify search — reflect REAL guest-search behaviour, not just the
+  //    token endpoint. If searches were throttled in the last 3 minutes, show
+  //    degraded even if a token still fetches fine.
+  const THROTTLE_WINDOW = 3 * 60 * 1000;
+  const recentlyThrottled = searchHealth.lastSpotifyThrottleAt &&
+    (Date.now() - searchHealth.lastSpotifyThrottleAt < THROTTLE_WINDOW);
   try {
     await getAppToken();
-    checks.spotify = { status: 'up' };
+    if (recentlyThrottled) {
+      checks.spotify = { status: 'degraded', note: 'searches being rate limited' };
+    } else {
+      checks.spotify = { status: 'up' };
+    }
   } catch (e) {
     const m = (e && e.message) || '';
-    // A 429 is degraded (rate-limited) rather than fully down.
     checks.spotify = /429/.test(m) ? { status: 'degraded', note: 'rate limited' } : { status: 'down' };
     if (checks.spotify.status === 'down') ok = false;
   }
 
-  // 4) Apple Music fallback — configured?
-  checks.appleFallback = { status: APPLE_MUSIC_ENABLED ? 'configured' : 'off' };
+  // 4) Apple Music fallback — configured, and is it ACTIVELY covering right now?
+  if (!APPLE_MUSIC_ENABLED) {
+    checks.appleFallback = { status: 'off' };
+  } else {
+    const activelyCovering = searchHealth.lastAppleFallbackAt &&
+      (Date.now() - searchHealth.lastAppleFallbackAt < THROTTLE_WINDOW);
+    checks.appleFallback = activelyCovering
+      ? { status: 'active', note: 'covering for Spotify' }
+      : { status: 'configured' };
+  }
 
   // 5) Demo event — present?
   checks.demo = { status: db.getEvent('DEMO') ? 'up' : 'missing' };
@@ -2533,6 +2549,14 @@ app.get('/api/health', async (req, res) => {
   healthCache = { at: Date.now(), body };
   res.status(ok ? 200 : 503).json(body);
 });
+
+// Live search-health tracking, so the status page reflects what's ACTUALLY
+// happening on real guest searches — not just whether a token can be fetched.
+const searchHealth = {
+  lastSpotifyThrottleAt: 0,   // last time a real search got a 429
+  lastAppleFallbackAt: 0,     // last time Apple actually served a result
+  lastSpotifyOkAt: 0,         // last successful Spotify search
+};
 
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
@@ -2565,15 +2589,17 @@ app.get('/api/search', async (req, res) => {
       //   1. serve a stale cached result for this query if we have one, else
       //   2. fall back to Apple Music (if configured), else
       //   3. ask the guest to wait a moment.
+      searchHealth.lastSpotifyThrottleAt = Date.now();   // real throttling, right now
       const retryAfter = parseInt(r.headers.get('retry-after') || '2', 10);
       if (hit) return res.json(hit.value);
       const viaApple = await tryAppleFallback(q, limit, cacheKey, now);
-      if (viaApple) return res.json(viaApple);
+      if (viaApple) { searchHealth.lastAppleFallbackAt = Date.now(); return res.json(viaApple); }
       res.set('Retry-After', String(retryAfter));
       return res.status(429).json({ error: 'Busy right now — please wait a moment and try again.', retryAfter });
     }
     if (!r.ok) return res.status(r.status).json({ error: 'Spotify search failed' });
     const shaped = shapeResults(await r.json());
+    searchHealth.lastSpotifyOkAt = Date.now();            // Spotify is serving searches
     // Cache successful results for a short window.
     cacheSearch(cacheKey, shaped, now);
     res.json(shaped);
@@ -2581,7 +2607,7 @@ app.get('/api/search', async (req, res) => {
     // Spotify unreachable (network/timeout). Try Apple Music before giving up.
     console.error('search error:', err.message);
     const viaApple = await tryAppleFallback(q, limit, cacheKey, Date.now());
-    if (viaApple) return res.json(viaApple);
+    if (viaApple) { searchHealth.lastAppleFallbackAt = Date.now(); return res.json(viaApple); }
     res.status(500).json({ error: 'Search failed' });
   }
 });
