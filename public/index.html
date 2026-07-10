@@ -1340,20 +1340,45 @@ async function exportApple(){
       'Content-Type':'application/json',
     };
     const name=(EVENT.name||'Spinlist event')+' — voted songs';
+    // Apple's API gets unreliable past ~100 tracks in one request (504s), and
+    // has no documented hard cap. So create the playlist with a safe first
+    // batch, then add the rest in chunks — reliable for events of any size.
+    const BATCH=100;
+    const first=appleIds.slice(0,BATCH);
     const body={
       attributes:{name,description:'Created by Spinlist from guest votes.'},
-      relationships:{tracks:{data:appleIds.map(id=>({id:String(id),type:'songs'}))}},
+      relationships:{tracks:{data:first.map(id=>({id:String(id),type:'songs'}))}},
     };
     const resp=await fetch('https://api.music.apple.com/v1/me/library/playlists',{
       method:'POST',headers,body:JSON.stringify(body),
     });
-    if(resp.ok){
-      toast('✓ Playlist added to your Apple Music library!');
+    if(!resp.ok){
+      if(resp.status===403){toast('Adding to Apple Music needs an active Apple Music subscription.');return;}
+      toast('Could not create the Apple playlist — you can use the Export playlist tool instead.');
+      console.error('apple export status:',resp.status);
       return;
     }
-    if(resp.status===403){toast('Adding to Apple Music needs an active Apple Music subscription.');return;}
-    toast('Could not create the Apple playlist — you can use the Export playlist tool instead.');
-    console.error('apple export status:',resp.status);
+    // Get the new playlist's id so we can append any remaining tracks.
+    let playlistId=null;
+    try{ const created=await resp.json(); playlistId=created&&created.data&&created.data[0]&&created.data[0].id; }catch(_){}
+
+    const rest=appleIds.slice(BATCH);
+    let addedAll=true;
+    if(rest.length&&playlistId){
+      for(let i=0;i<rest.length;i+=BATCH){
+        const chunk=rest.slice(i,i+BATCH).map(id=>({id:String(id),type:'songs'}));
+        const ar=await fetch('https://api.music.apple.com/v1/me/library/playlists/'+encodeURIComponent(playlistId)+'/tracks',{
+          method:'POST',headers,body:JSON.stringify({data:chunk}),
+        });
+        if(!ar.ok){ addedAll=false; console.error('apple add-tracks status:',ar.status); break; }
+      }
+    }
+    if(addedAll){
+      toast('✓ Playlist added to your Apple Music library!');
+    }else{
+      toast('Playlist created, but some tracks couldn\u2019t be added. You can add the rest manually.');
+    }
+    return;
   }catch(e){
     const msg=(e&&e.message)||'';
     if(/subscription|unauthorized|403/i.test(msg)){
