@@ -111,7 +111,10 @@ async function boot(){
       </div>`}
     </div>
 
-    ${d.isAdmin ? '<div style="margin-top:16px"><a class="btn btn-ghost" href="/admin.html">Admin · manage codes →</a></div>' : ''}
+    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+      <a class="btn btn-ghost" href="/status.html">System status →</a>
+      ${d.isAdmin ? '<a class="btn btn-ghost" href="/admin.html">Admin · manage codes →</a>' : ''}
+    </div>
 
     <h2 style="margin-top:34px;font-size:1.4rem">Redeem a code</h2>
     <p style="color:var(--muted);font-size:.9rem;margin-top:4px">Enter a complimentary or discount code.</p>
