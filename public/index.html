@@ -886,9 +886,26 @@ function renderDashboard(){
   // Spotify export is Studio-only, and only for Spotify-sourced events
   // (Apple-picked songs have no Spotify URIs). The general "Export playlist"
   // button (TuneMyMusic) still works for any source.
-  const isAppleEvent=EVENT.searchSource==='apple';
+  // An event counts as "Apple" if it was created that way, OR the host's
+  // current preference is Apple (so existing events work too, not just new ones).
+  const isAppleEvent=(EVENT.searchSource==='apple')||(ME&&ME.searchSource==='apple');
   const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport&&!isAppleEvent)?'inline-flex':'none';
   const ab=document.getElementById('apple-btn');if(ab)ab.style.display=(ME&&ME.spotifyExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
+  // TEMP DIAGNOSTIC — remove once Apple export is confirmed working.
+  // Add ?diag=1 to the URL to see why the Apple button is/ isn't showing.
+  try{
+    if(location.search.indexOf('diag=1')>-1 || location.hash.indexOf('diag')>-1){
+      let dg=document.getElementById('apple-diag');
+      if(!dg){dg=document.createElement('div');dg.id='apple-diag';dg.style.cssText='margin:10px 0;padding:10px 14px;background:#16234a;border:1px solid #ffcb47;border-radius:10px;font-size:.8rem;font-family:monospace;color:#eaf0ff;white-space:pre-wrap';const row=document.querySelector('.export-row');if(row&&row.parentNode)row.parentNode.insertBefore(dg,row);}
+      dg.textContent='APPLE EXPORT DIAGNOSTIC\n'+
+        'ME.spotifyExport = '+JSON.stringify(ME&&ME.spotifyExport)+'   (need: true)\n'+
+        'ME.appleSearchAvailable = '+JSON.stringify(ME&&ME.appleSearchAvailable)+'   (need: true)\n'+
+        'ME.searchSource = '+JSON.stringify(ME&&ME.searchSource)+'\n'+
+        'EVENT.searchSource = '+JSON.stringify(EVENT.searchSource)+'\n'+
+        'isAppleEvent = '+JSON.stringify(isAppleEvent)+'   (need: true)\n'+
+        '→ Apple button should show: '+JSON.stringify(!!(ME&&ME.spotifyExport&&isAppleEvent&&ME.appleSearchAvailable));
+    }
+  }catch(_){}
   const pb=document.getElementById('playlist-btn');if(pb)pb.style.display=(ME&&ME.spotifyExport)?'inline-flex':'none';
   // Prep button — available to all tiers except Basic (and not couples).
   const prepBtn=document.getElementById('dash-prep-btn');
