@@ -116,7 +116,7 @@ async function boot(){
 function renderNav(){
   const el=document.getElementById('nav-auth');
   if(ME){el.innerHTML=``;}
-  else{el.innerHTML=`<a href="#" onclick="openAuth('login');return false">Log in</a> <a class="btn btn-primary" style="padding:8px 16px" href="#" onclick="openAuth('signup');return false">Sign up</a>`;}
+  else{el.innerHTML=`<a href="#" onclick="openAuth('login');return false">Log in</a> <a class="btn btn-primary" style="padding:8px 16px;background:var(--neon);color:#0a1228" href="#" onclick="openAuth('signup');return false">Sign up</a>`;}
 }
 function renderPlans(){
   const order=['pro','studio','prowedding','proweddingmulti'];   // purchasable plans, cheapest first
