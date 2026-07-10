@@ -155,7 +155,7 @@
       <h1 class="display">Let the room<br>pick the <span class="lit">music.</span></h1>
       <p class="sub">Hosts build an event, share one link or QR code, and guests search Spotify's real catalogue to vote for the songs they want. Wedding DJs get a full planner, a live gig window for the night, and can run a whole team. When voting closes, download a ranked playlist as a PDF, CSV or Spotify playlist.</p>
       <div class="cta-row">
-        <button class="btn btn-primary" onclick="go('create')">Create an event →</button>
+        <button class="btn btn-primary" onclick="go('create')">Create a Quick Event →</button>
         <button class="btn btn-ghost" onclick="loadDemo()">See the demo</button>
         <a class="btn btn-ghost" href="/wedding.html?demo=1">See the wedding planner</a>
         <a class="btn btn-ghost" href="/guide.html">📖 DJ guide</a>
@@ -190,7 +190,7 @@
 <!-- CREATE -->
 <section class="view" id="create">
   <div class="wrap">
-    <div class="section-head"><h2>Create your event</h2><p>This is the host setup. Guests never see this screen.</p></div>
+    <div class="section-head"><h2>Create your Quick Event</h2><p>This is the host setup. Guests never see this screen.</p></div>
     <div id="trial-banner" style="display:none;max-width:680px;background:rgba(91,140,255,.12);border:1px solid rgba(91,140,255,.4);border-radius:12px;padding:14px 18px;margin-bottom:16px;font-size:.92rem;color:var(--ink-2)"></div>
     <div class="panel" style="max-width:680px">
       <div class="grid-2">
@@ -224,9 +224,9 @@
 <section class="view" id="events">
   <div class="wrap">
     <div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px">
-      <div><h2>My Events</h2><p style="color:var(--muted)">Everything in one place — voting events and weddings. Grab a link, open the leaderboard, or manage a wedding.</p></div>
+      <div><h2>My Events</h2><p style="color:var(--muted)">Everything in one place — Quick Events and weddings. Grab a link, open the leaderboard, or manage a wedding.</p></div>
       <div id="events-actions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn btn-neon" id="new-event-btn" onclick="go('create')" style="padding:10px 20px">+ New voting event</button>
+        <button class="btn btn-neon" id="new-event-btn" onclick="go('create')" style="padding:10px 20px">+ New Quick Event</button>
         <!-- Wedding actions injected here for Pro Wedding+ -->
       </div>
     </div>
@@ -239,7 +239,7 @@
   <div class="wrap">
     <div id="dash-empty" class="empty">
       <div class="big">🎚️</div>
-      <p>No event yet. <a href="#" onclick="go('create');return false" style="color:var(--plum);font-weight:700">Create one</a> or <a href="#" onclick="loadDemo();return false" style="color:var(--plum);font-weight:700">load the demo</a>.</p>
+      <p>No event yet. <a href="#" onclick="go('create');return false" style="color:var(--plum);font-weight:700">Create a Quick Event</a> or <a href="#" onclick="loadDemo();return false" style="color:var(--plum);font-weight:700">load the demo</a>.</p>
     </div>
     <div id="dash-content" style="display:none">
       <div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px">
@@ -580,7 +580,7 @@ async function renderEvents(){
     if(!all.length&&!weddings.length){
       el.innerHTML=isSub
         ? '<div class="empty"><div class="big">🎧</div><p>No events assigned to you yet. Your manager will assign your jobs here.</p></div>'
-        : '<div class="empty"><div class="big">🎉</div><p>No events yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first one</a>.</p></div>';
+        : '<div class="empty"><div class="big">🎉</div><p>Nothing here yet. <a href="#" onclick="go(\'create\');return false" style="color:var(--plum);font-weight:700">Create your first Quick Event</a>.</p></div>';
       return;
     }
 
@@ -631,8 +631,8 @@ async function renderEvents(){
         ? `<a class="btn btn-ghost" style="padding:9px 14px;font-size:.82rem" href="/prep.html?w=${w.id}" target="_blank">🎧 Prep</a>`
         : '';
       const wActions=readOnly
-        ? `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>${wPrepBtn}`
-        : `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html">Open planner</a>${wPrepBtn}${wArchiveBtn}`;
+        ? `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html?w=${w.id}">Open wedding</a>${wPrepBtn}`
+        : `<a class="btn btn-primary" style="padding:9px 16px;font-size:.85rem" href="/wedding.html?w=${w.id}">Open wedding</a>${wPrepBtn}${wArchiveBtn}`;
       cards.push({kind:'wedding',date:w.weddingDate||null,createdAt:w.createdAt||0,html:`
         <div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
           <div>
@@ -1460,7 +1460,7 @@ function renderAcctNav(){
   // ...THEN inject the menu extras + the bell (so the bell isn't wiped out).
   renderMainNavExtras();
 }
-// Add Wedding Planner / My DJs / Contact as pill buttons in the main central menu.
+// Add My DJs / Apps / Contact as pill buttons in the main central menu.
 function renderMainNavExtras(){
   const nav=document.getElementById('main-nav');if(!nav)return;
   // Clear any previously-added extras (so we don't duplicate on re-render).

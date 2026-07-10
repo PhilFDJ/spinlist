@@ -379,7 +379,10 @@ async function boot(){
   // DJ: show their name (clickable to account) in place of the old Account link.
   const wn=document.getElementById('wed-acct-name');
   if(wn&&ME){ wn.textContent=ME.name||(ME.email?ME.email.split('@')[0]:'Account'); wn.style.display='inline'; }
-  renderDJHome();
+  // Open a specific wedding directly if ?w=<id> (from the My Events cards).
+  const wid=params.get('w');
+  if(wid){ try{ openWedding(wid); }catch(e){ renderDJHome(); } }
+  else renderDJHome();
   // Deep-link from the My Events page: #new / #music-templates / #q-templates
   const h=(location.hash||'').replace('#','').toLowerCase();
   if(h==='new')setTimeout(()=>{try{openCreate();}catch(e){}},50);
