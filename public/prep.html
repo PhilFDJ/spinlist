@@ -32,7 +32,7 @@
   .block .bhead h3{margin:0;font-size:1rem}
   .block .bhead .meta{font-size:.82rem;color:var(--muted)}
   .block .body{padding:4px 14px 12px}
-  .song{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:.9rem}
+  .song{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:.9rem}
   .song:last-child{border-bottom:none}
   .song .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
   .song .dot.ok{background:var(--ok)} .song .dot.miss{background:var(--miss)}
@@ -236,6 +236,33 @@ function candidates(req){
 }
 // Key a request to remember the chosen version across weddings.
 function songKey(req){ return norm(req.title)+'|'+norm(req.artist); }
+
+// Songs the DJ has ticked OFF — left out of the exported playlist. Keyed by songKey.
+let EXCLUDED={};
+function toggleExclude(key,box){
+  if(box.checked){ delete EXCLUDED[key]; } else { EXCLUDED[key]=true; }
+  renderResults();
+}
+function isExcluded(req){ return !!EXCLUDED[songKey(req)]; }
+
+// A link to preview the REQUESTED song (so the DJ can confirm the match is right).
+// Uses the Spotify URI if we have one, otherwise a Spotify search for title+artist.
+function previewLink(req){
+  if(!req) return '';
+  if(req.uri && /^spotify:track:/.test(req.uri)){
+    return 'https://open.spotify.com/track/'+req.uri.split(':').pop();
+  }
+  const q=encodeURIComponent(((req.title||'')+' '+(req.artist||'')).trim());
+  return q ? 'https://open.spotify.com/search/'+q : '';
+}
+function previewSong(key){
+  // Find the request by key across all blocks.
+  let req=null;
+  for(const b of (WED.blocks||[])){ for(const s of (b.songs||[])){ if(songKey(s)===key){ req=s; break; } } if(req)break; }
+  const url=previewLink(req);
+  if(url) window.open(url,'_blank','noopener');
+}
+
 // Given a request + its candidates, return the chosen one honouring a remembered pick.
 function chosenFor(req){
   const key=songKey(req);
@@ -596,6 +623,53 @@ function parseM3U(text){
 function dedupe(list){ const seen=new Set(); return list.filter(t=>{const k=norm(t.title)+'|'+norm(t.artist);if(seen.has(k))return false;seen.add(k);return true;}); }
 
 /* ---------- results + export ---------- */
+
+// Copy a single missing song's title + artist so the DJ can paste it into
+// their music provider to find and buy/download it.
+function copySong(btn, text){
+  const done=()=>{ if(btn){ const o=btn.innerHTML; btn.innerHTML='✓ Copied'; setTimeout(()=>{btn.innerHTML=o;},1200); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  }else fallbackCopy(text,done);
+}
+function fallbackCopy(text,cb){
+  const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();
+  try{ document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta); if(cb)cb();
+}
+// Copy ALL the missing songs in a block, one per line, for a bulk search.
+function copyAllMissing(blockId, btn){
+  const b=(WED.blocks||[]).find(x=>x.id===blockId); if(!b)return;
+  const lines=[];
+  for(const s of (b.songs||[])){
+    const cf=chosenFor(s);
+    if(!cf) lines.push((s.title||'')+(s.artist?' - '+s.artist:''));
+  }
+  if(!lines.length)return;
+  const text=lines.join('\n');
+  const done=()=>{ if(btn){ const o=btn.innerHTML; btn.innerHTML='✓ Copied '+lines.length; setTimeout(()=>{btn.innerHTML=o;},1400); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  }else fallbackCopy(text,done);
+}
+
+// Copy EVERY missing song across the whole wedding, one per line.
+function copyAllMissingWedding(btn){
+  const lines=[];
+  for(const b of (WED.blocks||[])){
+    for(const s of (b.songs||[])){
+      if(!chosenFor(s)) lines.push((s.title||'')+(s.artist?' - '+s.artist:''));
+    }
+  }
+  if(!lines.length)return;
+  const text=lines.join('\n');
+  const done=()=>{ if(btn){ const o=btn.innerHTML; btn.innerHTML='✓ Copied '+lines.length; setTimeout(()=>{btn.innerHTML=o;},1400); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  }else fallbackCopy(text,done);
+}
+
 function renderResults(){
   const el=document.getElementById('results');
   // Setup mode (no wedding): show a library summary instead of match results.
@@ -622,10 +696,12 @@ function renderResults(){
     const songHtml=rows.map((r,ri)=>{
       const key=songKey(r.s);
       if(!r.cf){
+        const copyText=(r.s.title||'')+(r.s.artist?' '+r.s.artist:'');
         return `<div class="song">
+          <span></span>
           <span class="dot miss"></span>
           <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
-          <span class="pickwrap"><span class="pill miss">not found</span><button class="findbtn" onclick="findFile('${esc(key)}')">📂 Find file</button></span>
+          <span class="pickwrap"><span class="pill miss">not found</span><button class="findbtn" title="Copy title &amp; artist to search your music provider" onclick="copySong(this,'${esc(copyText.replace(/'/g,"\\'"))}')">📋 Copy</button><button class="findbtn" onclick="findFile('${esc(key)}')">📂 Find file</button></span>
         </div>`;
       }
       const {chosen,cands,remembered,manual}=r.cf;
@@ -662,16 +738,29 @@ function renderResults(){
         let who = chosen.track.video ? (chosen.track.director || art) : art;
         picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((who?who+' - ':'')+ti)}</span>`;
       }
-      return `<div class="song">
+      const excluded = EXCLUDED[key];
+      // Build a preview link: open the requested song so the DJ can confirm the match.
+      const previewBtn = previewLink(r.s)
+        ? `<button class="findbtn" title="Preview the requested song to check the match" onclick="previewSong('${esc(key)}')">▶</button>`
+        : '';
+      return `<div class="song" style="${excluded?'opacity:.5':''}">
+        <label class="incbox" title="Untick to leave this song out of the exported playlist" style="display:flex;align-items:center;cursor:pointer">
+          <input type="checkbox" ${excluded?'':'checked'} onchange="toggleExclude('${esc(key)}',this)" style="width:15px;height:15px;cursor:pointer">
+        </label>
         <span class="dot ok"></span>
         <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
-        <span class="pickwrap">${picker}${vidBadge}<button class="findbtn" title="Choose a different file" onclick="findFile('${esc(key)}')">📂</button></span>
+        <span class="pickwrap">${picker}${vidBadge}${previewBtn}<button class="findbtn" title="Choose a different file" onclick="findFile('${esc(key)}')">📂</button></span>
       </div>`;
     }).join('');
+    // Count how many songs in this block the DJ doesn't own (for the copy-all button).
+    const missingCount=(b.songs||[]).filter(s=>!chosenFor(s)).length;
     return `<div class="block">
       <div class="bhead" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
         <div><h3>${esc(b.name||'Block')}</h3><div class="meta">${found} of ${rows.length} matched</div></div>
-        ${libPathsAreRelative()?'':`<button class="btn ghost" onclick="event.stopPropagation();exportBlock('${b.id}')" ${found?'':'disabled'}>Export .m3u</button>`}
+        <span style="display:flex;gap:8px">
+          ${missingCount?`<button class="btn ghost" title="Copy the ${missingCount} song${missingCount===1?'':'s'} you don't have, to search your music provider" onclick="event.stopPropagation();copyAllMissing('${b.id}',this)">📋 Copy ${missingCount} missing</button>`:''}
+          ${libPathsAreRelative()?'':`<button class="btn ghost" onclick="event.stopPropagation();exportBlock('${b.id}')" ${found?'':'disabled'}>Export .m3u</button>`}
+        </span>
       </div>
       <div class="body">${songHtml}</div>
     </div>`;
@@ -685,6 +774,7 @@ function renderResults(){
        </div>`
     : `<div class="row" style="margin-bottom:10px;gap:14px;align-items:center">
          <button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button>
+         ${(totReq-totFound)>0?`<button class="btn ghost" onclick="copyAllMissingWedding(this)">📋 Copy all ${totReq-totFound} missing</button>`:''}
          <label class="note" style="margin:0;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${PLAIN_M3U?'checked':''} onchange="togglePlainM3U(this)" style="width:15px;height:15px"> Plain paths only (if your DJ software won't import)</label>
        </div>`;
   el.innerHTML=`<h2>Matches <span class="stat">(${totFound} of ${totReq} requests found in your library)</span></h2>
@@ -720,6 +810,7 @@ function isAbsolutePath(p){ return /^([a-zA-Z]:[\\/]|\/|\\\\)/.test(p||''); }   
 function m3uForBlock(b, plain){
   let out = plain ? '' : '#EXTM3U\n';
   (b.songs||[]).forEach(s=>{
+    if(isExcluded(s)) return;                 // DJ ticked this song off
     const cf=chosenFor(s);
     if(cf && cf.chosen.track.path){
       if(plain){ out+=`${cf.chosen.track.path}\n`; }
