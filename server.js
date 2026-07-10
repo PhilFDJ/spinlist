@@ -790,9 +790,10 @@ app.post('/api/events/:id/vote', (req, res) => {
   const b = req.body || {};
 
   // Enforce the host's per-event guest cap (Pro = 75, Studio = unlimited).
+  // The public demo event is always uncapped so anyone can try it.
   const host = db.getUserById(e.host_id);
   const plan = (host && PLANS[host.plan]) || PLANS.none;
-  const cap = plan.maxGuestsPerEvent;            // null = unlimited
+  const cap = e.demo ? null : plan.maxGuestsPerEvent;   // null = unlimited
   const guestId = (b.guestId || '').toString().slice(0, 64);
   // Only gate when this guest is ADDING a vote (joining in); removals are fine.
   const wantsToAdd = Array.isArray(b.add) && b.add.length > 0;
@@ -2573,6 +2574,10 @@ function publicUser(u) {
   const p = PLANS[u.plan];
   return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u) };
 }
+// Shareable public demo — a clean URL for socials/marketing that drops
+// anyone straight into the live guest voting experience.
+app.get('/demo', (req, res) => res.redirect('/#vote/DEMO'));
+
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/healthz', (_req, res) => res.json({ ok: true, stripe: !!stripe }));
@@ -2584,8 +2589,69 @@ app.get('/healthz', (_req, res) => res.json({ ok: true, stripe: !!stripe }));
      and CRASHES if we call app.listen(), so we export the app and
      let Passenger serve it. We detect Passenger via its env markers.
 ---------------------------------------------------------------- */
-const underPassenger = !!(process.env.PASSENGER_BASE_URI || process.env.PASSENGER_APP_ENV ||
-  (typeof PhusionPassenger !== 'undefined'));
+/* ----------------------------------------------------------------
+   PUBLIC DEMO EVENT
+   A permanent, shareable event at /#vote/DEMO so anyone (no login) can
+   try the guest experience: search Spotify for real, vote, and watch the
+   leaderboard move. It resets hourly back to a seeded state so it never
+   fills up with junk. Great for socials/marketing.
+---------------------------------------------------------------- */
+const DEMO_EVENT_ID = 'DEMO';
+const DEMO_SEED = [
+  { title: 'Dancing Queen', artist: 'ABBA', votes: 42 },
+  { title: 'Mr. Brightside', artist: 'The Killers', votes: 37 },
+  { title: 'Uptown Funk', artist: 'Mark Ronson ft. Bruno Mars', votes: 33 },
+  { title: 'Sweet Caroline', artist: 'Neil Diamond', votes: 29 },
+  { title: "Don't Stop Me Now", artist: 'Queen', votes: 24 },
+  { title: 'Blinding Lights', artist: 'The Weeknd', votes: 21 },
+  { title: 'September', artist: 'Earth, Wind & Fire', votes: 18 },
+  { title: 'I Wanna Dance with Somebody', artist: 'Whitney Houston', votes: 15 },
+];
+
+function buildDemoEvent() {
+  try {
+    const existing = db.getEvent(DEMO_EVENT_ID);
+    if (existing) db.deleteEvent && db.deleteEvent(DEMO_EVENT_ID);
+  } catch (_) {}
+  const ev = db.createEvent({
+    id: DEMO_EVENT_ID,
+    host_id: 'demo',
+    name: "Sam's 30th Birthday",
+    type: 'Birthday',
+    host: 'DJ Marco',
+    votes_per: 5,
+    deadline: null,        // never closes
+    event_date: null,
+    locked: false,
+    ask_name: false,
+    ask_nationality: false,
+    created_at: Date.now(),
+    demo: true,
+  });
+  // Seed the leaderboard (no Spotify URIs — guests add real ones by voting).
+  try {
+    const e = db.getEvent(DEMO_EVENT_ID);
+    if (e) {
+      e.tracks = {};
+      DEMO_SEED.forEach((s, i) => {
+        e.tracks['demoseed' + i] = {
+          id: 'demoseed' + i, uri: null, title: s.title, artist: s.artist,
+          art: '', votes: s.votes, played: 0, addedAt: Date.now() - (i * 1000), requesters: [],
+        };
+      });
+    }
+  } catch (_) {}
+}
+
+function ensureDemoEvent() {
+  if (!db.getEvent(DEMO_EVENT_ID)) buildDemoEvent();
+}
+
+// Reset hourly so the demo stays clean for the next visitor.
+ensureDemoEvent();
+setInterval(buildDemoEvent, 60 * 60 * 1000);
+
+
 
 if (underPassenger) {
   module.exports = app;
