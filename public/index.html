@@ -153,7 +153,7 @@
     <div class="wrap">
       <p class="eyebrow">Crowd-sourced setlists</p>
       <h1 class="display">Let the room<br>pick the <span class="lit">music.</span></h1>
-      <p class="sub">Hosts build an event, share one link or QR code, and guests search Spotify's real catalogue to vote for the songs they want. Wedding DJs get a full planner, a live gig window for the night, and can run a whole team. When voting closes, download a ranked playlist as a PDF, CSV or Spotify playlist.</p>
+      <p class="sub">Hosts build an event, share one link or QR code, and guests search a real music catalogue to vote for the songs they want. Wedding DJs get a full planner, a live gig window for the night, and can run a whole team. When voting closes, download a ranked playlist as a PDF or CSV, or export it straight to a playlist.</p>
       <div class="cta-row">
         <button class="btn btn-primary" onclick="go('create')">Create a Quick Event →</button>
         <a class="btn btn-ghost" href="/demo">See the live demo</a>
@@ -893,8 +893,8 @@ function renderDashboard(){
   // only affects NEW events, so switching it doesn't wrongly change existing ones.
   const isAppleEvent=(EVENT.searchSource==='apple');
   const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport&&!isAppleEvent)?'inline-flex':'none';
-  const ab=document.getElementById('apple-btn');if(ab)ab.style.display=(ME&&ME.spotifyExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
-  const asb=document.getElementById('apple-switch-btn');if(asb)asb.style.display=(ME&&ME.spotifyExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
+  const ab=document.getElementById('apple-btn');if(ab)ab.style.display=(ME&&ME.playlistExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
+  const asb=document.getElementById('apple-switch-btn');if(asb)asb.style.display=(ME&&ME.playlistExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
   // TEMP DIAGNOSTIC — remove once Apple export is confirmed working.
   // Add ?diag=1 to the URL to see why the Apple button is/ isn't showing.
   try{
@@ -1366,7 +1366,7 @@ async function switchAppleAccount(){
   }
 }
 async function exportApple(){
-  if(!ME||!ME.spotifyExport){toast('Playlist export is not enabled on your account.');return;}
+  if(!ME||!ME.playlistExport){toast('Playlist export is not enabled on your account.');return;}
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
   // Apple-catalogue tracks have numeric IDs; Spotify tracks are alphanumeric.

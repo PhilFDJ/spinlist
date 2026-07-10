@@ -1106,6 +1106,18 @@ function switchTab(tab){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('show',p.id==='pane-'+tab));
 }
+// Decide which export button a wedding block shows, based on the wedding's
+// guest-search catalogue (master switch). Apple weddings get Apple export;
+// Spotify weddings get Spotify export (comp-code-only).
+function blockExportBtn(w,b,isDJ){
+  if(!isDJ||DEMO||!b.songs.length)return '';
+  if(w.searchSource==='apple'){
+    if(!w.canExportApple)return '';
+    return `<button class="mini-btn" onclick="exportBlockApple('${b.id}',this)">🎵 Export to Apple Music</button>`;
+  }
+  if(!w.canExportSpotify)return '';
+  return `<button class="mini-btn" onclick="exportBlockSpotify('${b.id}',this)">🎵 Export to Spotify</button>`;
+}
 // Export one wedding block to its own Spotify playlist.
 async function exportBlockSpotify(blockId,btn){
   const orig=btn?btn.textContent:'';
@@ -1121,6 +1133,79 @@ async function exportBlockSpotify(blockId,btn){
       return;
     }
     toast(e.message);
+  }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
+}
+
+/* ---------- APPLE MUSIC EXPORT for wedding blocks (MusicKit JS) ----------
+   Mirrors the main event Apple export: loads MusicKit, host authorises in
+   Apple's popup, then creates a library playlist from the block's Apple tracks.
+   Requires an Apple Music subscription; fails gracefully otherwise. */
+let wkMusicKit=null;
+function wkLoadMusicKit(){
+  return new Promise((resolve,reject)=>{
+    if(window.MusicKit)return resolve();
+    const s=document.createElement('script');
+    s.src='https://js-cdn.music.apple.com/musickit/v3/musickit.js';
+    s.async=true;s.onload=()=>resolve();s.onerror=()=>reject(new Error('Could not load Apple MusicKit'));
+    document.head.appendChild(s);
+  });
+}
+async function wkGetMusicKit(){
+  if(wkMusicKit)return wkMusicKit;
+  await wkLoadMusicKit();
+  if(!window.MusicKit){await new Promise(r=>{document.addEventListener('musickitloaded',r,{once:true});setTimeout(r,3000);});}
+  const tr=await fetch('/api/apple/dev-token');
+  if(!tr.ok)throw new Error('Apple Music not configured');
+  const {token}=await tr.json();
+  await window.MusicKit.configure({developerToken:token,app:{name:'Spinlist',build:'1.0'}});
+  wkMusicKit=window.MusicKit.getInstance();
+  return wkMusicKit;
+}
+async function exportBlockApple(blockId,btn){
+  const block=(CURRENT.blocks||[]).find(b=>b.id===blockId);
+  if(!block||!block.songs.length){toast('No songs in this block');return;}
+  // Apple tracks have numeric IDs; anything else was searched on Spotify.
+  const appleIds=block.songs.map(s=>s.id).filter(id=>id&&/^\d+$/.test(String(id)));
+  const other=block.songs.length-appleIds.length;
+  if(!appleIds.length){toast('None of these songs are Apple Music tracks. Use the playlist export tool instead.');return;}
+  if(other>0){
+    if(!confirm(other+' of '+block.songs.length+' songs were voted using Spotify search and can\u2019t be added to an Apple Music playlist. Export the '+appleIds.length+' Apple Music songs only?'))return;
+  }
+  const orig=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='Opening Apple Music…';}
+  try{
+    const mk=await wkGetMusicKit();
+    await mk.authorize();
+    if(!mk.isAuthorized){toast('Please sign in to Apple Music to export.');return;}
+    const devToken=mk.developerToken||(await (await fetch('/api/apple/dev-token')).json()).token;
+    const userToken=mk.musicUserToken;
+    if(!userToken){toast('Apple Music sign-in didn\u2019t complete — please try again.');return;}
+    const headers={'Authorization':'Bearer '+devToken,'Music-User-Token':userToken,'Content-Type':'application/json'};
+    const name=(CURRENT.name||'Wedding')+' — '+(block.name||'block');
+    const BATCH=100;
+    const firstBatch=appleIds.slice(0,BATCH);
+    const body={attributes:{name,description:'Created by Spinlist.'},relationships:{tracks:{data:firstBatch.map(id=>({id:String(id),type:'songs'}))}}};
+    const resp=await fetch('https://api.music.apple.com/v1/me/library/playlists',{method:'POST',headers,body:JSON.stringify(body)});
+    if(!resp.ok){
+      if(resp.status===403){toast('Adding to Apple Music needs an active Apple Music subscription.');return;}
+      toast('Could not create the Apple playlist — use the playlist export tool instead.');return;
+    }
+    let playlistId=null;
+    try{const created=await resp.json();playlistId=created&&created.data&&created.data[0]&&created.data[0].id;}catch(_){}
+    const rest=appleIds.slice(BATCH);
+    if(rest.length&&playlistId){
+      for(let i=0;i<rest.length;i+=BATCH){
+        const chunk=rest.slice(i,i+BATCH).map(id=>({id:String(id),type:'songs'}));
+        await fetch('https://api.music.apple.com/v1/me/library/playlists/'+encodeURIComponent(playlistId)+'/tracks',{method:'POST',headers,body:JSON.stringify({data:chunk})});
+      }
+    }
+    toast('✓ Playlist added to your Apple Music library! ('+appleIds.length+' songs)');
+  }catch(e){
+    const msg=(e&&e.message)||'';
+    if(/subscription|unauthorized|403/i.test(msg))toast('Adding to Apple Music needs an active Apple Music subscription.');
+    else if(/cancel|denied|popup/i.test(msg))toast('Apple Music sign-in was cancelled.');
+    else toast('Could not export to Apple Music — use the playlist export tool instead.');
+    console.error('wedding apple export:',msg);
   }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
 }
 function renderBlocks(){
@@ -1146,7 +1231,7 @@ function renderBlocks(){
     return `<div class="block drag-row" ${dragAttrs}>
       <div class="block-head">
         <h3>${(isDJ&&canEdit)?`<span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'music')">⠿</span> `:''}${esc(b.name)}</h3>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${(isDJ&&!DEMO&&w.canExportSpotify&&b.songs.length)?`<button class="mini-btn" onclick="exportBlockSpotify('${b.id}',this)">🎵 Export to Spotify</button>`:''}${liveToggle}<span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${blockExportBtn(w,b,isDJ)}${liveToggle}<span class="pill ${full?'done':''}">${b.songs.length}/${b.capacity}</span></div>
       </div>
       <div>${b.songs.map((s,idx)=>songRow(b.id,s,idx,canEdit,isDJ)).join('')||'<p class="muted" style="padding:6px 0">No songs yet.</p>'}</div>
       ${(full||!canEdit)?'':`<button class="addbtn" onclick="openSearch('${b.id}')">+ Add a song</button>`}

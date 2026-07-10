@@ -1023,6 +1023,22 @@ function publicWedding(w, viewerId) {
       const owner = db.getUserById(w.host_id);
       return !!(owner && owner.spotify_export);
     })(),
+    // The wedding's guest-search catalogue follows the owner's live preference
+    // (master switch), so block export matches what guests actually searched.
+    searchSource: (() => {
+      const owner = db.getUserById(w.host_id);
+      const pref = (owner && owner.search_source) || 'spotify';
+      return (APPLE_MUSIC_ENABLED && pref === 'apple') ? 'apple' : 'spotify';
+    })(),
+    // Apple export needs a paid plan with export access (planHasExport), NOT the
+    // Spotify comp code — Apple export is available to plan holders.
+    canExportApple: (() => {
+      if (!APPLE_MUSIC_ENABLED) return false;
+      const viewer = db.getUserById(viewerId);
+      if (!viewer) return false;
+      if (viewer.id !== w.host_id && w.assigned_dj !== viewer.id) return false;
+      return true;
+    })(),
     lockDate: effectiveLockDate(w),
     lockIsDefault: (typeof w.lock_date !== 'number') && !!w.wedding_date,  // showing the 14-day default
     coupleLocked: coupleEditLocked(w, viewerId),   // true only for a locked-out couple
@@ -2693,7 +2709,11 @@ function shapeResults(json) {
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
   const p = PLANS[u.plan];
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export, branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED };
+  // playlistExport = plan-based export eligibility (Pro and above). Apple Music
+  // export and the playlist tool use this. Spotify export is separate and
+  // comp-code-only (spotifyExport below).
+  const playlistExport = !!(p && p.spotifyExport);
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export, playlistExport, branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED };
 }
 // Shareable public demo — a clean URL for socials/marketing that drops
 // anyone straight into the live guest voting experience.
