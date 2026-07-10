@@ -818,11 +818,17 @@ app.post('/api/events/:id/vote', (req, res) => {
 // Shape an event for public/guest consumption (full track list).
 function publicEvent(e, hostView) {
   if (!e) return null;
+  // The guest search catalogue follows the host's CURRENT preference (a live
+  // master switch), not a value frozen when the event was created. Falls back
+  // to the event's stamp, then Spotify. Only 'apple' when Apple is configured.
+  const host = db.getUserById(e.host_id);
+  const livePref = (host && host.search_source) || e.search_source || 'spotify';
+  const effectiveSource = (APPLE_MUSIC_ENABLED && livePref === 'apple') ? 'apple' : 'spotify';
   return {
     id: e.id, name: e.name, type: e.type, host: e.host,
     votesPer: e.votes_per, deadline: e.deadline, eventDate: e.event_date || null,
     locked: !!e.locked, hostId: e.host_id,
-    searchSource: e.search_source === 'apple' ? 'apple' : 'spotify',
+    searchSource: effectiveSource,
     dj: e.assigned_dj ? db.djProfileFor(e.host_id, e.assigned_dj) : null,
     askName: !!e.ask_name, askNationality: !!e.ask_nationality,
     tracks: Object.values(e.tracks || {})

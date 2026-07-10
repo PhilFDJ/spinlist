@@ -298,6 +298,7 @@
           <button class="btn btn-neon" id="playlist-btn" onclick="openExportModal()" style="display:none">🎵 Export playlist ▸</button>
           <button class="btn btn-neon" id="spotify-btn" onclick="exportSpotify()" style="display:none">Export to Spotify ▸</button>
           <button class="btn btn-neon" id="apple-btn" onclick="exportApple()" style="display:none">Export to Apple Music ▸</button>
+          <button class="btn btn-ghost" id="apple-switch-btn" onclick="switchAppleAccount()" style="display:none;font-size:.82rem" title="Sign out of the current Apple Music account so you can export to a different one">Switch Apple account</button>
           <a class="btn btn-ghost" id="dash-prep-btn" target="_blank" style="display:none;text-decoration:none">🎧 Prep</a>
           <button class="btn btn-ghost" onclick="toggleDeadline()" id="close-btn">Close voting now</button>
           <button class="btn btn-ghost" onclick="openEditModal(EVENT.id)">✎ Edit event</button>
@@ -893,6 +894,7 @@ function renderDashboard(){
   const isAppleEvent=(EVENT.searchSource==='apple');
   const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport&&!isAppleEvent)?'inline-flex':'none';
   const ab=document.getElementById('apple-btn');if(ab)ab.style.display=(ME&&ME.spotifyExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
+  const asb=document.getElementById('apple-switch-btn');if(asb)asb.style.display=(ME&&ME.spotifyExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
   // TEMP DIAGNOSTIC — remove once Apple export is confirmed working.
   // Add ?diag=1 to the URL to see why the Apple button is/ isn't showing.
   try{
@@ -1333,13 +1335,33 @@ async function getMusicKit(){
   musicKitInstance=window.MusicKit.getInstance();
   return musicKitInstance;
 }
+async function switchAppleAccount(){
+  try{
+    const mk=await getMusicKit();
+    // Forget the currently authorised Apple Music account. The next export
+    // will show Apple's sign-in popup again, so you can pick a different one.
+    if(mk&&typeof mk.unauthorize==='function'){
+      await mk.unauthorize();
+    }
+    toast('Signed out of Apple Music. Your next export will ask you to sign in again.');
+  }catch(e){
+    toast('Could not sign out of Apple Music — try clearing site data for this site.');
+    console.error('apple unauthorize:',(e&&e.message)||e);
+  }
+}
 async function exportApple(){
   if(!ME||!ME.spotifyExport){toast('Playlist export is not enabled on your account.');return;}
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
-  // Only Apple-catalogue tracks can be added (Apple numeric IDs). Filter to those.
+  // Apple-catalogue tracks have numeric IDs; Spotify tracks are alphanumeric.
   const appleIds=list.map(t=>t.id).filter(id=>id&&/^\d+$/.test(String(id)));
-  if(!appleIds.length){toast('These songs aren\u2019t Apple Music tracks, so they can\u2019t be added to an Apple playlist. Use the Export playlist tool instead.');return;}
+  const otherCount=list.length-appleIds.length;
+  if(!appleIds.length){toast('None of these songs are Apple Music tracks (they were voted under Spotify). Use the Export playlist tool to send them anywhere.');return;}
+  // Warn if some songs came from the OTHER service (voted before the switch).
+  if(otherCount>0){
+    const ok=confirm(otherCount+' of '+list.length+' songs were voted using Spotify search and can\u2019t be added to an Apple Music playlist. Export the '+appleIds.length+' Apple Music songs only?\n\n(To include the rest, use the Export playlist tool, which works across services.)');
+    if(!ok)return;
+  }
   toast('Opening Apple Music…');
   try{
     const mk=await getMusicKit();
@@ -1415,6 +1437,14 @@ async function exportSpotify(){
   if(!ME||!ME.spotifyExport){toast('Spotify export is not enabled on your account.');return;}
   const list=ranked();
   if(!list.length){toast('No songs yet — nothing to export');return;}
+  // Spotify tracks are alphanumeric IDs; Apple tracks are purely numeric.
+  const appleCount=list.filter(t=>t.id&&/^\d+$/.test(String(t.id))).length;
+  if(appleCount>0){
+    const spotifyCount=list.length-appleCount;
+    if(!spotifyCount){toast('None of these songs are Spotify tracks (they were voted under Apple Music). Use the Export playlist tool, or Export to Apple Music.');return;}
+    const ok=confirm(appleCount+' of '+list.length+' songs were voted using Apple Music search and can\u2019t be added to a Spotify playlist. Export the '+spotifyCount+' Spotify songs only?\n\n(To include the rest, use the Export playlist tool, which works across services.)');
+    if(!ok)return;
+  }
   toast('Exporting to Spotify…');
   try{
     const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/export-spotify',{method:'POST'});
