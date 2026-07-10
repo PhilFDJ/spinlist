@@ -141,7 +141,7 @@
       <button data-v="home" class="active" onclick="go('home')">Home</button>
       <button data-v="create" onclick="go('create')">Create</button>
       <button data-v="events" onclick="go('events')">My Events</button>
-      <button data-v="dashboard" onclick="go('dashboard')">Host</button>
+      <button data-v="dashboard" onclick="go('dashboard')" style="display:none">Host</button>
     </nav>
     <span id="acct-nav" style="display:flex;gap:10px;align-items:center;font-size:.85rem;font-weight:600"></span>
   </div>
@@ -1436,7 +1436,7 @@ function renderAcctNav(){
   const el=document.getElementById('acct-nav');if(!el)return;
   // Inject feature links into the central nav pills (after the built-in tabs).
   renderMainNavExtras();
-  if(ME){el.innerHTML=`<a href="/account.html" style="color:var(--ink);text-decoration:none">${esc(ME.name||ME.email.split('@')[0])} · ${esc(ME.planName||planLabel(ME.plan))}</a>`;}
+  if(ME){el.innerHTML=`<a href="/account.html" style="color:var(--ink);text-decoration:none;display:flex;flex-direction:column;align-items:flex-end;line-height:1.15"><span>${esc(ME.name||ME.email.split('@')[0])}</span><span style="font-size:.7rem;font-weight:600;color:var(--muted)">${esc(ME.planName||planLabel(ME.plan))}</span></a>`;}
   else{el.innerHTML=`<a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
 }
 // Add Wedding Planner / My DJs / Contact as pill buttons in the main central menu.
