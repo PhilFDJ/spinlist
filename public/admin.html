@@ -248,7 +248,7 @@ function renderUsersTable(){
     const [label,cls]=map[st]||['Free','free'];
     return `<span class="badge ${cls}">${label}</span>`;
   };
-  list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th>Events</th><th>Joined</th><th></th></tr></thead><tbody>${
+  list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th title="Total events + weddings on the account, including jobs assigned to them">Gigs</th><th>Joined</th><th></th></tr></thead><tbody>${
     users.map(u=>{
       const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
       const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';

@@ -1452,7 +1452,15 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
       status,                       // 'paying' | 'comp' | 'active' | 'free'
       compUntil: u.comp_until || null,
       compCode: u.comp_code || null,
-      eventsCreated: db.listEventsByHost(u.id).length,
+      // Total events on the account: hosted + assigned (de-duped), plus
+      // weddings hosted + assigned. Previously only counted hosted events.
+      eventsCreated: (() => {
+        const hostedEv = db.listEventsByHost(u.id);
+        const assignedEv = db.listEventsAssignedTo(u.id).filter(e => e.host_id !== u.id);
+        const hostedWed = db.listWeddingsByHost(u.id);
+        const assignedWed = db.listWeddingsAssignedTo(u.id).filter(w => w.host_id !== u.id);
+        return hostedEv.length + assignedEv.length + hostedWed.length + assignedWed.length;
+      })(),
       isAdmin: ADMIN_EMAILS.includes(u.email.toLowerCase()),
       createdAt: u.created_at || null,
       // For couple accounts: their wedding date + the host DJ who owns the plan.
