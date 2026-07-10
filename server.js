@@ -2478,6 +2478,62 @@ app.get('/api/search/apple-test', requireAdmin, async (req, res) => {
   }
 });
 
+/* ----------------------------------------------------------------
+   HEALTH CHECK
+   /api/health reports the status of each subsystem so you can see at a
+   glance (via /status) whether search, the fallback and the database are
+   healthy — rather than finding out mid-gig. Safe to call publicly: it
+   exposes only up/down status and coarse counts, no secrets or user data.
+---------------------------------------------------------------- */
+let healthCache = { at: 0, body: null };
+app.get('/api/health', async (req, res) => {
+  // Cache for 20s so repeated polling doesn't hammer Spotify.
+  if (healthCache.body && Date.now() - healthCache.at < 20_000) {
+    return res.json({ ...healthCache.body, cached: true });
+  }
+  const checks = {};
+  let ok = true;
+
+  // 1) Server — if this responds at all, the process is up.
+  checks.server = { status: 'up' };
+
+  // 2) Database / data store — readable?
+  try {
+    const s = db.health();
+    checks.database = { status: 'up', users: s.users, events: s.events, weddings: s.weddings };
+  } catch (e) {
+    checks.database = { status: 'down', error: 'store unavailable' };
+    ok = false;
+  }
+
+  // 3) Spotify search — can we get an app token?
+  try {
+    await getAppToken();
+    checks.spotify = { status: 'up' };
+  } catch (e) {
+    const m = (e && e.message) || '';
+    // A 429 is degraded (rate-limited) rather than fully down.
+    checks.spotify = /429/.test(m) ? { status: 'degraded', note: 'rate limited' } : { status: 'down' };
+    if (checks.spotify.status === 'down') ok = false;
+  }
+
+  // 4) Apple Music fallback — configured?
+  checks.appleFallback = { status: APPLE_MUSIC_ENABLED ? 'configured' : 'off' };
+
+  // 5) Demo event — present?
+  checks.demo = { status: db.getEvent('DEMO') ? 'up' : 'missing' };
+
+  const body = {
+    ok,
+    status: ok ? 'healthy' : 'problem',
+    time: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+    checks,
+  };
+  healthCache = { at: Date.now(), body };
+  res.status(ok ? 200 : 503).json(body);
+});
+
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) return res.json({ tracks: [] });
