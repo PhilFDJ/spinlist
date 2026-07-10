@@ -886,11 +886,11 @@ function renderDashboard(){
   document.getElementById('dash-type').textContent=EVENT.type;
   document.getElementById('dash-host').textContent='Hosted by '+EVENT.host;
   // Spotify export is Studio-only, and only for Spotify-sourced events
-  // (Apple-picked songs have no Spotify URIs). The general "Export playlist"
-  // button (TuneMyMusic) still works for any source.
-  // An event counts as "Apple" if it was created that way, OR the host's
-  // current preference is Apple (so existing events work too, not just new ones).
-  const isAppleEvent=(EVENT.searchSource==='apple')||(ME&&ME.searchSource==='apple');
+  // The export button matches the EVENT's own source — because that's what its
+  // songs actually are. An Apple event holds Apple tracks (Apple export); a
+  // Spotify event holds Spotify tracks (Spotify export). The account preference
+  // only affects NEW events, so switching it doesn't wrongly change existing ones.
+  const isAppleEvent=(EVENT.searchSource==='apple');
   const sb=document.getElementById('spotify-btn');if(sb)sb.style.display=(ME&&ME.spotifyExport&&!isAppleEvent)?'inline-flex':'none';
   const ab=document.getElementById('apple-btn');if(ab)ab.style.display=(ME&&ME.spotifyExport&&isAppleEvent&&ME.appleSearchAvailable)?'inline-flex':'none';
   // TEMP DIAGNOSTIC — remove once Apple export is confirmed working.
