@@ -1014,15 +1014,14 @@ function publicWedding(w, viewerId) {
       return (owner && planHasBranding(owner)) ? db.getBranding(owner.id) : null;
     })(),
     canExportSpotify: (() => {
-      // DJ (host or assigned) can export if they — or the wedding owner — have Spotify.
+      // DJ (host or assigned) can export if they — or the wedding owner — have
+      // the Spotify export comp code. Comp-code-only, not plan-based.
       const viewer = db.getUserById(viewerId);
       if (!viewer) return false;
       if (viewer.id !== w.host_id && w.assigned_dj !== viewer.id) return false;
-      const vp = PLANS[viewer.plan];
-      if ((vp && vp.spotifyExport) || viewer.spotify_export) return true;
+      if (viewer.spotify_export) return true;
       const owner = db.getUserById(w.host_id);
-      const op = owner && PLANS[owner.plan];
-      return !!((op && op.spotifyExport) || (owner && owner.spotify_export));
+      return !!(owner && owner.spotify_export);
     })(),
     lockDate: effectiveLockDate(w),
     lockIsDefault: (typeof w.lock_date !== 'number') && !!w.wedding_date,  // showing the 14-day default
@@ -2145,11 +2144,11 @@ const SPOTIFY_SCOPE = 'playlist-modify-public playlist-modify-private';
 // short-lived state -> userId, to tie the callback back to the signed-in host
 const spotifyStates = new Map();
 
-// Step 1: start the OAuth handshake (host must be signed in + Studio).
+// Step 1: start the OAuth handshake (host must be signed in + have the
+// Spotify export comp code — this feature is comp-code-only, not plan-based).
 app.get('/api/spotify/connect', auth.requireAuth, (req, res) => {
-  const plan = PLANS[req.user.plan];
-  if (!plan || !plan.spotifyExport) {
-    return res.status(403).json({ error: 'Spotify export is a PRO feature.' });
+  if (!req.user.spotify_export) {
+    return res.status(403).json({ error: 'Spotify export is not enabled on your account.' });
   }
   const state = crypto.randomBytes(16).toString('hex');
   spotifyStates.set(state, { userId: req.user.id, at: Date.now() });
@@ -2241,8 +2240,8 @@ app.post('/api/events/:id/export-spotify', auth.requireAuth, async (req, res) =>
   const e = db.getEvent(req.params.id);
   if (!e) return res.status(404).json({ error: 'Event not found.' });
   if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
-  const plan = PLANS[req.user.plan];
-  const hasSpotify = (plan && plan.spotifyExport) || req.user.spotify_export;
+  // Spotify export is comp-code-only (req.user.spotify_export), not plan-based.
+  const hasSpotify = req.user.spotify_export;
   if (!hasSpotify) return res.status(403).json({ error: 'Spotify export is not enabled on your account.' });
 
   const token = await getUserSpotifyToken(req.user.id);
@@ -2304,14 +2303,12 @@ app.post('/api/weddings/:id/blocks/:blockId/export-spotify', auth.requireAuth, a
   if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
     return res.status(403).json({ error: 'Only the DJ can export to Spotify.' });
   }
-  // Spotify access: the exporter's plan/perk, OR the wedding owner's (so an
-  // assigned DJ inherits the owner's Spotify entitlement).
-  const plan = PLANS[req.user.plan];
-  let hasSpotify = (plan && plan.spotifyExport) || req.user.spotify_export;
+  // Spotify export is comp-code-only. The exporter's own perk, OR the wedding
+  // owner's (so an assigned DJ inherits the owner's Spotify entitlement).
+  let hasSpotify = !!req.user.spotify_export;
   if (!hasSpotify) {
     const owner = db.getUserById(w.host_id);
-    const op = owner && PLANS[owner.plan];
-    hasSpotify = (op && op.spotifyExport) || (owner && owner.spotify_export);
+    hasSpotify = !!(owner && owner.spotify_export);
   }
   if (!hasSpotify) return res.status(403).json({ error: 'Spotify export is not enabled on your account.' });
 
@@ -2696,7 +2693,7 @@ function shapeResults(json) {
 /* ---------- helpers + static ---------- */
 function publicUser(u) {
   const p = PLANS[u.plan];
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export || u.plan === 'studio', branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export, branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED };
 }
 // Shareable public demo — a clean URL for socials/marketing that drops
 // anyone straight into the live guest voting experience.

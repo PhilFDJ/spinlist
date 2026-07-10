@@ -347,7 +347,7 @@
       <div style="display:flex;flex-direction:column;gap:7px;font-size:.9rem;color:var(--ink-2)">
         <div>✓ More events every month</div>
         <div>✓ Your own logo, colour &amp; branding</div>
-        <div>✓ Playlist export to Spotify, Apple Music &amp; Tidal</div>
+        <div>✓ Playlist export to Apple Music &amp; more</div>
         <div>✓ Up to 75 guests (BASIC) or unlimited (PRO)</div>
       </div>
     </div>
@@ -365,15 +365,15 @@
     <div style="background:var(--paper-2);border-radius:12px;padding:16px;margin-bottom:16px">
       <p style="font-weight:700;margin:0 0 8px;font-size:.95rem">Step 1 — get the song list</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-neon" onclick="downloadSongList()" style="flex:1;min-width:140px">⬇ Download list</button>
+        <button class="btn btn-neon" onclick="downloadTransferCSV()" style="flex:1;min-width:140px">⬇ Download playlist file</button>
         <button class="btn btn-ghost" onclick="copySongList()" style="flex:1;min-width:140px">📋 Copy list</button>
-        <button class="btn btn-ghost" onclick="downloadSongCSV()" style="flex:1;min-width:140px">⬇ Export CSV</button>
       </div>
+      <p style="color:var(--muted);font-size:.8rem;margin:10px 0 0">The playlist file is a clean CSV (title &amp; artist) that TuneMyMusic matches best. Or use Copy list to paste the songs directly.</p>
     </div>
 
     <div style="background:var(--paper-2);border-radius:12px;padding:16px;margin-bottom:18px">
       <p style="font-weight:700;margin:0 0 8px;font-size:.95rem">Step 2 — import it</p>
-      <p style="color:var(--muted);font-size:.86rem;margin:0 0 12px;line-height:1.5">Open TuneMyMusic, choose <b>Upload file</b> (or <b>paste text</b>), pick the downloaded list, then choose Spotify, Apple Music or Tidal as the destination.</p>
+      <p style="color:var(--muted);font-size:.86rem;margin:0 0 12px;line-height:1.5">Open TuneMyMusic, choose <b>Upload a file</b> and pick the downloaded playlist CSV (or choose <b>paste</b> and paste the copied list), then pick Spotify, Apple Music or Tidal as the destination.</p>
       <a class="btn btn-primary" href="https://www.tunemymusic.com/transfer" target="_blank" rel="noopener" style="width:100%;text-align:center">Open TuneMyMusic ▸</a>
     </div>
 
@@ -1281,6 +1281,22 @@ function csvCell(s){
   s=(s==null?'':String(s));
   if(/[",\n]/.test(s))return '"'+s.replace(/"/g,'""')+'"';
   return s;
+}
+// Clean CSV tuned for TuneMyMusic's importer: standard Title/Artist/Album
+// headers, no vote counts (which would confuse the matcher). Best accuracy.
+function downloadTransferCSV(){
+  const list=ranked();
+  if(!list.length){toast('No songs yet — nothing to export');return;}
+  const rows=[['Title','Artist','Album']];
+  list.forEach(t=>rows.push([t.title,t.artist,t.album||'']));
+  const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=(EVENT.name||'event').replace(/\W+/g,'-')+'-playlist.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('Playlist file downloaded ⬇');
 }
 function downloadSongCSV(){
   const list=ranked();
