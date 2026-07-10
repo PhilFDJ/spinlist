@@ -1030,14 +1030,20 @@ function publicWedding(w, viewerId) {
       const pref = (owner && owner.search_source) || 'spotify';
       return (APPLE_MUSIC_ENABLED && pref === 'apple') ? 'apple' : 'spotify';
     })(),
-    // Apple export needs a paid plan with export access (planHasExport), NOT the
-    // Spotify comp code — Apple export is available to plan holders.
+    // Apple export needs a paid plan with export access, NOT the Spotify comp
+    // code — Apple export is available to plan holders (Pro and above).
     canExportApple: (() => {
       if (!APPLE_MUSIC_ENABLED) return false;
       const viewer = db.getUserById(viewerId);
       if (!viewer) return false;
       if (viewer.id !== w.host_id && w.assigned_dj !== viewer.id) return false;
-      return true;
+      // Plan-based export access — the viewer's, or the wedding owner's (so an
+      // assigned DJ inherits the owner's entitlement).
+      const vp = PLANS[viewer.plan];
+      if (vp && vp.spotifyExport) return true;
+      const owner = db.getUserById(w.host_id);
+      const op = owner && PLANS[owner.plan];
+      return !!(op && op.spotifyExport);
     })(),
     lockDate: effectiveLockDate(w),
     lockIsDefault: (typeof w.lock_date !== 'number') && !!w.wedding_date,  // showing the 14-day default
