@@ -115,7 +115,7 @@ async function boot(){
 }
 function renderNav(){
   const el=document.getElementById('nav-auth');
-  if(ME){el.innerHTML=`<a href="/account.html">Account</a> <a class="btn btn-ghost" style="padding:8px 16px" href="#" onclick="logout();return false">Log out</a>`;}
+  if(ME){el.innerHTML=`<a class="btn btn-ghost" style="padding:8px 16px" href="#" onclick="logout();return false">Log out</a>`;}
   else{el.innerHTML=`<a href="#" onclick="openAuth('login');return false">Log in</a> <a class="btn btn-primary" style="padding:8px 16px" href="#" onclick="openAuth('signup');return false">Sign up</a>`;}
 }
 function renderPlans(){

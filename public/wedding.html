@@ -83,7 +83,7 @@
 <header class="bar"><div class="wrap">
   <a class="logo" href="/"><img src="/img/spinlist-logo-dark.png" alt="Spinlist" class="logo-img"></a>
   <div id="spinlist-nav"></div>
-  <nav id="wed-nav"><span id="notif-bell" style="display:none;position:relative;cursor:pointer;margin-right:6px" onclick="toggleNotifPanel(event)">🔔<span id="notif-count" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--plum);color:#fff;font-size:.62rem;font-weight:800;min-width:16px;height:16px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 3px"></span></span><a href="/account.html">Account</a><a href="#" onclick="logout();return false">Log out</a></nav>
+  <nav id="wed-nav"><span id="notif-bell" style="display:none;position:relative;cursor:pointer;margin-right:6px" onclick="toggleNotifPanel(event)">🔔<span id="notif-count" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--plum);color:#fff;font-size:.62rem;font-weight:800;min-width:16px;height:16px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 3px"></span></span><a href="/account.html" id="wed-acct-name" style="display:none;text-decoration:none;color:inherit"></a><a href="#" onclick="logout();return false">Log out</a></nav>
   <div id="notif-panel" style="display:none;position:fixed;top:60px;right:20px;width:340px;max-width:calc(100vw - 40px);max-height:70vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:300;padding:8px"></div>
   <div id="gig-window" style="display:none;position:fixed;top:90px;right:20px;width:360px;max-width:calc(100vw - 40px);max-height:75vh;background:#0b1020;border:2px solid var(--neon);border-radius:16px;box-shadow:0 16px 50px rgba(0,0,0,.6);z-index:290;overflow:hidden;display:none;flex-direction:column"></div>
 </div></header>
@@ -376,6 +376,9 @@ async function boot(){
     if(nav)nav.innerHTML='<a href="#" onclick="logout();return false">Log out</a>';
     renderCoupleHome(); return;
   }
+  // DJ: show their name (clickable to account) in place of the old Account link.
+  const wn=document.getElementById('wed-acct-name');
+  if(wn&&ME){ wn.textContent=ME.name||(ME.email?ME.email.split('@')[0]:'Account'); wn.style.display='inline'; }
   renderDJHome();
 }
 
