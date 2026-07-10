@@ -1745,7 +1745,10 @@ async function runSearch(){
   const q=val('search-input');const box=document.getElementById('search-results');
   if(!q){box.innerHTML='';return;}
   try{
-    const d=await api('/api/search?q='+encodeURIComponent(q)+'&limit=8');
+    // Follow the host's guest-search catalogue (master switch), so couple-added
+    // songs come from the same service the host exports to.
+    const src=(CURRENT&&CURRENT.searchSource==='apple')?'&source=apple':'';
+    const d=await api('/api/search?q='+encodeURIComponent(q)+'&limit=8'+src);
     box.innerHTML=(d.tracks||[]).map(t=>`
       <div class="result" onclick='addSong(${JSON.stringify(t).replace(/'/g,"&#39;")})'>
         <img src="${esc(t.art||'')}" onerror="this.style.visibility='hidden'">
