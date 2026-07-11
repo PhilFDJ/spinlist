@@ -76,8 +76,20 @@ async function boot(){
   if(!d.isAdmin){root.innerHTML=`<div class="signed-out"><h1 class="display">Admin</h1><p style="margin-top:14px">This area is restricted. Your account isn't an admin.</p><p class="hint" style="margin-top:8px">Add your email to ADMIN_EMAILS in the server's environment.</p></div>`;return;}
   IS_ADMIN=true;
   root.innerHTML=`
-    <h1 class="display">Codes</h1>
-    <p style="color:var(--muted);margin-top:6px">Create complimentary access codes or discount codes to share.</p>
+    <h1 class="display">Admin</h1>
+    <p style="color:var(--muted);margin-top:6px">Site traffic, and complimentary or discount codes.</p>
+
+    <div class="panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0">Site traffic</h2>
+        <select id="an-range" onchange="loadAnalytics()" style="background:var(--paper-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit;font-size:.85rem">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+      </div>
+      <div id="an-box"><p style="color:var(--muted);font-size:.9rem;margin-top:12px">Loading traffic…</p></div>
+    </div>
 
     <div class="panel">
       <h2>Create a code</h2>
@@ -132,8 +144,53 @@ async function boot(){
       <div id="users-list"><p style="color:var(--muted);font-size:.9rem;margin-top:8px">Loading…</p></div>
     </div>`;
   setKind('comp');
+  loadAnalytics();
   loadCodes();
   loadUsers();
+}
+
+/* ---------- Site traffic ---------- */
+async function loadAnalytics(){
+  const box=document.getElementById('an-box');
+  const days=(document.getElementById('an-range')||{}).value||30;
+  if(!box)return;
+  box.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:12px">Loading traffic…</p>';
+  try{
+    const r=await fetch('/api/analytics?days='+encodeURIComponent(days));
+    if(!r.ok)throw new Error('failed');
+    const d=await r.json();
+
+    // Daily bars — oldest on the left, so the trend reads naturally.
+    const days_=[...(d.days||[])].reverse();
+    const max=Math.max(1,...days_.map(x=>x.views));
+    const bars=days_.map(x=>{
+      const h=Math.round((x.views/max)*100);
+      const label=x.day.slice(5); // MM-DD
+      return `<div title="${label}: ${x.views} views, ${x.visitors} visitors" style="flex:1;min-width:3px;display:flex;flex-direction:column;justify-content:flex-end;height:100%">
+                <div style="height:${h}%;background:${x.views?'var(--neon)':'var(--line)'};border-radius:3px 3px 0 0;min-height:2px"></div>
+              </div>`;
+    }).join('');
+
+    const pages=(d.topPages||[]).map(p=>`
+      <div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid var(--line);font-size:.88rem">
+        <span style="color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.path}</span>
+        <b style="color:var(--neon);flex:none">${p.views}</b>
+      </div>`).join('') || '<p style="color:var(--muted);font-size:.85rem;margin-top:8px">No page views recorded yet.</p>';
+
+    box.innerHTML=`
+      <div style="display:flex;gap:28px;flex-wrap:wrap;margin:14px 0 18px">
+        <div><div style="font-size:2rem;font-weight:800;color:var(--neon);line-height:1">${d.totalViews||0}</div><div style="font-size:.78rem;color:var(--muted)">page views</div></div>
+        <div><div style="font-size:2rem;font-weight:800;color:var(--ink);line-height:1">${d.uniqueVisitors||0}</div><div style="font-size:.78rem;color:var(--muted)">unique visitors</div></div>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:2px;height:90px;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;padding:8px">${bars}</div>
+      <p style="font-size:.72rem;color:var(--muted);margin-top:6px">Daily page views (hover a bar for detail)</p>
+      <h3 style="margin:18px 0 2px;font-size:1rem">Top pages</h3>
+      ${pages}
+      <p style="font-size:.72rem;color:var(--muted);margin-top:12px">No cookies or personal data are stored. Visitors are counted with a hash that resets daily, and bots are filtered out.</p>
+    `;
+  }catch(e){
+    box.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:12px">Could not load traffic.</p>';
+  }
 }
 
 let KIND='comp';

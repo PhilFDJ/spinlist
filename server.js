@@ -2610,6 +2610,48 @@ const searchHealth = {
   lastSpotifyOkAt: 0,         // last successful Spotify search
 };
 
+/* ----------------------------------------------------------------
+   ANALYTICS — simple, privacy-friendly page-view counting.
+   No cookies, no personal data. A visitor is identified by a salted hash of
+   IP + user-agent that ROTATES DAILY (the day is part of the hash input), so
+   it can't be used to track anyone across days or tied back to a person.
+---------------------------------------------------------------- */
+const ANALYTICS_SALT = process.env.ANALYTICS_SALT || crypto.randomBytes(16).toString('hex');
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);   // "2026-07-11"
+}
+function visitorHashFor(req, dayKey) {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const ua = req.headers['user-agent'] || '';
+  return crypto.createHash('sha256')
+    .update(`${dayKey}|${ANALYTICS_SALT}|${ip}|${ua}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+// Obvious bots/crawlers shouldn't inflate the numbers.
+const BOT_RE = /bot|crawl|spider|slurp|bingpreview|headless|monitor|uptime|curl|wget|python-requests|axios/i;
+
+// Beacon: called once per page load. Deliberately tiny and always 204.
+app.post('/api/track', (req, res) => {
+  try {
+    const ua = req.headers['user-agent'] || '';
+    if (BOT_RE.test(ua)) return res.status(204).end();      // don't count bots
+    let path = ((req.body || {}).path || '/').toString();
+    // Keep paths clean and bounded: strip query/hash, cap length.
+    path = path.split('?')[0].split('#')[0].slice(0, 80) || '/';
+    const day = todayKey();
+    db.recordView(day, path, visitorHashFor(req, day));
+  } catch (_) { /* never let analytics break a page */ }
+  res.status(204).end();
+});
+
+// Stats: admin only.
+app.get('/api/analytics', requireAdmin, (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 90);
+  res.json(db.analyticsSummary(days));
+});
+
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) return res.json({ tracks: [] });
