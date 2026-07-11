@@ -1761,7 +1761,7 @@ async function addSong(t){
   const b=CURRENT.blocks.find(x=>x.id===activeBlockId);
   if(b.songs.length>=b.capacity){toast('That block is full');return;}
   if(b.songs.some(s=>s.id===t.id)){toast('Already added');return;}
-  b.songs.push({id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art});
+  b.songs.push({id:t.id,uri:t.uri,isrc:t.isrc||'',title:t.title,artist:t.artist,art:t.art});
   await saveBlock(b);
   document.getElementById('search-sub').textContent=b.songs.length+' of '+b.capacity+' added';
   if(b.songs.length>=b.capacity)closeSearch();

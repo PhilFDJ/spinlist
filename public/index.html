@@ -783,7 +783,9 @@ async function toggleVote(track){
     body={remove:[id]};
   }else{
     if(votesLeft()<=0){toast('No votes left — remove one first');return;}
-    body={add:[{id:track.id,uri:track.uri||null,title:track.title,artist:track.artist,art:track.art||''}]};
+    // Send the ISRC (a universal recording ID that Apple search returns) so an
+    // Apple-sourced track can still be matched to Spotify at export time.
+    body={add:[{id:track.id,uri:track.uri||null,isrc:track.isrc||'',title:track.title,artist:track.artist,art:track.art||''}]};
     // attach who's requesting, if they told us
     if(guestInfo&&(guestInfo.name||guestInfo.nationality))body.guest={name:guestInfo.name,nationality:guestInfo.nationality};
   }
@@ -1108,7 +1110,7 @@ async function djAddSong(id){
   const t=window.__djsr&&window.__djsr[id];if(!t)return;
   const votes=parseInt(document.getElementById('dj-add-votes').value,10)||1;
   try{
-    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/add-song',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track:{id:t.id,uri:t.uri||null,title:t.title,artist:t.artist,art:t.art||''},votes})});
+    const r=await fetch('/api/events/'+encodeURIComponent(EVENT.id)+'/add-song',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track:{id:t.id,uri:t.uri||null,isrc:t.isrc||'',title:t.title,artist:t.artist,art:t.art||''},votes})});
     const d=await r.json();
     if(!r.ok){toast(d.error||'Could not add');return;}
     applyServerEvent(d.event);

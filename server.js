@@ -768,7 +768,7 @@ app.post('/api/events/:id/add-song', auth.requireAuth, (req, res) => {
   if (!Number.isFinite(votes) || votes < 1) votes = 1;
   votes = Math.min(votes, 999);
   const updated = db.hostAddSong(e.id, {
-    id: t.id, uri: t.uri || null, title: t.title, artist: t.artist || '', art: t.art || '',
+    id: t.id, uri: t.uri || null, isrc: t.isrc || '', title: t.title, artist: t.artist || '', art: t.art || '',
   }, votes);
   res.json({ event: publicEvent(updated, true) });
 });
@@ -997,7 +997,7 @@ function publicWedding(w, viewerId) {
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
     inviteCode: (isHost ? w.invite_code : undefined),   // only the DJ sees the code
     coupleJoined: !!w.couple_id,
-    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
     answers: w.answers || {},
