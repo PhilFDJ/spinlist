@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prep · Spinlist</title>
+<link rel="icon" href="/img/favicon-32.png" sizes="32x32">
+<style>
+  :root{ --neon:#c1ff2f; --ink:#e8ecf5; --muted:#8b93a7; --line:rgba(255,255,255,.1);
+         --bg:#0b1020; --surface:#121a2e; --paper:#0d1424; --plum:#7b6cff; --ok:#39d98a; --miss:#ff6b5e; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+  .wrap{max-width:900px;margin:0 auto;padding:20px 18px 60px}
+  header.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:20px}
+  header.top .brand{display:flex;align-items:center;gap:10px;font-weight:800}
+  header.top .brand img{height:26px;width:auto}
+  a{color:var(--neon)}
+  h1{font-size:1.6rem;margin:6px 0}
+  h2{font-size:1.15rem;margin:24px 0 10px}
+  .lead{color:var(--muted);font-size:.95rem}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}
+  .btn{display:inline-flex;align-items:center;gap:8px;background:var(--neon);color:#0a1228;border:none;border-radius:10px;padding:11px 18px;font:inherit;font-weight:700;cursor:pointer;text-decoration:none}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  .btn:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .tab{padding:8px 14px;border-radius:9px;border:1px solid var(--line);cursor:pointer;font-weight:700;font-size:.88rem;color:var(--muted)}
+  .tab.on{background:var(--plum);color:#fff;border-color:var(--plum)}
+  .stat{font-size:.85rem;color:var(--muted)}
+  .block{border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
+  .block .bhead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;background:var(--paper);cursor:pointer}
+  .block .bhead h3{margin:0;font-size:1rem}
+  .block .bhead .meta{font-size:.82rem;color:var(--muted)}
+  .block .body{padding:4px 14px 12px}
+  .song{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:.9rem}
+  .song:last-child{border-bottom:none}
+  .song .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+  .song .dot.ok{background:var(--ok)} .song .dot.miss{background:var(--miss)}
+  .song .req{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .song .req b{color:#fff;font-weight:600}
+  .song .found{font-size:.8rem;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pill{font-size:.72rem;font-weight:800;padding:2px 8px;border-radius:20px}
+  .pill.ok{background:rgba(57,217,138,.15);color:var(--ok)}
+  .pill.miss{background:rgba(255,107,94,.15);color:var(--miss)}
+  .pill.vid{background:rgba(123,108,255,.18);color:var(--plum);margin-left:6px;white-space:nowrap}
+  .status{color:var(--muted);font-size:.9rem;padding:8px 0}
+  input[type=file]{display:none}
+  .note{font-size:.82rem;color:var(--muted);margin-top:8px}
+  .bar{height:6px;background:var(--paper);border-radius:6px;overflow:hidden;margin-top:6px}
+  .bar > i{display:block;height:100%;background:var(--neon)}
+  .pickwrap{display:flex;align-items:center;gap:4px;min-width:0;justify-content:flex-end}
+  .verpick{min-width:0;width:auto;max-width:360px;flex:0 1 auto;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:.82rem}
+  @media(max-width:560px){ .verpick{max-width:240px} .song .found{max-width:120px} }
+  .findbtn{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:4px 8px;font:inherit;font-size:.78rem;cursor:pointer;white-space:nowrap;flex-shrink:0}
+  .findbtn:hover{color:var(--ink);border-color:var(--plum)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <span class="brand"><img src="/img/spinlist-logo-dark.png" alt="Spinlist"></span>
+    <div id="spinlist-nav"></div>
+    <div id="spinlist-acct" style="display:none"></div>
+    <a href="/index.html#events" class="stat">← Back to My Events</a>
+  </header>
+  <script src="/js/nav.js"></script>
+
+  <h1>Prep <span style="color:var(--muted);font-weight:400">· <span id="wed-name">wedding</span></span></h1>
+  <p class="lead" id="intro-lead">Match the couple's song requests against your own music library, then export a playlist (.m3u) for each block to drop straight into your DJ software. Your music files stay on your computer — we only save the track list and file locations to your account, never the songs themselves.</p>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Set up your music library</h2>
+    <p class="lead" style="margin-top:0">The <b>Spinlist desktop app</b> scans your music folder and reads the real file locations, so the playlists you export here load straight into your DJ software. It syncs to your account automatically.</p>
+    <div class="row">
+      <a class="btn" id="mac-app-btn" href="#" style="text-decoration:none">⬇ Download for Mac</a>
+      <a class="btn" id="win-app-btn" href="#" style="text-decoration:none">⬇ Download for Windows</a>
+    </div>
+    <p class="note" id="mac-app-note"></p>
+
+    <div style="border-top:1px solid var(--line);margin:16px 0 0;padding-top:14px">
+      <p class="lead" style="margin:0 0 8px;font-size:.9rem">Already keep your library in a DJ app? You can import it instead — these keep the real file paths, so exports still work:</p>
+      <ul class="lead" style="margin-top:0;font-size:.88rem">
+        <li><b>iTunes / Music:</b> File › Library › Export Library… (an .xml file)</li>
+        <li><b>Rekordbox:</b> File › Export Collection in xml format</li>
+        <li><b>Serato / other:</b> export or save a crate as .m3u / .m3u8</li>
+      </ul>
+      <div class="row">
+        <button class="btn ghost" id="pick-library">Import a library file</button>
+        <input type="file" id="library-input" accept=".xml,.m3u,.m3u8,.txt">
+        <span class="stat" id="library-stat"></span>
+      </div>
+      <p class="note" id="lib-status" style="color:var(--neon)"></p>
+      <p class="note"><a href="#" onclick="clearSavedLibrary();return false" style="color:var(--muted)">Forget my saved library</a></p>
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <input type="file" id="find-file-input" accept="audio/*,video/*,.mp3,.m4a,.mp4,.m4v,.mov,.aac,.flac,.wav">
+</div>
+
+<script>
+// Mac app download link — paste your download page URL here when it's live (only place to change).
+// Desktop app download links — paste new release URLs here when you rebuild (only place to change).
+const MAC_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.4.0/Spinlist.Music.Manager-1.4.0-universal.dmg';
+const WIN_APP_URL = 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.4.0/Spinlist.Music.Manager.Setup.1.4.0.exe';
+const params=new URLSearchParams(location.search);
+const WID=params.get('w');
+const EID=params.get('e');   // regular (non-wedding) event id
+const SETUP=!WID && !EID && (params.get('setup')==='1' || params.get('setup')==='');
+let WED=null, LIB=[], SRC='folder', PICKS={}, LIB_NAME='', PREV_LIB=[], LIB_TOKEN_INDEX=new Map();   // PREV_LIB = last saved lib for incremental rescans
+function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function loadPicks(){ try{ const d=await (await fetch('/api/prep/picks',{credentials:'same-origin'})).json(); PICKS=d.picks||{}; }catch(e){ PICKS={}; } }
+async function savePick(key, chosen){
+  if(chosen)PICKS[key]=chosen; else delete PICKS[key];
+  try{ await fetch('/api/prep/picks',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({key,chosen:chosen||null})}); }catch(e){}
+}
+// Save the scanned library to the account (compact keys) so it syncs across devices.
+async function saveLibrary(name){
+  if(!LIB.length){ showLibStatus('Nothing to save yet.'); return; }
+  showLibStatus('Saving your library…');
+  try{
+    const payload={library:{name:name||'library', tracks:LIB.map(t=>{ const o={t:t.title,a:t.artist,p:t.path}; if(t.video)o.v=1; if(t.director)o.d=t.director; if(t.size)o.s=t.size; if(t.mtime)o.m=t.mtime; return o; })}};
+    const r=await fetch('/api/prep/library',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});
+    if(r.ok){ const d=await r.json(); showLibStatus('✓ Saved '+d.count+' tracks to your account (syncs across your devices).'); }
+    else if(r.status===401||r.status===403){ showLibStatus('Not saved — please log in on the main site, then reopen Prep.'); }
+    else if(r.status===413){ showLibStatus('Not saved — your library is very large. Tell us and we can raise the limit.'); }
+    else { let m=''; try{ m=(await r.json()).error||''; }catch(_){ } showLibStatus('Not saved ('+r.status+(m?': '+m:'')+'). Please try again.'); }
+  }catch(e){ showLibStatus('Not saved — connection problem. Your scan still works for this session.'); }
+}
+async function loadSavedLibrary(){
+  try{
+    const d=await (await fetch('/api/prep/library',{credentials:'same-origin'})).json();
+    if(d.library && Array.isArray(d.library.tracks) && d.library.tracks.length){
+      LIB=d.library.tracks.map(t=>({title:t.t||'',artist:t.a||'',director:t.d||'',path:t.p||'',video:!!t.v,size:t.s||0,mtime:t.m||0}));
+      PREV_LIB=LIB.slice(); invalidateLibIndex();   // remember for incremental rescan
+      LIB_NAME=d.library.name||'library';
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+function showLibStatus(msg){ const el=document.getElementById('lib-status'); if(el)el.textContent=msg; }
+function invalidateLibIndex(){ LIB_INDEXED=false; }
+async function clearSavedLibrary(){
+  if(!confirm('Forget your saved library? You can set it up again with the Mac app or a library import.'))return;
+  try{ await fetch('/api/prep/library',{method:'DELETE',credentials:'same-origin'}); }catch(e){}
+  LIB=[]; LIB_NAME=''; invalidateLibIndex(); showLibStatus('Saved library cleared.'); renderResults();
+}
+
+function setSrc(s){ SRC=s; }   // (source tabs removed — library import is always visible)
+
+/* ---------- normalisation & matching ---------- */
+// Common DJ/edit descriptors to ignore when matching (bracketed OR loose).
+const EDIT_TAGS=[
+  'extended mix','extended edit','extended version','extended','ext mix','ext edit','ext',
+  'intro edit','intro clean','intro dirty','intro outro','intro','outro',
+  'xtend','xtd','x tend','short edit','short mix','short','quick mix','quick hit','quick',
+  'radio edit','radio mix','radio version','radio','clean edit','clean version','clean','dirty edit','dirty',
+  'club mix','club edit','club','dance mix','dance edit','original mix','original version','original',
+  'remix','re edit','redrum','re drum','edit','remaster','remastered','mono','stereo',
+  'acapella','a capella','instrumental','dub','vip mix','vip','bootleg','mashup','mash up',
+  'transition','trans','segue','starter','ender','128','132','swing','ck cut','dj edit','djedit',
+  'single version','album version','12 inch','12','7 inch','7','vocal mix','vocal'
+];
+function stripEditTags(s){
+  let out=' '+s+' ';
+  for(const tag of EDIT_TAGS){
+    // remove the tag as whole words wherever it appears
+    out=out.replace(new RegExp('\\b'+tag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','g'),' ');
+  }
+  return out;
+}
+function norm(s){
+  s=(s||'').toLowerCase()
+    .replace(/\(.*?\)|\[.*?\]|\{.*?\}/g,' ')          // drop (…) […] {…}
+    .replace(/\bfeat\.?\b|\bft\.?\b/g,' ')
+    .replace(/&/g,' and ');
+  s=stripEditTags(s);                                 // remove loose DJ-edit words too
+  return s.replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+}
+function tokens(s){ return new Set(norm(s).split(' ').filter(Boolean)); }
+function jaccard(a,b){ if(!a.size||!b.size)return 0; let i=0; a.forEach(x=>{if(b.has(x))i++;}); return i/(a.size+b.size-i); }
+// score a requested song against a library track
+function score(req, lib){
+  const rt=tokens(req.title), lt=tokens(lib.title||'');
+  const ra=tokens(req.artist), la=tokens(lib.artist||'');
+  let titleScore=jaccard(rt,lt);
+  // if library has no separate artist (e.g. filename only), test against whole string
+  const whole=tokens((lib.title||'')+' '+(lib.artist||'')+' '+(lib.path||''));
+  const titleInWhole=jaccard(rt,whole);
+  titleScore=Math.max(titleScore,titleInWhole*0.9);
+  let artistScore=la.size?jaccard(ra,la):jaccard(ra,whole)*0.9;
+  return titleScore*0.7 + artistScore*0.3;
+}
+function bestMatch(req){
+  return candidates(req)[0] || null;
+}
+// --- Fast matching index: precompute each track's tokens + an inverted index so we
+// only score tracks that share at least one token with the request (not the whole library). ---
+let LIB_INDEXED=false;
+function buildLibIndex(){
+  LIB_TOKEN_INDEX=new Map();   // token -> array of track refs
+  for(const t of LIB){
+    // cache the track's tokens once
+    t._tok = tokens((t.title||'')+' '+(t.artist||'')+' '+(t.path||''));
+    t._tt  = tokens(t.title||'');
+    t._ta  = tokens(t.artist||'');
+    for(const tok of t._tok){
+      let arr=LIB_TOKEN_INDEX.get(tok); if(!arr){ arr=[]; LIB_TOKEN_INDEX.set(tok,arr); }
+      arr.push(t);
+    }
+  }
+  LIB_INDEXED=true;
+}
+function scoreFast(req, lib){
+  const rt=req._rt, ra=req._ra;
+  let titleScore=jaccard(rt, lib._tt);
+  const titleInWhole=jaccard(rt, lib._tok);
+  titleScore=Math.max(titleScore, titleInWhole*0.9);
+  let artistScore=lib._ta.size?jaccard(ra, lib._ta):jaccard(ra, lib._tok)*0.9;
+  return titleScore*0.7 + artistScore*0.3;
+}
+// All library tracks scoring above threshold, best first — using the token index.
+function candidates(req){
+  if(!LIB_INDEXED) buildLibIndex();
+  // Precompute the request's tokens once.
+  if(!req._rt){ req._rt=tokens(req.title); req._ra=tokens(req.artist); }
+  // Gather only candidate tracks that share a token with the request title/artist.
+  const seen=new Set(); const pool=[];
+  const addFrom=(tok)=>{ const arr=LIB_TOKEN_INDEX.get(tok); if(arr){ for(const t of arr){ if(!seen.has(t)){ seen.add(t); pool.push(t); } } } };
+  req._rt.forEach(addFrom); req._ra.forEach(addFrom);
+  const scored=[];
+  for(const t of pool){ const s=scoreFast(req,t); if(s>=0.45)scored.push({track:t,score:s}); }
+  scored.sort((a,b)=>b.score-a.score);
+  return scored.slice(0,8);
+}
+// Key a request to remember the chosen version across weddings.
+function songKey(req){ return norm(req.title)+'|'+norm(req.artist); }
+
+// Songs the DJ has ticked OFF — left out of the exported playlist. Keyed by songKey.
+let EXCLUDED={};
+function toggleExclude(key,box){
+  if(box.checked){ delete EXCLUDED[key]; } else { EXCLUDED[key]=true; }
+  renderResults();
+}
+function isExcluded(req){ return !!EXCLUDED[songKey(req)]; }
+
+// A link to preview the REQUESTED song (so the DJ can confirm the match is right).
+// Uses the Spotify URI if we have one, otherwise a Spotify search for title+artist.
+function previewLink(req){
+  if(!req) return '';
+  if(req.uri && /^spotify:track:/.test(req.uri)){
+    return 'https://open.spotify.com/track/'+req.uri.split(':').pop();
+  }
+  const q=encodeURIComponent(((req.title||'')+' '+(req.artist||'')).trim());
+  return q ? 'https://open.spotify.com/search/'+q : '';
+}
+function previewSong(key){
+  // Find the request by key across all blocks.
+  let req=null;
+  for(const b of (WED.blocks||[])){ for(const s of (b.songs||[])){ if(songKey(s)===key){ req=s; break; } } if(req)break; }
+  const url=previewLink(req);
+  if(url) window.open(url,'_blank','noopener');
+}
+
+// Given a request + its candidates, return the chosen one honouring a remembered pick.
+function chosenFor(req){
+  const key=songKey(req);
+  const remembered=PICKS[key];
+  // Manual file pick: the DJ chose an exact file for this song.
+  if(remembered && remembered.manual){
+    let track=LIB.find(t=>t.path && t.path.split(/[\\/]/).pop()===remembered.name);
+    if(!track) track={title:remembered.title||req.title, artist:remembered.artist||'', path:remembered.path||remembered.name};
+    return {chosen:{track,score:1}, cands:[], remembered:true, manual:true};
+  }
+  const cands=candidates(req);
+  if(!cands.length)return null;
+  if(remembered){
+    // Match on the RAW title+artist (not normalised) so different versions
+    // like "(Radio Edit)" vs "(Album)" — which normalise the same — stay distinct.
+    const rk=(remembered.title||'').trim().toLowerCase()+'|'+(remembered.artist||'').trim().toLowerCase();
+    const hit=cands.find(c=>(c.track.title||'').trim().toLowerCase()+'|'+(c.track.artist||'').trim().toLowerCase()===rk);
+    if(hit)return {chosen:hit,cands,remembered:true};
+  }
+  return {chosen:cands[0],cands,remembered:false};
+}
+
+/* ---------- folder scan ---------- */
+/* ---- persist the chosen directory handle (Chrome/Edge) in IndexedDB ---- */
+let DIR_HANDLE=null;
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('spinlist-prep',1); r.onupgradeneeded=()=>r.result.createObjectStore('kv'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbSet(k,v){ try{ const db=await idb(); return await new Promise((res)=>{ const t=db.transaction('kv','readwrite'); t.objectStore('kv').put(v,k); t.oncomplete=()=>res(); t.onerror=()=>res(); }); }catch(e){} }
+async function idbGet(k){ try{ const db=await idb(); return await new Promise((res)=>{ const t=db.transaction('kv','readonly'); const rq=t.objectStore('kv').get(k); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>res(null); }); }catch(e){ return null; } }
+
+async function collectFromHandle(dir){
+  const files=[];
+  async function walk(handle,prefix){
+    for await (const [name,h] of handle.entries()){
+      if(h.kind==='directory'){ await walk(h, prefix+name+'/'); }
+      else if(/\.(mp3|m4a|mp4|m4v|mov|avi|mkv|aac|flac|wav|aiff?)$/i.test(name)){ files.push({handle:h, path:prefix+name}); }
+    }
+  }
+  await walk(dir,'');
+  return files;
+}
+async function scanFromHandle(dir){
+  // Ensure we still have read permission (re-prompts once if needed).
+  if(dir.queryPermission){
+    let perm=await dir.queryPermission({mode:'read'});
+    if(perm!=='granted' && dir.requestPermission) perm=await dir.requestPermission({mode:'read'});
+    if(perm!=='granted'){ const fs=document.getElementById('folder-stat'); if(fs)fs.textContent='Permission needed to read that folder.'; return; }
+  }
+  const files=await collectFromHandle(dir);
+  await scanFiles(files, true);
+}
+function showRescan(name){
+  const b=document.getElementById('rescan-folder');
+  if(!b)return;
+  if(name){ const n=document.getElementById('rescan-name'); if(n)n.textContent=name; b.style.display='inline-flex'; }
+  else b.style.display='none';
+}
+
+const _pickFolderBtn=document.getElementById('pick-folder');
+if(_pickFolderBtn) _pickFolderBtn.onclick=async()=>{
+  if(window.showDirectoryPicker){
+    try{
+      const dir=await window.showDirectoryPicker();
+      DIR_HANDLE=dir;
+      await idbSet('dirHandle', dir);           // remember across sessions
+      showRescan(dir.name);
+      await scanFromHandle(dir);
+      return;
+    }catch(e){ if(e && e.name==='AbortError')return; }
+  }
+  const fi=document.getElementById('folder-input'); if(fi)fi.click();
+};
+const _rescanBtn=document.getElementById('rescan-folder');
+if(_rescanBtn) _rescanBtn.onclick=async()=>{ if(DIR_HANDLE){ await scanFromHandle(DIR_HANDLE); } };
+const _folderInput=document.getElementById('folder-input');
+if(_folderInput) _folderInput.onchange=async(e)=>{
+  const files=[...e.target.files].filter(f=>/\.(mp3|m4a|mp4|m4v|mov|avi|mkv|aac|flac|wav|aiff?)$/i.test(f.name))
+    .map(f=>({file:f, path:f.webkitRelativePath||f.name}));
+  await scanFiles(files,false);
+};
+// Format seconds as "Xm Ys" (or "Ys" under a minute).
+function fmtTime(secs){
+  secs=Math.max(0,Math.round(secs));
+  if(secs<60) return secs+'s';
+  const m=Math.floor(secs/60), s=secs%60;
+  return s?(m+'m '+s+'s'):(m+'m');
+}
+async function scanFiles(files, fsapi){
+  const stat=document.getElementById('folder-stat')||{};
+  const bar=document.getElementById('scan-bar');
+  if(bar) bar.style.display='block';
+  const barI=bar?bar.querySelector('i'):null;
+  const newLib=[];
+  let done=0, reused=0, readCount=0;
+  const total=files.length;
+  const t0=Date.now();
+  // Build a lookup of the previously-saved library by path, so unchanged files can be reused.
+  const prevByPath={};
+  for(const t of (PREV_LIB||[])){ if(t.path) prevByPath[t.path]=t; }
+  const isSafari=/^((?!chrome|android|crios|edg).)*safari/i.test(navigator.userAgent);
+  const CONCURRENCY = isSafari ? 48 : 24;
+  async function handleOne(f){
+    const extVid=/\.(m4v|mov|avi|mkv)$/i.test(f.path);   // unambiguous video extensions
+    const maybeMp4=/\.mp4$/i.test(f.path);               // .mp4 could be audio OR video — detect from content
+    let title='', artist='', detectedVid=false;
+    try{
+      const blob = fsapi ? await f.handle.getFile() : f.file;   // cheap: gives us size + lastModified
+      const prev=prevByPath[f.path];
+      // INCREMENTAL: if we've seen this exact file before (same size + modified time), reuse its tags.
+      if(prev && prev.size===blob.size && prev.mtime===blob.lastModified){
+        newLib.push({title:prev.title,artist:prev.artist,director:prev.director||'',path:f.path,video:!!prev.video,size:blob.size,mtime:blob.lastModified});
+        reused++; done++; tick(); return;
+      }
+      const tags = await readTags(blob);      // only read tags for new/changed files
+      readCount++;
+      title=(tags.title||'').trim();
+      artist=(tags.artist||'').trim();
+      var _director=(tags.director||'').trim();
+      if(tags.video) detectedVid=true;        // MP4 with a real video track
+      var _size=blob.size, _mtime=blob.lastModified;
+    }catch(_){ var _size=0, _mtime=0, _director=''; }
+    if(!title){ // fall back to filename "Artist - Title"
+      const base=f.path.split('/').pop().replace(/\.[^.]+$/,'');
+      const parts=base.split(' - ');
+      if(parts.length>=2){ artist=artist||parts[0].trim(); title=parts.slice(1).join(' - ').trim(); }
+      else { title=base.trim(); }
+    }
+    const isVid = extVid || (maybeMp4 && detectedVid) || detectedVid;
+    newLib.push({title,artist,director:_director||'',path:f.path,video:isVid,size:_size,mtime:_mtime});
+    done++; tick();
+  }
+  function tick(){
+    if(done%50===0||done===total){
+      if(barI) barI.style.width=Math.round(done/total*100)+'%';
+      // ETA from the actual read rate applied to how many files still need reading.
+      const elapsed=(Date.now()-t0)/1000;
+      const readRate=readCount/Math.max(0.001,elapsed);   // files read per second
+      // Estimate remaining reads: assume the same reused-fraction holds for the rest.
+      const processed=Math.max(1,done);
+      const readFraction=readCount/processed;             // share of files that needed a read
+      const remaining=total-done;
+      const remainingReads=remaining*readFraction;
+      const eta=readRate>0?Math.round(remainingReads/readRate):0;
+      stat.textContent=done+' / '+total+' files'+(reused?'  ·  '+reused+' unchanged':'')+(eta>2&&readCount>5?'  ·  ~'+fmtTime(eta)+' left':'');
+    }
+  }
+  for(let i=0;i<files.length;i+=CONCURRENCY){
+    await Promise.all(files.slice(i,i+CONCURRENCY).map(handleOne));
+    if(i % (CONCURRENCY*4) === 0) await new Promise(r=>setTimeout(r));   // yield occasionally so the bar paints
+  }
+  LIB=newLib; invalidateLibIndex();
+  PREV_LIB=newLib;
+  stat.textContent=LIB.length+' tracks'+(reused?' ('+reused+' unchanged, '+readCount+' newly read)':'');
+  if(bar) bar.style.display='none';
+  renderResults();
+  saveLibrary(LIB_NAME || (DIR_HANDLE && DIR_HANDLE.name) || 'library');   // sync to account
+}
+
+/* Lightweight, dependency-free tag reader.
+   Reads ID3v2 (TIT2/TPE1) from the file head and ID3v1 from the last 128 bytes.
+   Only reads the bytes it needs, so it's fast and never hangs. */
+async function readTags(blob){
+  const out={title:'',artist:'',director:''};
+  try{
+    // Read a tiny head first — most ID3v2 and MP4 tags are within the first few KB.
+    let head=new Uint8Array(await blob.slice(0, 16*1024).arrayBuffer());
+    // ---- MP3 / ID3v2 ----
+    if(head[0]===0x49&&head[1]===0x44&&head[2]===0x33){ // "ID3" v2
+      const size=((head[6]&0x7f)<<21)|((head[7]&0x7f)<<14)|((head[8]&0x7f)<<7)|(head[9]&0x7f);
+      // If the tag is bigger than our first read, grab just enough more (capped).
+      if(10+size>head.length){ head=new Uint8Array(await blob.slice(0, Math.min(10+size, 512*1024)).arrayBuffer()); }
+      const end=Math.min(10+size, head.length);
+      let i=10;
+      while(i+10<end){
+        const id=String.fromCharCode(head[i],head[i+1],head[i+2],head[i+3]);
+        const fsz=(head[i+4]<<24)|(head[i+5]<<16)|(head[i+6]<<8)|head[i+7];
+        if(fsz<=0||i+10+fsz>head.length)break;
+        if(id==='TIT2'||id==='TPE1'||id==='TT2'||id==='TP1'){
+          const val=decodeFrame(head.subarray(i+10, i+10+fsz));
+          if(id[1]==='I'||id==='TT2') out.title=out.title||val; else out.artist=out.artist||val;
+        }
+        i+=10+fsz;
+      }
+    }
+    // ---- MP4 / M4A / MP4 video (atoms) ----
+    const isMp4 = head.length>12 && head[4]===0x66&&head[5]===0x74&&head[6]===0x79&&head[7]===0x70; // "ftyp"
+    if((!out.title||!out.artist||out.video===undefined) && isMp4){
+      // Detect a video track: MP4 stores an 'hdlr' atom with handler type 'vide' for video.
+      if(mp4HasVideoTrack(head)) out.video=true;
+      let mp4=parseMp4Tags(head);
+      out.title=out.title||mp4.title;
+      out.artist=out.artist||mp4.artist;
+      out.director=out.director||mp4.director;
+      // If the small head missed it, try a slightly larger head (moov near front but >16KB).
+      if((!out.title||!out.artist||!out.director||out.video===undefined) && blob.size>head.length){
+        try{
+          const bigHead=new Uint8Array(await blob.slice(0, 256*1024).arrayBuffer());
+          if(out.video===undefined && mp4HasVideoTrack(bigHead)) out.video=true;
+          const mp4h=parseMp4Tags(bigHead);
+          out.title=out.title||mp4h.title;
+          out.artist=out.artist||mp4h.artist;
+          out.director=out.director||mp4h.director;
+        }catch(_){}
+      }
+      // moov can be at the end. Only pay for a tail read if still missing
+      // and the file isn't enormous (skip huge videos — filename fallback is fine there).
+      if((!out.title||!out.artist) && blob.size>256*1024 && blob.size < 200*1024*1024){
+        try{
+          const tailBuf=new Uint8Array(await blob.slice(Math.max(0, blob.size-512*1024)).arrayBuffer());
+          if(out.video===undefined && mp4HasVideoTrack(tailBuf)) out.video=true;
+          const mp4b=parseMp4Tags(tailBuf);
+          out.title=out.title||mp4b.title;
+          out.artist=out.artist||mp4b.artist;
+          out.director=out.director||mp4b.director;
+        }catch(_){}
+      }
+    }
+    // ---- ID3v1 tail fallback (MP3) ----
+    if(!out.title||!out.artist){
+      const tail=new Uint8Array(await blob.slice(Math.max(0,blob.size-128)).arrayBuffer());
+      if(tail.length>=128 && tail[0]===0x54&&tail[1]===0x41&&tail[2]===0x47){ // "TAG"
+        const rd=(s,e)=>{let str='';for(let k=s;k<e;k++){if(tail[k]===0)break;str+=String.fromCharCode(tail[k]);}return str.trim();};
+        out.title=out.title||rd(3,33); out.artist=out.artist||rd(33,63);
+      }
+    }
+  }catch(_){}
+  return out;
+}
+/* Detect whether an MP4 buffer contains a video track. MP4 declares each track's
+   type in an 'hdlr' atom; a video track's handler type is 'vide'. We scan for the
+   'vide' handler that appears shortly after an 'hdlr' marker. */
+function mp4HasVideoTrack(buf){
+  for(let i=0;i+16<buf.length;i++){
+    if(buf[i]===0x68&&buf[i+1]===0x64&&buf[i+2]===0x6c&&buf[i+3]===0x72){ // "hdlr"
+      // layout after 'hdlr': version/flags(4) + pre_defined(4) + handler_type(4)
+      const h=i+12;
+      if(h+4<=buf.length && buf[h]===0x76&&buf[h+1]===0x69&&buf[h+2]===0x64&&buf[h+3]===0x65) return true; // "vide"
+    }
+  }
+  return false;
+}
+/* Parse MP4/M4A metadata atoms. Looks for the iTunes-style tags inside 'ilst':
+   ©nam = title, ©ART = artist, aART = album artist. Each holds a 'data' sub-atom
+   whose payload (after an 8-byte header) is the UTF-8 string. We scan the buffer
+   for these 4-byte atom names directly — robust without walking the full box tree. */
+function parseMp4Tags(buf){
+  const res={title:'',artist:'',director:''};
+  const dec=new TextDecoder('utf-8');
+  const u32=(o)=>((buf[o]<<24)|(buf[o+1]<<16)|(buf[o+2]<<8)|buf[o+3])>>>0;
+  // atom name bytes: © is 0xA9 in the classic MP4 metadata keys
+  const A9='\u00A9';
+  const wanted={ [A9+'nam']:'title', [A9+'ART']:'artist', 'aART':'artist', [A9+'dir']:'director' };
+  for(let i=0;i+8<buf.length;i++){
+    // read a 4-char atom name at i
+    const name=String.fromCharCode(buf[i],buf[i+1],buf[i+2],buf[i+3]);
+    const which=wanted[name];
+    if(!which) continue;
+    // the atom size is the 4 bytes BEFORE the name
+    const atomStart=i-4;
+    if(atomStart<0) continue;
+    const atomSize=u32(atomStart);
+    if(atomSize<16 || atomStart+atomSize>buf.length) continue;
+    // inside: expect a 'data' sub-atom: [size(4)][ 'data'(4) ][type(4)][locale(4)][payload...]
+    // find 'data' within this atom
+    let j=i+4;
+    const atomEnd=atomStart+atomSize;
+    while(j+8<atomEnd){
+      if(buf[j]===0x64&&buf[j+1]===0x61&&buf[j+2]===0x74&&buf[j+3]===0x61){ // "data"
+        const dataSize=u32(j-4);
+        const payloadStart=j+4+8;   // skip 'data' + type(4) + locale(4)
+        const payloadEnd=Math.min(j-4+dataSize, atomEnd);
+        if(payloadEnd>payloadStart){
+          try{ const val=dec.decode(buf.subarray(payloadStart,payloadEnd)).replace(/\u0000+$/,'').trim();
+               if(val && !res[which]) res[which]=val; }catch(_){}
+        }
+        break;
+      }
+      j++;
+    }
+  }
+  return res;
+}
+function decodeFrame(bytes){
+  if(!bytes.length)return '';
+  const enc=bytes[0]; const body=bytes.subarray(1);
+  try{
+    if(enc===1||enc===2){ // UTF-16
+      return new TextDecoder('utf-16').decode(body).replace(/\u0000+$/,'').trim();
+    }
+    if(enc===3){ return new TextDecoder('utf-8').decode(body).replace(/\u0000+$/,'').trim(); }
+    // 0 = ISO-8859-1 (latin1)
+    let s=''; for(const b of body){ if(b===0)break; s+=String.fromCharCode(b); } return s.trim();
+  }catch(_){ return ''; }
+}
+
+/* ---------- library file import ---------- */
+document.getElementById('pick-library').onclick=()=>document.getElementById('library-input').click();
+document.getElementById('library-input').onchange=async(e)=>{
+  const f=e.target.files[0]; if(!f)return;
+  const text=await f.text();
+  const stat=document.getElementById('library-stat');
+  if(/\.xml$/i.test(f.name)||/<\?xml/.test(text.slice(0,200))){
+    LIB = /rekordbox|DJ_PLAYLISTS/i.test(text) ? parseRekordbox(text) : parseITunes(text);
+  } else {
+    LIB = parseM3U(text);
+  }
+  invalidateLibIndex();
+  stat.textContent=LIB.length+' tracks imported';
+  LIB_NAME=f.name.replace(/\.[^.]+$/,'');
+  renderResults();
+  saveLibrary(LIB_NAME);   // sync imported library to account too
+};
+function parseITunes(xml){
+  const out=[]; const doc=new DOMParser().parseFromString(xml,'application/xml');
+  // iTunes / Music / TV Library.xml: <dict> entries with <key>Name</key><string>… etc.
+  doc.querySelectorAll('dict').forEach(d=>{
+    let name='',artist='',loc='',hasVideo=false,kind='',director='';
+    const kids=[...d.children];
+    for(let i=0;i<kids.length-1;i++){
+      if(kids[i].tagName==='key'){
+        const k=kids[i].textContent, valNode=kids[i+1], v=valNode.textContent;
+        if(k==='Name')name=v;
+        else if(k==='Artist')artist=v;
+        else if(k==='Director')director=v;
+        else if(k==='Location')loc=v;
+        else if(k==='Kind')kind=v;
+        else if(k==='Has Video'||k==='Movie'||k==='Music Video'||k==='HD'){ if(valNode.tagName==='true')hasVideo=true; }
+      }
+    }
+    // Also treat obvious video file extensions / kinds as video.
+    const isVideo = hasVideo || /video/i.test(kind) || /\.(m4v|mov|mp4|avi|mkv)(\?|$)/i.test(loc);
+    if(name){ out.push({title:name,artist,director,path:decodeURIComponent((loc||'').replace(/^file:\/\/+/,'/')), video:isVideo}); }
+  });
+  return dedupe(out);
+}
+function parseRekordbox(xml){
+  const out=[]; const doc=new DOMParser().parseFromString(xml,'application/xml');
+  doc.querySelectorAll('TRACK').forEach(t=>{
+    const name=t.getAttribute('Name')||'', artist=t.getAttribute('Artist')||'', loc=t.getAttribute('Location')||'';
+    if(name)out.push({title:name,artist,path:decodeURIComponent(loc.replace(/^file:\/\/localhost/,'').replace(/^file:\/\/+/,'/'))});
+  });
+  return dedupe(out);
+}
+function parseM3U(text){
+  const out=[]; const lines=text.split(/\r?\n/); let pend=null;
+  for(const ln of lines){
+    if(ln.startsWith('#EXTINF')){
+      const m=ln.replace(/^#EXTINF:[^,]*,/,''); const parts=m.split(' - ');
+      pend = parts.length>=2 ? {artist:parts[0].trim(), title:parts.slice(1).join(' - ').trim()} : {title:m.trim(),artist:''};
+    } else if(ln && !ln.startsWith('#')){
+      const path=ln.trim();
+      if(pend){ out.push({...pend,path}); pend=null; }
+      else { const base=path.split(/[\\/]/).pop().replace(/\.[^.]+$/,''); const p=base.split(' - ');
+             out.push(p.length>=2?{artist:p[0].trim(),title:p.slice(1).join(' - ').trim(),path}:{title:base,artist:'',path}); }
+    }
+  }
+  return dedupe(out);
+}
+function dedupe(list){ const seen=new Set(); return list.filter(t=>{const k=norm(t.title)+'|'+norm(t.artist);if(seen.has(k))return false;seen.add(k);return true;}); }
+
+/* ---------- results + export ---------- */
+
+// Copy a single missing song's title + artist so the DJ can paste it into
+// their music provider to find and buy/download it.
+function copySong(btn, text){
+  const done=()=>{ if(btn){ const o=btn.innerHTML; btn.innerHTML='✓ Copied'; setTimeout(()=>{btn.innerHTML=o;},1200); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  }else fallbackCopy(text,done);
+}
+function fallbackCopy(text,cb){
+  const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();
+  try{ document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta); if(cb)cb();
+}
+// Copy ALL the missing songs in a block, one per line, for a bulk search.
+function copyAllMissing(blockId, btn){
+  const b=(WED.blocks||[]).find(x=>x.id===blockId); if(!b)return;
+  const lines=[];
+  for(const s of (b.songs||[])){
+    const cf=chosenFor(s);
+    if(!cf) lines.push((s.title||'')+(s.artist?' - '+s.artist:''));
+  }
+  if(!lines.length)return;
+  const text=lines.join('\n');
+  const done=()=>{ if(btn){ const o=btn.innerHTML; btn.innerHTML='✓ Copied '+lines.length; setTimeout(()=>{btn.innerHTML=o;},1400); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  }else fallbackCopy(text,done);
+}
+
+// Copy EVERY missing song across the whole wedding, one per line.
+function copyAllMissingWedding(btn){
+  const lines=[];
+  for(const b of (WED.blocks||[])){
+    for(const s of (b.songs||[])){
+      if(!chosenFor(s)) lines.push((s.title||'')+(s.artist?' - '+s.artist:''));
+    }
+  }
+  if(!lines.length)return;
+  const text=lines.join('\n');
+  const done=()=>{ if(btn){ const o=btn.innerHTML; btn.innerHTML='✓ Copied '+lines.length; setTimeout(()=>{btn.innerHTML=o;},1400); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  }else fallbackCopy(text,done);
+}
+
+// Build a clean, printable report of songs still needed, grouped by playlist.
+function printMissingReport(){
+  const coupleName=WED.coupleNames||WED.name||'Wedding';
+  const dateStr=WED.date?new Date(WED.date).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'';
+  let totalMissing=0;
+  let blocksHtml='';
+  for(const b of (WED.blocks||[])){
+    const missing=(b.songs||[]).filter(s=>!chosenFor(s));
+    if(!missing.length)continue;
+    totalMissing+=missing.length;
+    const rows=missing.map((s,i)=>`<tr><td class="num">${i+1}</td><td class="ti">${escHtml(s.title||'')}</td><td class="ar">${escHtml(s.artist||'')}</td></tr>`).join('');
+    blocksHtml+=`<div class="block"><h2>${escHtml(b.name||'Playlist')} <span class="cnt">${missing.length} needed</span></h2>
+      <table><thead><tr><th class="num">#</th><th>Title</th><th>Artist</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+  if(!totalMissing){ alert('No missing songs — everything matched your library.'); return; }
+  const w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups to open the report.'); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Songs needed — ${escHtml(coupleName)}</title>
+    <style>
+      *{box-sizing:border-box}
+      body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111;margin:32px;line-height:1.4}
+      header{border-bottom:3px solid #0a1228;padding-bottom:12px;margin-bottom:20px}
+      h1{margin:0 0 4px;font-size:22px}
+      .sub{color:#555;font-size:14px}
+      .summary{background:#f4f6fb;border-radius:8px;padding:10px 14px;margin:16px 0;font-size:14px}
+      .block{margin:20px 0;page-break-inside:avoid}
+      h2{font-size:16px;margin:0 0 8px;border-bottom:1px solid #ccc;padding-bottom:4px}
+      .cnt{font-weight:normal;color:#777;font-size:13px;float:right}
+      table{width:100%;border-collapse:collapse;font-size:14px}
+      th{text-align:left;padding:4px 8px;border-bottom:2px solid #999;font-size:12px;text-transform:uppercase;color:#555}
+      td{padding:5px 8px;border-bottom:1px solid #eee}
+      td.num,th.num{width:32px;color:#999;text-align:right}
+      td.ti{font-weight:600}
+      td.ar{color:#555}
+      footer{margin-top:28px;padding-top:10px;border-top:1px solid #ccc;color:#999;font-size:12px}
+      @media print{body{margin:12mm}.noprint{display:none}}
+      .btnbar{margin:16px 0}
+      .btnbar button{font-size:14px;padding:8px 16px;margin-right:8px;cursor:pointer;border:1px solid #0a1228;background:#0a1228;color:#fff;border-radius:6px}
+    </style></head><body>
+    <header><h1>Songs still needed</h1><div class="sub">${escHtml(coupleName)}${dateStr?' · '+dateStr:''}</div></header>
+    <div class="btnbar noprint"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>
+    <div class="summary"><b>${totalMissing}</b> song${totalMissing===1?'':'s'} not found in your library, across ${(WED.blocks||[]).filter(b=>(b.songs||[]).some(s=>!chosenFor(s))).length} playlist(s). Search these in your music provider.</div>
+    ${blocksHtml}
+    <footer>Generated by Spinlist · ${new Date().toLocaleDateString('en-GB')}</footer>
+    </body></html>`);
+  w.document.close();
+}
+// Minimal HTML escaper for the report window (separate doc, so esc() isn't in scope there).
+function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function renderResults(){
+  const el=document.getElementById('results');
+  // Setup mode (no wedding): show a library summary instead of match results.
+  if(SETUP){
+    if(!LIB.length){ el.innerHTML='<div class="panel"><p class="status">No music loaded yet. Set up your library with the Mac app (or import a library file) above.</p></div>'; return; }
+    const vids=LIB.filter(t=>t.video).length;
+    el.innerHTML='<div class="panel"><h2 style="margin-top:0">Your music library</h2>'+
+      '<p class="lead"><b>'+LIB.length.toLocaleString()+'</b> tracks saved'+(vids?(' · <b>'+vids+'</b> music videos 🎬'):'')+'.</p>'+
+      '<p class="lead" style="font-size:.9rem;color:var(--muted)">This library is used automatically when you open Prep inside a wedding. Rescan to pick up new music, or forget it to start over.</p></div>';
+    return;
+  }
+  if(!WED){ el.innerHTML='<p class="status">Loading wedding…</p>'; return; }
+  const blocks=(WED.blocks||[]).filter(b=>(b.songs||[]).length);
+  if(!blocks.length){ el.innerHTML='<div class="panel"><p class="status">This wedding has no song requests yet.</p></div>'; return; }
+  if(!LIB.length){ el.innerHTML='<div class="panel"><p class="status">Load your music above to see matches.</p></div>'; return; }
+
+  let totReq=0,totFound=0;
+  const html=blocks.map(b=>{
+    const rows=(b.songs||[]).map(s=>{
+      const cf=chosenFor(s); totReq++; if(cf)totFound++;
+      return {s,cf};
+    });
+    const found=rows.filter(r=>r.cf).length;
+    const songHtml=rows.map((r,ri)=>{
+      const key=songKey(r.s);
+      if(!r.cf){
+        const copyText=(r.s.title||'')+(r.s.artist?' '+r.s.artist:'');
+        return `<div class="song">
+          <span></span>
+          <span class="dot miss"></span>
+          <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
+          <span class="pickwrap"><span class="pill miss">not found</span><button class="findbtn" title="Copy title &amp; artist to search your music provider" onclick="copySong(this,'${esc(copyText.replace(/'/g,"\\'"))}')">📋 Copy</button><button class="findbtn" onclick="findFile('${esc(key)}')">📂 Find file</button></span>
+        </div>`;
+      }
+      const {chosen,cands,remembered,manual}=r.cf;
+      const vidBadge = (chosen && chosen.track && chosen.track.video) ? '<span class="pill vid" title="Music video">🎬 video</span>' : '';
+      // Build a dropdown of all candidate versions if more than one.
+      let picker;
+      if(manual){
+        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((chosen.track.artist?chosen.track.artist+' - ':'')+(chosen.track.title||''))}</span><span class="pill ok" style="margin-left:6px">chosen</span>`;
+      }else if(cands.length>1){
+        const opts=cands.map(c=>{
+          const val=(c.track.title||'').trim().toLowerCase()+'|'+(c.track.artist||'').trim().toLowerCase();
+          // Derive title with filename fallback.
+          const fname=c.track.path?c.track.path.split(/[\\/]/).pop():'';
+          const base=fname.replace(/\.[^.]+$/,'');
+          const fnParts=base.split(' - ');
+          let art=c.track.artist||''; if(!art && fnParts.length>=2)art=fnParts[0].trim(); if(!art)art=r.s.artist||'';
+          let ti=c.track.title||''; if(!ti)ti=(fnParts.length>=2?fnParts.slice(1).join(' - '):base).trim();
+          const short=(s,n)=>{ s=(s||'').trim(); return s.length>n?s.slice(0,n-1).trim()+'…':s; };
+          // Videos: "director - title" (fall back to artist if no director). Audio: "artist - title".
+          let who = c.track.video ? (c.track.director || art) : art;
+          const prefix = c.track.video ? '🎬 ' : '';
+          let label = prefix + short((who?who+' - ':'')+ti, 54);
+          const sel=(c===chosen)?'selected':'';
+          return `<option value="${esc(val)}" ${sel}>${esc(label)}</option>`;
+        }).join('');
+        picker=`<select class="verpick" data-key="${esc(key)}" onchange="pickVersion(this)">${opts}</select>${remembered?'<span class="pill ok" style="margin-left:6px">saved</span>':`<span class="stat" style="margin-left:6px">${cands.length} versions</span>`}`;
+      }else{
+        const fname=chosen.track.path?chosen.track.path.split(/[\\/]/).pop():'';
+        const base=fname.replace(/\.[^.]+$/,'');
+        const fnParts=base.split(' - ');
+        let art=chosen.track.artist||''; if(!art && fnParts.length>=2)art=fnParts[0].trim(); if(!art)art=r.s.artist||'';
+        let ti=chosen.track.title||''; if(!ti)ti=(fnParts.length>=2?fnParts.slice(1).join(' - '):base).trim();
+        // Videos: director (or artist fallback). Audio: artist.
+        let who = chosen.track.video ? (chosen.track.director || art) : art;
+        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((who?who+' - ':'')+ti)}</span>`;
+      }
+      const excluded = EXCLUDED[key];
+      // Build a preview link: open the requested song so the DJ can confirm the match.
+      const previewBtn = previewLink(r.s)
+        ? `<button class="findbtn" title="Preview the requested song to check the match" onclick="previewSong('${esc(key)}')">▶</button>`
+        : '';
+      return `<div class="song" style="${excluded?'opacity:.5':''}">
+        <label class="incbox" title="Untick to leave this song out of the exported playlist" style="display:flex;align-items:center;cursor:pointer">
+          <input type="checkbox" ${excluded?'':'checked'} onchange="toggleExclude('${esc(key)}',this)" style="width:15px;height:15px;cursor:pointer">
+        </label>
+        <span class="dot ok"></span>
+        <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
+        <span class="pickwrap">${picker}${vidBadge}${previewBtn}<button class="findbtn" title="Choose a different file" onclick="findFile('${esc(key)}')">📂</button></span>
+      </div>`;
+    }).join('');
+    // Count how many songs in this block the DJ doesn't own (for the copy-all button).
+    const missingCount=(b.songs||[]).filter(s=>!chosenFor(s)).length;
+    return `<div class="block">
+      <div class="bhead" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+        <div><h3>${esc(b.name||'Block')}</h3><div class="meta">${found} of ${rows.length} matched</div></div>
+        <span style="display:flex;gap:8px">
+          ${missingCount?`<button class="btn ghost" title="Copy the ${missingCount} song${missingCount===1?'':'s'} you don't have, to search your music provider" onclick="event.stopPropagation();copyAllMissing('${b.id}',this)">📋 Copy ${missingCount} missing</button>`:''}
+          ${libPathsAreRelative()?'':`<button class="btn ghost" onclick="event.stopPropagation();exportBlock('${b.id}')" ${found?'':'disabled'}>Export .m3u</button>`}
+        </span>
+      </div>
+      <div class="body">${songHtml}</div>
+    </div>`;
+  }).join('');
+
+  const pathsRelative = libPathsAreRelative();
+  const exportArea = pathsRelative
+    ? `<div class="panel" style="border-color:rgba(255,180,80,.4);background:rgba(255,180,80,.08);margin-bottom:10px">
+         <p style="margin:0 0 6px;font-size:.9rem;color:#ffcf8a"><b>Playlist export needs the desktop app.</b></p>
+         <p style="margin:0;font-size:.84rem;color:#e8ecf5">This library was scanned in the browser, which — for privacy — can't see your files' full folder locations. DJ software needs those full paths, so a playlist exported from here would import empty. To export working .m3u playlists, set up your library with the <b>Spinlist desktop app</b> (it reads the real file locations), then come back here. The matches below are still accurate to use as a reference.</p>
+       </div>`
+    : `<div class="row" style="margin-bottom:10px;gap:14px;align-items:center">
+         <button class="btn" onclick="exportAll()" ${totFound?'':'disabled'}>⬇ Export all blocks (.m3u each)</button>
+         ${(totReq-totFound)>0?`<button class="btn ghost" onclick="copyAllMissingWedding(this)">📋 Copy all ${totReq-totFound} missing</button>`:''}
+         ${(totReq-totFound)>0?`<button class="btn ghost" onclick="printMissingReport()">🖨️ Report of missing songs</button>`:''}
+         <label class="note" style="margin:0;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${PLAIN_M3U?'checked':''} onchange="togglePlainM3U(this)" style="width:15px;height:15px"> Plain paths only (if your DJ software won't import)</label>
+       </div>`;
+  el.innerHTML=`<h2>Matches <span class="stat">(${totFound} of ${totReq} requests found in your library)</span></h2>
+    ${exportArea}
+    ${html}`;
+}
+// The DJ picked a specific version from the dropdown — remember it across weddings.
+async function pickVersion(sel){
+  const key=sel.dataset.key;
+  const val=sel.value;                         // "rawtitle|rawartist" (lowercased)
+  const t=LIB.find(x=>(x.title||'').trim().toLowerCase()+'|'+(x.artist||'').trim().toLowerCase()===val);
+  if(t){ await savePick(key,{title:t.title,artist:t.artist}); renderResults(); }
+}
+// "Find file" — the DJ browses to the exact file for a song; remembered across weddings.
+let _findKey=null;
+function findFile(key){ _findKey=key; document.getElementById('find-file-input').value=''; document.getElementById('find-file-input').click(); }
+document.getElementById('find-file-input').onchange=async(e)=>{
+  const f=e.target.files[0]; if(!f||!_findKey)return;
+  let title='',artist='';
+  try{ const tags=await readTags(f); title=(tags.title||'').trim(); artist=(tags.artist||'').trim(); }catch(_){}
+  if(!title){ const base=f.name.replace(/\.[^.]+$/,''); const parts=base.split(' - '); if(parts.length>=2){artist=artist||parts[0].trim();title=parts.slice(1).join(' - ').trim();} else title=base.trim(); }
+  const path=f.webkitRelativePath||f.name;
+  // Add to the in-memory library so it exports + shows immediately.
+  LIB.push({title,artist,path}); invalidateLibIndex();
+  // Remember as a MANUAL pick keyed to the song (by filename, so a rescan re-finds it).
+  await savePick(_findKey, {manual:true, title, artist, name:f.name, path});
+  _findKey=null;
+  renderResults();
+};
+
+function isAbsolutePath(p){ return /^([a-zA-Z]:[\\/]|\/|\\\\)/.test(p||''); }   // /unix, C:\win, \\unc
+// Extended M3U (default) — #EXTINF metadata + full path. Works in Serato, rekordbox, Traktor.
+function m3uForBlock(b, plain){
+  let out = plain ? '' : '#EXTM3U\n';
+  (b.songs||[]).forEach(s=>{
+    if(isExcluded(s)) return;                 // DJ ticked this song off
+    const cf=chosenFor(s);
+    if(cf && cf.chosen.track.path){
+      if(plain){ out+=`${cf.chosen.track.path}\n`; }
+      else { out+=`#EXTINF:-1,${(cf.chosen.track.artist||'')} - ${cf.chosen.track.title||''}\n${cf.chosen.track.path}\n`; }
+    }
+  });
+  return out;
+}
+// True if the current library has only relative paths (i.e. built by a browser folder scan,
+// which can't see absolute paths). Such M3Us won't resolve in DJ software.
+function libPathsAreRelative(){
+  const withPath=LIB.filter(t=>t.path);
+  if(!withPath.length) return false;
+  const abs=withPath.filter(t=>isAbsolutePath(t.path)).length;
+  return abs < withPath.length*0.5;   // majority are relative
+}
+function download(name,text){
+  try{
+    const blob=new Blob([text],{type:'audio/x-mpegurl'});
+    // Safari (esp. older) supports the download attribute inconsistently; use msSaveBlob if present,
+    // otherwise an object URL with a delayed revoke so Safari has time to start the download.
+    if(window.navigator && window.navigator.msSaveOrOpenBlob){ window.navigator.msSaveOrOpenBlob(blob,name); return; }
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=name; a.rel='noopener'; a.style.display='none';
+    document.body.appendChild(a);
+    a.click();
+    // Keep the element + URL alive briefly so Safari completes the download, then clean up.
+    setTimeout(()=>{ try{ document.body.removeChild(a); }catch(_){} URL.revokeObjectURL(url); }, 4000);
+  }catch(e){
+    // Last-resort fallback: open the playlist as text so the DJ can save it manually.
+    try{ const w=window.open('','_blank'); if(w){ w.document.title=name; w.document.body.innerText=text; } }catch(_){}
+  }
+}
+function safeName(s){ return (s||'block').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'-'); }
+let PLAIN_M3U=false;   // toggled by the DJ if their software prefers paths-only
+function togglePlainM3U(cb){ PLAIN_M3U=!!cb.checked; }
+function exportBlock(id){
+  const b=(WED.blocks||[]).find(x=>x.id===id); if(!b)return;
+  download(safeName(WED.coupleNames||WED.name)+' - '+safeName(b.name)+'.m3u', m3uForBlock(b, PLAIN_M3U));
+}
+function exportAll(){
+  // Safari blocks downloads not tied to the click gesture, so fire them synchronously
+  // within this handler (no setTimeout) — most browsers allow a short burst this way.
+  const blocks=(WED.blocks||[]).filter(b=>(b.songs||[]).length);
+  blocks.forEach(b=>exportBlock(b.id));
+  if(blocks.length>1){ showLibStatus('Exported '+blocks.length+' playlists. If your browser only saved one, allow multiple downloads for this site, or use each block\u2019s own “Export .m3u”.'); }
+}
+
+/* ---------- load wedding ---------- */
+async function loadWed(){
+  // Setup mode: no wedding — just manage the library.
+  if(SETUP){
+    document.getElementById('wed-name').textContent='music library setup';
+    document.title='Music library · Spinlist';
+    const lead=document.getElementById('intro-lead'); if(lead)lead.textContent='Set up your music library once here — download the Spinlist Mac app to scan your music, or import a library file from your DJ app. It\u2019s saved to your account and used automatically whenever you open Prep inside a wedding. Your music files stay on your computer — we only save the track list and file locations, never the songs themselves.';
+    try{ await loadPicks(); }catch(e){}
+    const hadSaved=await loadSavedLibrary();
+    renderResults();
+    if(hadSaved){ showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
+    return;
+  }
+  // Event mode: a regular (non-wedding) voting event — match its voted songs against the library.
+  if(EID){
+    document.getElementById('results').innerHTML='<div class="panel"><p class="status">Loading your library and this event\u2019s songs…</p></div>';
+    try{
+      const [evRes] = await Promise.all([
+        fetch('/api/events/'+encodeURIComponent(EID),{credentials:'same-origin'}),
+        loadPicks(),
+        loadSavedLibrary().then(h=>{ window.__hadSaved=h; })
+      ]);
+      if(evRes.status===401||evRes.status===403){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Please <a href="/">log in</a> and open Prep from your events.</p></div>'; return; }
+      const d=await evRes.json();
+      const ev=d.event;
+      if(!ev){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the event.</p></div>'; return; }
+      // Adapt the event's voted tracks into the same shape Prep expects: one block of songs.
+      const songs=(ev.tracks||[]).map(t=>({ id:t.id, uri:t.uri, title:t.title, artist:t.artist, art:t.art, played:t.played?1:0 }));
+      WED={ id:ev.id, name:ev.name, coupleNames:'', blocks:[{ id:'all', name:'Requested songs', songs }] };
+      document.getElementById('wed-name').textContent=ev.name||'event';
+      document.title='Prep · '+(ev.name||'Spinlist');
+      const lead=document.getElementById('intro-lead'); if(lead)lead.textContent='Match the songs your guests voted for against your own music library, then export a playlist (.m3u) to drop straight into your DJ software.';
+      renderResults();
+      if(window.__hadSaved){ showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
+    }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the event.</p></div>'; }
+    return;
+  }
+  if(!WID){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">No event specified. Open Prep from an event or wedding in your planner.</p></div>'; return; }
+  document.getElementById('results').innerHTML='<div class="panel"><p class="status">Loading your library and this wedding\u2019s songs…</p></div>';
+  try{
+    // Fetch the wedding, remembered picks, and saved library all at once (not one-after-another).
+    const [wedRes] = await Promise.all([
+      fetch('/api/weddings/'+encodeURIComponent(WID),{credentials:'same-origin'}),
+      loadPicks(),
+      loadSavedLibrary().then(h=>{ window.__hadSaved=h; })
+    ]);
+    if(wedRes.status===401||wedRes.status===403){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Please <a href="/">log in</a> and open Prep from your planner.</p></div>'; return; }
+    const d=await wedRes.json();
+    WED=d.wedding;
+    document.getElementById('wed-name').textContent=WED.coupleNames||WED.name||'wedding';
+    document.title='Prep · '+(WED.coupleNames||WED.name||'Spinlist');
+    renderResults();
+    if(window.__hadSaved){ showLibStatus('Using your saved library ('+LIB.length+' tracks).'); }
+    // If we remembered a folder from a previous session, offer a one-click rescan.
+    try{
+      const saved=await idbGet('dirHandle');
+      if(saved){ DIR_HANDLE=saved; showRescan(saved.name); }
+    }catch(e){}
+  }catch(e){ document.getElementById('results').innerHTML='<div class="panel"><p class="status">Could not load the wedding.</p></div>'; }
+}
+// Wire the Mac + Windows download buttons (setup panel).
+(function(){
+  const macBtn=document.getElementById('mac-app-btn');
+  const winBtn=document.getElementById('win-app-btn');
+  const note=document.getElementById('mac-app-note');
+  function wire(btn,url){
+    if(!btn)return;
+    if(url){ btn.href=url; btn.target='_blank'; btn.rel='noopener'; }
+    else { btn.href='#'; btn.style.opacity='.5'; btn.onclick=(e)=>{e.preventDefault();}; }
+  }
+  wire(macBtn, MAC_APP_URL);
+  wire(winBtn, WIN_APP_URL);
+  if(note){
+    note.innerHTML =
+      '<b>Mac:</b> '+(MAC_APP_URL?'open the .dmg and drag Spinlist Music Manager into Applications, then open it — no security warning.':'coming soon.')
+      +'<br><b>Windows:</b> '+(WIN_APP_URL?'run the installer; if Windows shows a “protected your PC” notice, click More info → Run anyway.':'coming soon.');
+  }
+})();
+loadWed();
+// Let Safari users know folder scanning is slower there (Safari lacks the fast file API).
+(function(){
+  const isSafari=/^((?!chrome|android|crios|edg).)*safari/i.test(navigator.userAgent);
+  if(isSafari){ const n=document.getElementById('safari-note'); if(n){ n.style.display='block';
+    n.textContent='Note: Safari reads folders more slowly than Chrome or Edge (Apple doesn’t support the fast file API). A big library can take a while the first time — but once scanned it’s saved to your account, so you won’t need to rescan.'; } }
+})();
+</script>
+</body>
+</html>
