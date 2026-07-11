@@ -356,6 +356,26 @@
   </div>
 </div>
 
+<!-- LOGIN / SIGN-UP MODAL (so people can sign in without leaving the homepage) -->
+<div id="auth-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card" style="max-width:420px">
+    <button class="btn btn-ghost" onclick="closeAuth()" style="position:absolute;top:12px;right:12px;padding:4px 10px">×</button>
+    <h3 id="auth-title" style="margin:0 0 4px;font-size:1.4rem">Welcome back</h3>
+    <p id="auth-sub" style="color:var(--ink-2);margin:0 0 18px;font-size:.92rem">Log in to manage your events.</p>
+    <div id="auth-err" style="display:none;background:rgba(255,107,94,.12);border:1px solid var(--coral);color:var(--coral);padding:10px 12px;border-radius:8px;font-size:.85rem;margin-bottom:12px"></div>
+    <div id="name-row" style="display:none">
+      <label style="display:block;font-size:.85rem;font-weight:600;margin-bottom:4px">Name</label>
+      <input id="a-name" placeholder="Your name" style="width:100%;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--paper-2);color:var(--ink);font:inherit;margin-bottom:12px">
+    </div>
+    <label style="display:block;font-size:.85rem;font-weight:600;margin-bottom:4px">Email</label>
+    <input id="a-email" type="email" placeholder="you@email.com" style="width:100%;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--paper-2);color:var(--ink);font:inherit;margin-bottom:12px">
+    <label style="display:block;font-size:.85rem;font-weight:600;margin-bottom:4px">Password</label>
+    <input id="a-pass" type="password" placeholder="At least 8 characters" onkeydown="if(event.key==='Enter')submitAuth()" style="width:100%;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--paper-2);color:var(--ink);font:inherit;margin-bottom:16px">
+    <button class="btn btn-neon" style="width:100%;justify-content:center" id="auth-submit" onclick="submitAuth()">Log in</button>
+    <div class="switch" id="auth-switch" style="text-align:center;margin-top:14px;font-size:.88rem;color:var(--muted)"></div>
+  </div>
+</div>
+
 <!-- PLAYLIST EXPORT MODAL (Studio) -->
 <div id="export-modal" class="modal-overlay" style="display:none">
   <div class="modal-card" style="max-width:500px">
@@ -480,7 +500,7 @@ function updateTrialBanner(){
 async function createSpinlistEvent(){
  try{
   // Hosts must be signed in. Guests never see this screen.
-  if(!ME){toast('Please sign in to create an event');setTimeout(()=>location.href='/pricing.html',900);return;}
+  if(!ME){toast('Please sign in to create an event');setTimeout(()=>openAuth('login'),700);return;}
   const name=document.getElementById('f-name').value.trim()||'Untitled Event';
   const type=document.getElementById('f-type').value;
   const host=document.getElementById('f-host').value.trim()||'Your host';
@@ -536,7 +556,7 @@ let eventsView='active';   // 'active' | 'archived'
 function setEventsView(v){eventsView=v;renderEvents();}
 async function renderEvents(){
   const el=document.getElementById('events-list');
-  if(!ME){el.innerHTML='<div class="empty"><p>Please <a href="/pricing.html" style="color:var(--plum);font-weight:700">sign in</a> to see your events.</p></div>';return;}
+  if(!ME){el.innerHTML='<div class="empty"><p>Please <a onclick="openAuth(\'login\')" style="color:var(--plum);font-weight:700;cursor:pointer">sign in</a> to see your events.</p></div>';return;}
   const isSub=!!ME.isSubDj, isOwner=!!ME.multiOp;
   // Hide the create button + adjust header for sub-DJs.
   const newBtn=document.getElementById('new-event-btn');if(newBtn)newBtn.style.display=isSub?'none':'';
@@ -1633,12 +1653,47 @@ async function loadMe(){
   try{const r=await fetch('/api/me');const d=await r.json();ME=d.user;window.__myBranding=d.branding||null;window.__me=d;}catch(e){ME=null;}
   renderAcctNav();
 }
+// Login / sign-up modal — lets people authenticate without leaving the homepage.
+let authMode='login';
+function openAuth(m){
+  authMode=(m==='signup')?'signup':'login';
+  document.getElementById('auth-err').style.display='none';
+  document.getElementById('name-row').style.display=authMode==='signup'?'block':'none';
+  document.getElementById('auth-title').textContent=authMode==='signup'?'Create your host account':'Welcome back';
+  document.getElementById('auth-sub').textContent=authMode==='signup'?'Free to start. Upgrade any time.':'Log in to manage your events.';
+  document.getElementById('auth-submit').textContent=authMode==='signup'?'Create account':'Log in';
+  document.getElementById('auth-switch').innerHTML=authMode==='signup'
+    ?`Already have an account? <a onclick="openAuth('login')" style="color:var(--plum);cursor:pointer;font-weight:600">Log in</a>`
+    :`New here? <a onclick="openAuth('signup')" style="color:var(--plum);cursor:pointer;font-weight:600">Create an account</a>`;
+  document.getElementById('auth-modal').style.display='flex';
+  setTimeout(()=>{const f=document.getElementById(authMode==='signup'?'a-name':'a-email');if(f)f.focus();},50);
+}
+function closeAuth(){document.getElementById('auth-modal').style.display='none';}
+async function submitAuth(){
+  const email=document.getElementById('a-email').value.trim();
+  const password=document.getElementById('a-pass').value;
+  const name=document.getElementById('a-name').value.trim();
+  const err=document.getElementById('auth-err');
+  const btn=document.getElementById('auth-submit');
+  const ep=authMode==='signup'?'/api/auth/signup':'/api/auth/login';
+  btn.disabled=true;const orig=btn.textContent;btn.textContent='Please wait…';
+  try{
+    const r=await fetch(ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,name})});
+    const d=await r.json();
+    if(!r.ok){err.textContent=d.error||'Something went wrong.';err.style.display='block';return;}
+    ME=d.user;window.__me=d;window.__myBranding=d.branding||null;
+    closeAuth();
+    renderAcctNav();
+    if(typeof renderEvents==='function')renderEvents();
+  }catch(e){ err.textContent='Network error — please try again.';err.style.display='block'; }
+  finally{ btn.disabled=false;btn.textContent=orig; }
+}
 function planLabel(p){return p==='none'||!p?'no plan':p;}
 function renderAcctNav(){
   const el=document.getElementById('acct-nav');if(!el)return;
   // Set the name/plan FIRST (this replaces acct-nav's contents)...
   if(ME){el.innerHTML=`<a href="/account.html" style="color:var(--ink);text-decoration:none;display:flex;flex-direction:column;align-items:flex-end;line-height:1.15"><span>${esc(ME.name||ME.email.split('@')[0])}</span><span style="font-size:.7rem;font-weight:600;color:var(--muted)">${esc(ME.planName||planLabel(ME.plan))}</span></a>`;}
-  else{el.innerHTML=`<a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a href="/pricing.html" style="color:var(--plum);text-decoration:none;font-weight:700">Sign in</a>`;}
+  else{el.innerHTML=`<a href="/pricing.html" style="color:var(--ink);text-decoration:none">Plans</a> <a onclick="openAuth('login')" style="color:var(--plum);text-decoration:none;font-weight:700;cursor:pointer">Sign in</a>`;}
   // ...THEN inject the menu extras + the bell (so the bell isn't wiped out).
   renderMainNavExtras();
 }
