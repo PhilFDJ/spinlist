@@ -1158,6 +1158,18 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
     return res.status(423).json({ error: 'Song choices are locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
   }
   const songs = Array.isArray((req.body || {}).songs) ? req.body.songs : [];
+  // Enforce the block's capacity HERE, not just in the browser. The UI blocks a
+  // full block, but a stale page, a double-submit or a second device could
+  // otherwise push a "First Dance" block (capacity 1) well past its limit.
+  const target = (w.blocks || []).find(b => b.id === req.params.blockId);
+  if (!target) return res.status(404).json({ error: 'Block not found.' });
+  const cap = Math.max(1, parseInt(target.capacity, 10) || 1);
+  if (songs.length > cap) {
+    return res.status(400).json({
+      error: `That block holds ${cap} song${cap === 1 ? '' : 's'} — you sent ${songs.length}.`,
+      capacity: cap,
+    });
+  }
   const updated = db.setWeddingBlockSongs(w.id, req.params.blockId, songs);
   const blk = (updated.blocks || []).find(b => b.id === req.params.blockId);
   notifyCoupleActivity(w, req.user, 'songs', `updated songs${blk ? ' in “' + blk.name + '”' : ''}`);
