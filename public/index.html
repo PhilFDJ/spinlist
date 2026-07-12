@@ -975,6 +975,49 @@ function startCountdown(){
   }
   tick();cdTimer=setInterval(tick,1000);
 }
+/* Show everyone who requested a song. Click/tap rather than hover, so it works
+   on the phone or tablet a DJ actually has in the booth. */
+function showRequesters(trackId,ev){
+  if(ev){ev.stopPropagation();ev.preventDefault();}
+  const t=EVENT&&EVENT.tracks&&EVENT.tracks[trackId];
+  if(!t)return;
+  const reqs=(t.requesters||[]).filter(r=>r.name||r.nationality);
+  if(!reqs.length)return;
+  closeRequesters();
+
+  const rows=reqs.map((r,i)=>{
+    const nm=esc(r.name||'Guest');
+    const nat=r.nationality?`<span style="color:var(--muted);font-size:.8rem"> · ${esc(r.nationality)}</span>`:'';
+    return `<div style="padding:7px 0;border-top:${i?'1px solid var(--line)':'0'};font-size:.9rem">${nm}${nat}</div>`;
+  }).join('');
+
+  const box=document.createElement('div');
+  box.id='req-pop';
+  box.innerHTML=`
+    <div style="position:fixed;inset:0;background:rgba(4,8,20,.6);z-index:120" onclick="closeRequesters()"></div>
+    <div role="dialog" aria-label="Requested by" style="position:fixed;z-index:121;left:50%;top:50%;transform:translate(-50%,-50%);
+         width:min(340px,calc(100vw - 40px));max-height:70vh;overflow:auto;background:var(--surface);
+         border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:0 30px 80px -30px rgba(0,0,0,.8)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div>
+          <div style="font-weight:800;font-size:1rem">Requested by</div>
+          <div style="color:var(--muted);font-size:.8rem;margin-top:2px">${esc(t.title)} — ${esc(t.artist)}</div>
+        </div>
+        <button type="button" onclick="closeRequesters()" style="background:none;border:0;color:var(--muted);font-size:1.3rem;line-height:1;cursor:pointer;padding:0 2px">×</button>
+      </div>
+      <div style="color:var(--plum);font-size:.78rem;font-weight:700;margin:10px 0 2px">${reqs.length} ${reqs.length===1?'person':'people'}</div>
+      ${rows}
+    </div>`;
+  document.body.appendChild(box);
+  document.addEventListener('keydown',reqEsc);
+}
+function closeRequesters(){
+  const b=document.getElementById('req-pop');
+  if(b)b.remove();
+  document.removeEventListener('keydown',reqEsc);
+}
+function reqEsc(e){ if(e.key==='Escape')closeRequesters(); }
+
 function renderLeaderboard(target){
   const list=sortTracks();const max=list.reduce((m,t)=>Math.max(m,t.votes),1);
   window.__ht=window.__ht||{};
@@ -982,6 +1025,8 @@ function renderLeaderboard(target){
     window.__ht[t.id]=t;
     const played=!!t.played;
     // Build a "requested by" line from unique requester names/nationalities.
+    // Tap/click it to reveal the FULL list — "+82 more" on its own is useless
+    // if you actually want to know who asked.
     let reqLine='';
     const reqs=(t.requesters||[]).filter(r=>r.name||r.nationality);
     if(reqs.length){
@@ -990,8 +1035,14 @@ function renderLeaderboard(target){
         return r.nationality?`${esc(nm)} (${esc(r.nationality)})`:esc(nm);
       });
       const shown=labels.slice(0,3).join(', ');
-      const extra=labels.length>3?` +${labels.length-3} more`:'';
-      reqLine=`<div style="font-size:.78rem;color:var(--plum);margin-top:3px">🙋 ${shown}${extra}</div>`;
+      if(labels.length>3){
+        const more=labels.length-3;
+        reqLine=`<div class="req-line" style="font-size:.78rem;color:var(--plum);margin-top:3px">
+          🙋 ${shown} <button type="button" class="req-more" onclick="showRequesters('${esc(t.id)}',event)" style="background:none;border:0;color:var(--plum);font:inherit;font-size:.78rem;font-weight:700;text-decoration:underline;cursor:pointer;padding:0">+${more} more</button>
+        </div>`;
+      }else{
+        reqLine=`<div class="req-line" style="font-size:.78rem;color:var(--plum);margin-top:3px">🙋 ${shown}</div>`;
+      }
     }
     return `<div class="rank" style="${played?'opacity:.55':''}">
       <div class="pos">${sortMode==='voted'?(i+1):'•'}</div>
