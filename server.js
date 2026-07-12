@@ -2656,6 +2656,19 @@ const ANALYTICS_SALT = process.env.ANALYTICS_SALT || crypto.randomBytes(16).toSt
 function todayKey() {
   return new Date().toISOString().slice(0, 10);   // "2026-07-11"
 }
+// Hour of day in UK time (not UTC), so "peak at 8pm" means 8pm to you and
+// doesn't shift by an hour when the clocks change.
+function ukHourNow() {
+  try {
+    const h = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London', hour: 'numeric', hour12: false,
+    }).format(new Date());
+    const n = parseInt(h, 10);
+    return (n >= 0 && n <= 23) ? n : new Date().getUTCHours();
+  } catch (_) {
+    return new Date().getUTCHours();
+  }
+}
 function visitorHashFor(req, dayKey) {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   const ua = req.headers['user-agent'] || '';
@@ -2676,7 +2689,7 @@ app.post('/api/track', (req, res) => {
     // Keep paths clean and bounded: strip query/hash, cap length.
     path = path.split('?')[0].split('#')[0].slice(0, 80) || '/';
     const day = todayKey();
-    db.recordView(day, path, visitorHashFor(req, day));
+    db.recordView(day, path, visitorHashFor(req, day), ukHourNow());
   } catch (_) { /* never let analytics break a page */ }
   res.status(204).end();
 });

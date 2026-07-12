@@ -178,11 +178,39 @@ async function loadAnalytics(){
         <b style="color:var(--neon);flex:none">${p.views}</b>
       </div>`).join('') || '<p style="color:var(--muted);font-size:.85rem;margin-top:8px">No page views recorded yet.</p>';
 
-    // A single bar tells you nothing, so skip the chart on the Today view.
+    // A single bar tells you nothing, so skip the daily chart on the Today view.
     const single = String(days)==='1';
     const chart = single ? '' : `
       <div style="display:flex;align-items:flex-end;gap:2px;height:90px;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;padding:8px">${bars}</div>
       <p style="font-size:.72rem;color:var(--muted);margin-top:6px">Daily page views (hover a bar for detail)</p>`;
+
+    // ---- Peak times: views by hour of day (UK time) ----
+    const hours=d.hours||[];
+    const hMax=Math.max(1,...hours);
+    const hasHourData=hours.some(n=>n>0);
+    const fmtHour=h=>{
+      if(h===0)return '12am'; if(h===12)return '12pm';
+      return h<12?`${h}am`:`${h-12}pm`;
+    };
+    const hourBars=hours.map((n,h)=>{
+      const ht=Math.round((n/hMax)*100);
+      // Label every 3rd hour so the axis stays readable.
+      const lab=(h%3===0)?`<div style="font-size:.6rem;color:var(--muted);text-align:center;margin-top:3px">${fmtHour(h)}</div>`:'<div style="height:12px"></div>';
+      return `<div title="${fmtHour(h)}: ${n} view${n===1?'':'s'}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end">
+                <div style="height:${ht}%;background:${n?'var(--plum)':'var(--line)'};border-radius:3px 3px 0 0;min-height:2px"></div>
+                ${lab}
+              </div>`;
+    }).join('');
+    const peakLine=(d.peakHour!==null&&d.peakHour!==undefined&&hasHourData)
+      ? `<p style="font-size:.8rem;color:var(--ink-2);margin-top:8px">Busiest around <b style="color:var(--plum)">${fmtHour(d.peakHour)}</b></p>`
+      : '';
+    const hourChart = hasHourData ? `
+      <h3 style="margin:20px 0 8px;font-size:1rem">Peak times</h3>
+      <div style="display:flex;align-items:flex-end;gap:1px;height:100px;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;padding:8px 8px 4px">${hourBars}</div>
+      ${peakLine}
+      <p style="font-size:.7rem;color:var(--muted);margin-top:2px">Views by hour of day (UK time)</p>`
+      : `<h3 style="margin:20px 0 6px;font-size:1rem">Peak times</h3>
+         <p style="color:var(--muted);font-size:.85rem">No hourly data yet — this starts collecting from now on.</p>`;
 
     box.innerHTML=`
       <div style="display:flex;gap:28px;flex-wrap:wrap;margin:14px 0 18px">
@@ -190,7 +218,8 @@ async function loadAnalytics(){
         <div><div style="font-size:2rem;font-weight:800;color:var(--ink);line-height:1">${d.uniqueVisitors||0}</div><div style="font-size:.78rem;color:var(--muted)">unique visitors${single?' today':''}</div></div>
       </div>
       ${chart}
-      <h3 style="margin:${single?'4px':'18px'} 0 2px;font-size:1rem">Top pages${single?' today':''}</h3>
+      ${hourChart}
+      <h3 style="margin:20px 0 2px;font-size:1rem">Top pages${single?' today':''}</h3>
       ${pages}
       <p style="font-size:.72rem;color:var(--muted);margin-top:12px">No cookies or personal data are stored. Visitors are counted with a hash that resets daily, and bots are filtered out.</p>
     `;
