@@ -811,8 +811,31 @@ app.post('/api/events/:id/vote', (req, res) => {
   const add = Array.isArray(b.add) ? b.add.filter(t => t && t.id && t.title && !(e.tracks[t.id] && e.tracks[t.id].played)).slice(0, 50) : [];
   const remove = Array.isArray(b.remove) ? b.remove.filter(x => typeof x === 'string').slice(0, 50) : [];
   const guest = (b.guest && typeof b.guest === 'object') ? { name: b.guest.name, nationality: b.guest.nationality } : null;
-  const updated = db.applyVotes(e.id, { add, remove, guest });
-  res.json({ event: publicEvent(updated) });
+  // Enforce the per-guest vote cap HERE, on the server. The browser also tracks
+  // it for a snappy UI, but a refresh used to reset that and hand out fresh
+  // votes — so the server is the only place it can actually be trusted.
+  const updated = db.applyVotes(e.id, {
+    add, remove, guest,
+    guestId,
+    votesPer: e.votes_per || 5,
+  });
+  const rejected = updated._rejected || 0;
+  const payload = { event: publicEvent(updated), myVotes: updated._myVotes || [] };
+  if (rejected) {
+    payload.rejected = rejected;
+    payload.message = 'You have used all your votes — remove one to vote for something else.';
+  }
+  res.json(payload);
+});
+
+// What has this guest already voted for? Called on load so a returning or
+// refreshing guest sees their real remaining votes rather than a fresh
+// (and wrong) full allocation.
+app.get('/api/events/:id/my-votes', (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  const guestId = (req.query.guestId || '').toString().slice(0, 64);
+  res.json({ myVotes: db.guestVotesFor(e.id, guestId), votesPer: e.votes_per || 5 });
 });
 
 // Shape an event for public/guest consumption (full track list).

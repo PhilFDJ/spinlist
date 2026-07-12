@@ -798,8 +798,17 @@ async function toggleVote(track){
       else toast(d.error||'Vote failed');
       return;
     }
-    // update local mirror of my votes + the shared tally from the server
-    if(myVotes[id])delete myVotes[id]; else myVotes[id]=track;
+    // Trust the SERVER's view of what this guest has voted for — it's the only
+    // place the cap is truly enforced. If it rejected the vote (out of votes),
+    // say so rather than showing a vote that didn't actually happen.
+    if(Array.isArray(d.myVotes)){
+      const next={};
+      d.myVotes.forEach(tid=>{ next[tid]=EVENT.tracks[tid]||myVotes[tid]||{id:tid}; });
+      myVotes=next;
+    }else{
+      if(myVotes[id])delete myVotes[id]; else myVotes[id]=track;   // fallback
+    }
+    if(d.rejected)toast(d.message||'No votes left — remove one first');
     applyServerEvent(d.event);
     renderGuest();
   }catch(e){ toast('Network error — try again'); }
@@ -1928,6 +1937,21 @@ async function loadGuestEvent(eventId){
       dj:ev.dj||null,
       tracks:{},branding:d.branding||null};
     (ev.tracks||[]).forEach(t=>{EVENT.tracks[t.id]={id:t.id,uri:t.uri,title:t.title,artist:t.artist,art:t.art,votes:t.votes,played:t.played,addedAt:t.addedAt,requesters:t.requesters||[]};});
+
+    // Restore THIS guest's votes from the server. Without this, a refresh wiped
+    // the in-memory count and handed them a fresh allocation — which is how
+    // people ended up with far more votes than the limit allowed.
+    try{
+      const mr=await fetch('/api/events/'+encodeURIComponent(eventId)+'/my-votes?guestId='+encodeURIComponent(getGuestId()));
+      if(mr.ok){
+        const md=await mr.json();
+        myVotes={};
+        (md.myVotes||[]).forEach(tid=>{
+          // Point at the real track where we have it, so the UI shows it as voted.
+          myVotes[tid]=EVENT.tracks[tid]||{id:tid};
+        });
+      }
+    }catch(_){ /* offline — fall back to whatever we have */ }
   }catch(e){ EVENT=null; }
 }
 
