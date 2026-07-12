@@ -83,6 +83,7 @@ async function boot(){
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <h2 style="margin:0">Site traffic</h2>
         <select id="an-range" onchange="loadAnalytics()" style="background:var(--paper-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit;font-size:.85rem">
+          <option value="1">Today</option>
           <option value="7">Last 7 days</option>
           <option value="30" selected>Last 30 days</option>
           <option value="90">Last 90 days</option>
@@ -177,14 +178,19 @@ async function loadAnalytics(){
         <b style="color:var(--neon);flex:none">${p.views}</b>
       </div>`).join('') || '<p style="color:var(--muted);font-size:.85rem;margin-top:8px">No page views recorded yet.</p>';
 
+    // A single bar tells you nothing, so skip the chart on the Today view.
+    const single = String(days)==='1';
+    const chart = single ? '' : `
+      <div style="display:flex;align-items:flex-end;gap:2px;height:90px;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;padding:8px">${bars}</div>
+      <p style="font-size:.72rem;color:var(--muted);margin-top:6px">Daily page views (hover a bar for detail)</p>`;
+
     box.innerHTML=`
       <div style="display:flex;gap:28px;flex-wrap:wrap;margin:14px 0 18px">
-        <div><div style="font-size:2rem;font-weight:800;color:var(--neon);line-height:1">${d.totalViews||0}</div><div style="font-size:.78rem;color:var(--muted)">page views</div></div>
-        <div><div style="font-size:2rem;font-weight:800;color:var(--ink);line-height:1">${d.uniqueVisitors||0}</div><div style="font-size:.78rem;color:var(--muted)">unique visitors</div></div>
+        <div><div style="font-size:2rem;font-weight:800;color:var(--neon);line-height:1">${d.totalViews||0}</div><div style="font-size:.78rem;color:var(--muted)">page views${single?' today':''}</div></div>
+        <div><div style="font-size:2rem;font-weight:800;color:var(--ink);line-height:1">${d.uniqueVisitors||0}</div><div style="font-size:.78rem;color:var(--muted)">unique visitors${single?' today':''}</div></div>
       </div>
-      <div style="display:flex;align-items:flex-end;gap:2px;height:90px;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;padding:8px">${bars}</div>
-      <p style="font-size:.72rem;color:var(--muted);margin-top:6px">Daily page views (hover a bar for detail)</p>
-      <h3 style="margin:18px 0 2px;font-size:1rem">Top pages</h3>
+      ${chart}
+      <h3 style="margin:${single?'4px':'18px'} 0 2px;font-size:1rem">Top pages${single?' today':''}</h3>
       ${pages}
       <p style="font-size:.72rem;color:var(--muted);margin-top:12px">No cookies or personal data are stored. Visitors are counted with a hash that resets daily, and bots are filtered out.</p>
     `;
