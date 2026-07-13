@@ -217,6 +217,7 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({ error: 'Wrong email or password.' });
   }
   const token = auth.startSession(user.id);
+  db.recordLogin(user.id);            // so admin can see who's actually active
   res.setHeader('Set-Cookie', auth.sessionCookie(token));
   res.json({ user: publicUser(user) });
 });
@@ -231,6 +232,7 @@ app.get('/api/me', (req, res) => {
   if (!req.user) return res.json({ user: null });
   // lazily drop expired comp access before reporting state
   if (db.expireCompIfNeeded(req.user)) req.user = db.getUserById(req.user.id);
+  db.touchSeen(req.user.id);   // throttled — shows real activity, not just logins
   res.json({
     user: publicUser(req.user),
     plan: PLANS[req.user.plan] || PLANS.none,
@@ -939,6 +941,37 @@ function coupleEditLocked(w, userId) {
   return Date.now() > lock;
 }
 // Fire a notification to the wedding's DJ when the COUPLE makes a change.
+/* Record who did what on a wedding, for the History view. Unlike
+   notifyCoupleActivity (which only fires for the couple), this logs EVERY
+   actor — DJ, sub-DJ and couple alike — because the whole point is being able
+   to see who changed something. */
+function logWedding(w, actor, action, detail) {
+  if (!w || !actor) return;
+  let role = 'dj';
+  if (actor.id === w.couple_id) role = 'couple';
+  else if (w.assigned_dj && actor.id === w.assigned_dj && actor.id !== w.host_id) role = 'subdj';
+  db.addWeddingHistory(w.id, {
+    actorId: actor.id,
+    actorName: actor.name || actor.email || 'Someone',
+    actorRole: role,
+    action,
+    detail,
+  });
+}
+
+// Describe a song-list change in words: what was actually added or removed.
+function describeSongChange(before, after, blockName) {
+  const b = (before || []).map(s => s.title + ' — ' + (s.artist || ''));
+  const a = (after || []).map(s => s.title + ' — ' + (s.artist || ''));
+  const added = a.filter(x => !b.includes(x));
+  const removed = b.filter(x => !a.includes(x));
+  const bits = [];
+  if (added.length) bits.push(`added ${added.slice(0, 3).join(', ')}${added.length > 3 ? ` +${added.length - 3} more` : ''}`);
+  if (removed.length) bits.push(`removed ${removed.slice(0, 3).join(', ')}${removed.length > 3 ? ` +${removed.length - 3} more` : ''}`);
+  const what = bits.length ? bits.join('; ') : 'reordered songs';
+  return blockName ? `${what} in “${blockName}”` : what;
+}
+
 function notifyCoupleActivity(w, actor, type, text) {
   if (!w || !actor) return;
   if (actor.id !== w.couple_id) return;          // only couple actions notify
@@ -1170,8 +1203,12 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
       capacity: cap,
     });
   }
+  // Snapshot the songs BEFORE the change, so history can say what actually
+  // changed rather than a vague "updated songs".
+  const before = (target.songs || []).map(s => ({ title: s.title, artist: s.artist }));
   const updated = db.setWeddingBlockSongs(w.id, req.params.blockId, songs);
   const blk = (updated.blocks || []).find(b => b.id === req.params.blockId);
+  logWedding(w, req.user, 'songs', describeSongChange(before, songs, blk ? blk.name : ''));
   notifyCoupleActivity(w, req.user, 'songs', `updated songs${blk ? ' in “' + blk.name + '”' : ''}`);
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
@@ -1186,6 +1223,17 @@ app.post('/api/weddings/:id/played', auth.requireAuth, (req, res) => {
   const b = req.body || {};
   const updated = db.setWeddingSongPlayed(w.id, b.blockId, b.songId, !!b.played);
   res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Wedding history — who changed what, and when. DJ / assigned sub-DJ only:
+// this is the DJ's audit trail, not something the couple needs to see.
+app.get('/api/weddings/:id/history', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can see the history.' });
+  }
+  res.json({ history: db.getWeddingHistory(w.id) });
 });
 
 // DJ (or assigned sub-DJ): create (or return existing) a live-requests event linked to this wedding.
@@ -1332,6 +1380,7 @@ app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
   }
   const timeline = Array.isArray((req.body || {}).timeline) ? req.body.timeline : [];
   const updated = db.setWeddingTimeline(w.id, timeline);
+  logWedding(w, req.user, 'timeline', 'updated the timeline');
   notifyCoupleActivity(w, req.user, 'timeline', 'updated the timeline');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
@@ -1405,6 +1454,7 @@ app.post('/api/weddings/:id/answers', auth.requireAuth, (req, res) => {
   }
   const answers = (req.body || {}).answers || {};
   const updated = db.setWeddingAnswers(w.id, answers);
+  logWedding(w, req.user, 'answers', 'answered questionnaire questions');
   notifyCoupleActivity(w, req.user, 'answers', 'answered questionnaire questions');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
@@ -1519,6 +1569,12 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
       status,                       // 'paying' | 'comp' | 'active' | 'free'
       compUntil: u.comp_until || null,
       compCode: u.comp_code || null,
+      // Activity. lastLogin = last actual sign-in; lastSeen = last time they used
+      // the app at all (a session cookie keeps people signed in for weeks, so a
+      // stale lastLogin doesn't mean they've gone away).
+      lastLogin: u.last_login || null,
+      lastSeen: u.last_seen || null,
+      loginCount: u.login_count || 0,
       // Total events on the account: hosted + assigned (de-duped), plus
       // weddings hosted + assigned. Previously only counted hosted events.
       eventsCreated: (() => {
@@ -1892,10 +1948,12 @@ app.delete('/api/prep/library', auth.requireAuth, requirePrep, (req, res) => {
    RESEND EMAIL (subscriber connects their own Resend key)
    ========================================================= */
 // Send an email through a user's own Resend account. Returns {ok} or {error}.
-async function sendViaResend(cfg, { to, subject, html, replyTo }) {
+async function sendViaResend(cfg, { to, subject, html, replyTo, attachments }) {
   const from = cfg.fromName ? `${cfg.fromName} <${cfg.from}>` : cfg.from;
   const body = { from, to: [to], subject, html };
   if (replyTo) body.reply_to = replyTo;
+  // attachments: [{ filename, content }] where content is base64.
+  if (Array.isArray(attachments) && attachments.length) body.attachments = attachments;
   const r = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
@@ -2084,6 +2142,168 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
+
+/* ================================================================
+   BACKUPS
+
+   All of Spinlist's data lives in one JSON file on Render's persistent disk.
+   Without backups, a corrupted file or a bad write means losing every account,
+   event and wedding — with no way back. So:
+
+     1) A nightly rolling backup on disk (keeps the last BACKUP_KEEP days).
+     2) A "Download backup" button in admin, so you can keep copies off Render.
+     3) A nightly email of the backup to the admin, so a copy exists even if
+        Render itself disappears.
+
+   Env:
+     BACKUP_EMAIL_TO   — where to email the nightly backup (defaults to the
+                         first ADMIN_EMAILS entry). Leave unset to disable email.
+     BACKUP_HOUR       — hour (0-23, UK time) to run. Default 4 (quiet time).
+     BACKUP_KEEP       — how many daily backups to retain on disk. Default 14.
+   ================================================================ */
+const BACKUP_DIR = path.join(path.dirname(DATA_FILE_PATH()), 'backups');
+const BACKUP_HOUR = Math.min(Math.max(parseInt(process.env.BACKUP_HOUR, 10) || 4, 0), 23);
+const BACKUP_KEEP = Math.min(Math.max(parseInt(process.env.BACKUP_KEEP, 10) || 14, 1), 90);
+const BACKUP_EMAIL_TO = (process.env.BACKUP_EMAIL_TO || ADMIN_EMAILS[0] || '').trim();
+
+// Where the live data file actually is (mirrors lib/db.js).
+function DATA_FILE_PATH() {
+  return process.env.DATA_FILE || path.join(__dirname, 'spinlist-data.json');
+}
+
+// Write a dated copy of the data file, prune old ones, return {file, bytes}.
+function makeBackup() {
+  const src = DATA_FILE_PATH();
+  if (!fs.existsSync(src)) throw new Error('No data file to back up yet.');
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+
+  const stamp = new Date().toISOString().slice(0, 10);          // 2026-07-12
+  const dest = path.join(BACKUP_DIR, `spinlist-${stamp}.json`);
+  fs.copyFileSync(src, dest);
+
+  // Prune: keep only the newest BACKUP_KEEP files.
+  const files = fs.readdirSync(BACKUP_DIR)
+    .filter(f => f.startsWith('spinlist-') && f.endsWith('.json'))
+    .sort();                                                     // dated names sort chronologically
+  for (const f of files.slice(0, Math.max(0, files.length - BACKUP_KEEP))) {
+    try { fs.unlinkSync(path.join(BACKUP_DIR, f)); } catch (_) {}
+  }
+  return { file: dest, bytes: fs.statSync(dest).size };
+}
+
+// A quick, human-readable summary so the email says what's actually in there.
+function backupSummary() {
+  try {
+    const d = JSON.parse(fs.readFileSync(DATA_FILE_PATH(), 'utf8'));
+    return {
+      users: (d.users || []).length,
+      events: (d.events || []).length,
+      weddings: (d.weddings || []).length,
+      codes: (d.codes || []).length,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+// Email the backup to the admin, so a copy lives off Render.
+async function emailBackup() {
+  if (!BACKUP_EMAIL_TO) return { ok: false, error: 'No BACKUP_EMAIL_TO set.' };
+  if (!CONTACT_RESEND_KEY || !CONTACT_FROM) return { ok: false, error: 'Site Resend not configured (CONTACT_RESEND_KEY / CONTACT_FROM).' };
+
+  const { file, bytes } = makeBackup();
+  // Resend caps attachments around 40MB; well clear for a JSON file, but guard
+  // anyway so a huge file fails loudly rather than silently.
+  const MAX = 20 * 1024 * 1024;
+  if (bytes > MAX) {
+    return { ok: false, error: `Backup is ${(bytes / 1048576).toFixed(1)}MB — too large to email. Download it from the admin page instead.` };
+  }
+  const content = fs.readFileSync(file).toString('base64');
+  const s = backupSummary();
+  const stamp = new Date().toISOString().slice(0, 10);
+  const rows = s
+    ? `<tr><td>Hosts</td><td><b>${s.users}</b></td></tr>
+       <tr><td>Events</td><td><b>${s.events}</b></td></tr>
+       <tr><td>Weddings</td><td><b>${s.weddings}</b></td></tr>
+       <tr><td>Codes</td><td><b>${s.codes}</b></td></tr>`
+    : '<tr><td colspan="2">Could not read a summary.</td></tr>';
+
+  const html = `
+    <div style="font-family:system-ui,sans-serif;color:#0a1228">
+      <h2 style="margin:0 0 4px">Spinlist backup — ${stamp}</h2>
+      <p style="color:#555;margin:0 0 14px">Attached is a full copy of your Spinlist data. Keep it somewhere safe.</p>
+      <table style="border-collapse:collapse;font-size:14px">${rows}
+        <tr><td>File size</td><td><b>${(bytes / 1024).toFixed(0)} KB</b></td></tr>
+      </table>
+      <p style="color:#777;font-size:12px;margin-top:16px">To restore, replace the data file on the server with this one and restart. Automated by Spinlist.</p>
+    </div>`;
+
+  return sendViaResend({ apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME }, {
+    to: BACKUP_EMAIL_TO,
+    subject: `Spinlist backup — ${stamp}`,
+    html,
+    attachments: [{ filename: `spinlist-${stamp}.json`, content }],
+  });
+}
+
+// Nightly: back up to disk, and email a copy. Same pattern as the daily digest.
+let _lastBackupDay = null;
+setInterval(async () => {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  if (now.getHours() >= BACKUP_HOUR && _lastBackupDay !== today) {
+    _lastBackupDay = today;
+    try {
+      const r = await emailBackup();          // this also writes the disk backup
+      if (r.ok) console.log('[backup] wrote + emailed', today);
+      else {
+        // Email failed — still make sure the on-disk backup exists.
+        try { makeBackup(); console.log('[backup] wrote to disk; email failed:', r.error); }
+        catch (e) { console.error('[backup] FAILED:', e.message); }
+      }
+    } catch (e) {
+      console.error('[backup] FAILED:', e.message);
+    }
+  }
+}, 15 * 60 * 1000);
+
+// Admin: download a fresh backup right now.
+app.get('/api/admin/backup', requireAdmin, (req, res) => {
+  try {
+    const { file } = makeBackup();
+    res.download(file, path.basename(file));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: what backups exist, and email one on demand.
+app.get('/api/admin/backups', requireAdmin, (req, res) => {
+  let files = [];
+  try {
+    files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith('spinlist-') && f.endsWith('.json'))
+      .sort().reverse()
+      .map(f => {
+        const st = fs.statSync(path.join(BACKUP_DIR, f));
+        return { name: f, bytes: st.size, at: st.mtimeMs };
+      });
+  } catch (_) { /* no backups yet */ }
+  res.json({
+    files,
+    emailTo: BACKUP_EMAIL_TO || null,
+    emailConfigured: !!(BACKUP_EMAIL_TO && CONTACT_RESEND_KEY && CONTACT_FROM),
+    hour: BACKUP_HOUR,
+    keep: BACKUP_KEEP,
+    summary: backupSummary(),
+  });
+});
+
+app.post('/api/admin/backup/email', requireAdmin, async (req, res) => {
+  const r = await emailBackup();
+  if (!r.ok) return res.status(400).json({ error: r.error || 'Could not send the backup.' });
+  res.json({ ok: true, to: BACKUP_EMAIL_TO });
+});
 
 app.post('/api/redeem', auth.requireAuth, (req, res) => {
   const c = db.getCode((req.body || {}).code);

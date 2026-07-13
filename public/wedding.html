@@ -1015,6 +1015,7 @@ function renderPlan(){
         <button class="btn btn-ghost btn-sm" onclick="exportWeddingPDF()">⬇ PDF run-sheet</button>
         <button class="btn btn-ghost btn-sm" onclick="popOutGig()">📺 Gig window</button>
         ${(ME&&ME.prepAccess)?`<a class="btn btn-ghost btn-sm" href="/prep.html?w=${CURRENT.id}" target="_blank">🎧 Prep</a>`:''}
+        <button class="btn btn-ghost btn-sm" onclick="openHistory()">🕘 History</button>
         <button class="btn btn-ghost btn-sm" onclick="toggleCouplePreview()">👁 Preview couple's view</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
@@ -1208,6 +1209,72 @@ async function exportBlockApple(blockId,btn){
     console.error('wedding apple export:',msg);
   }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
 }
+/* ---------- Wedding history (who changed what) ---------- */
+async function openHistory(){
+  closeHistory();
+  const box=document.createElement('div');
+  box.id='hist-pop';
+  box.innerHTML=`
+    <div style="position:fixed;inset:0;background:rgba(4,8,20,.62);z-index:140" onclick="closeHistory()"></div>
+    <div role="dialog" aria-label="History" style="position:fixed;z-index:141;left:50%;top:50%;transform:translate(-50%,-50%);
+         width:min(520px,calc(100vw - 32px));max-height:78vh;overflow:auto;background:var(--surface);
+         border:1px solid var(--line);border-radius:16px;padding:20px 22px;box-shadow:0 30px 80px -30px rgba(0,0,0,.8)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div>
+          <div style="font-weight:800;font-size:1.15rem">History</div>
+          <div class="muted" style="font-size:.82rem;margin-top:2px">Who changed what on this wedding</div>
+        </div>
+        <button type="button" onclick="closeHistory()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;line-height:1;cursor:pointer;padding:0 2px">×</button>
+      </div>
+      <div id="hist-body" style="margin-top:14px"><p class="muted" style="font-size:.9rem">Loading…</p></div>
+    </div>`;
+  document.body.appendChild(box);
+  document.addEventListener('keydown',histEsc);
+
+  const body=document.getElementById('hist-body');
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/history');
+    const items=d.history||[];
+    if(!items.length){
+      body.innerHTML='<p class="muted" style="font-size:.9rem">Nothing recorded yet. Changes from here on will show up here.</p>';
+      return;
+    }
+    const roleTag=r=>{
+      if(r==='couple')return '<span style="background:rgba(233,196,106,.16);color:#e9c46a;font-size:.66rem;font-weight:800;padding:2px 7px;border-radius:100px;text-transform:uppercase;letter-spacing:.05em">Couple</span>';
+      if(r==='subdj')return '<span style="background:rgba(91,140,255,.16);color:var(--plum);font-size:.66rem;font-weight:800;padding:2px 7px;border-radius:100px;text-transform:uppercase;letter-spacing:.05em">Sub-DJ</span>';
+      return '<span style="background:rgba(198,242,78,.14);color:var(--neon);font-size:.66rem;font-weight:800;padding:2px 7px;border-radius:100px;text-transform:uppercase;letter-spacing:.05em">DJ</span>';
+    };
+    const icon=a=>a==='songs'?'🎵':a==='timeline'?'🕐':a==='answers'?'📋':'✎';
+    const when=t=>{
+      const d0=new Date(t), now=Date.now(), diff=now-t;
+      if(diff<60000)return 'just now';
+      if(diff<3600000)return Math.floor(diff/60000)+'m ago';
+      if(diff<86400000)return Math.floor(diff/3600000)+'h ago';
+      return d0.toLocaleDateString('en-GB')+' '+d0.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    };
+    body.innerHTML=items.map((h,i)=>`
+      <div style="display:flex;gap:11px;padding:11px 0;border-top:${i?'1px solid var(--line)':'0'}">
+        <div style="font-size:1.1rem;flex:none;line-height:1.3">${icon(h.action)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+            <b style="font-size:.9rem">${esc(h.actorName)}</b>
+            ${roleTag(h.actorRole)}
+            <span class="muted" style="font-size:.75rem">${when(h.at)}</span>
+          </div>
+          <div style="font-size:.86rem;color:var(--ink-2);margin-top:3px;word-break:break-word">${esc(h.detail||h.action)}</div>
+        </div>
+      </div>`).join('');
+  }catch(e){
+    body.innerHTML='<p class="muted" style="font-size:.9rem">Could not load the history.</p>';
+  }
+}
+function closeHistory(){
+  const b=document.getElementById('hist-pop');
+  if(b)b.remove();
+  document.removeEventListener('keydown',histEsc);
+}
+function histEsc(e){ if(e.key==='Escape')closeHistory(); }
+
 function renderBlocks(){
   const w=CURRENT, isDJ=isDjView(), canEdit=!DEMO&&(CURRENT.canEdit!==false)&&!PREVIEW_COUPLE;
   document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{

@@ -23,6 +23,7 @@
   .btn-primary{background:var(--ink);color:var(--paper);box-shadow:var(--shadow)}
   .btn-neon{background:var(--neon);color:#0a1228}
   .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink);padding:7px 14px;font-size:.82rem}
+  .btn-sm{padding:7px 14px;font-size:.82rem}
   .panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin-top:22px}
   h1{font-size:2.1rem;margin-top:30px}
   h2{font-size:1.25rem;margin-bottom:4px}
@@ -99,6 +100,17 @@ async function boot(){
     </div>
 
     <div class="panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0">Backups</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" onclick="emailBackupNow(this)">✉️ Email me a backup</button>
+          <a class="btn btn-neon btn-sm" href="/api/admin/backup">⬇ Download backup</a>
+        </div>
+      </div>
+      <div id="bk-box"><p style="color:var(--muted);font-size:.9rem;margin-top:12px">Loading…</p></div>
+    </div>
+
+    <div class="panel">
       <h2>Create a code</h2>
       <div class="seg">
         <button id="seg-comp" class="on" onclick="setKind('comp')">Complimentary</button>
@@ -154,8 +166,61 @@ async function boot(){
     </div>`;
   setKind('comp');
   loadAnalytics();
+  loadBackups();
   loadCodes();
   loadUsers();
+}
+
+/* ---------- Backups ---------- */
+async function loadBackups(){
+  const box=document.getElementById('bk-box');
+  if(!box)return;
+  try{
+    const r=await fetch('/api/admin/backups');
+    if(!r.ok)throw new Error();
+    const d=await r.json();
+    const s=d.summary;
+    const kb=b=>b>1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(0)+' KB';
+    const when=t=>{const dt=new Date(t);return dt.toLocaleDateString('en-GB')+' '+dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});};
+
+    const emailLine = d.emailConfigured
+      ? `<p style="font-size:.85rem;color:var(--ink-2);margin-top:10px">✓ A backup is emailed to <b>${esc(d.emailTo)}</b> every night (around ${d.hour}:00), and the last ${d.keep} are kept on the server.</p>`
+      : `<p style="font-size:.85rem;color:var(--coral);margin-top:10px">⚠ Nightly backup emails are <b>off</b>. Set <code>BACKUP_EMAIL_TO</code> (and the site Resend keys) in the server environment to turn them on. Backups are still written to the server disk.</p>`;
+
+    const contents = s
+      ? `<div style="display:flex;gap:22px;flex-wrap:wrap;margin:12px 0 4px">
+           <div><div style="font-size:1.5rem;font-weight:800;color:var(--neon);line-height:1">${s.users}</div><div style="font-size:.74rem;color:var(--muted)">hosts</div></div>
+           <div><div style="font-size:1.5rem;font-weight:800;color:var(--ink);line-height:1">${s.events}</div><div style="font-size:.74rem;color:var(--muted)">events</div></div>
+           <div><div style="font-size:1.5rem;font-weight:800;color:var(--ink);line-height:1">${s.weddings}</div><div style="font-size:.74rem;color:var(--muted)">weddings</div></div>
+           <div><div style="font-size:1.5rem;font-weight:800;color:var(--ink);line-height:1">${s.codes}</div><div style="font-size:.74rem;color:var(--muted)">codes</div></div>
+         </div>`
+      : '';
+
+    const list=(d.files||[]).slice(0,7).map(f=>`
+      <div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-top:1px solid var(--line);font-size:.85rem">
+        <span style="color:var(--ink-2)">${esc(f.name)}</span>
+        <span style="color:var(--muted);flex:none">${kb(f.bytes)} · ${when(f.at)}</span>
+      </div>`).join('') || '<p style="color:var(--muted);font-size:.85rem;margin-top:8px">No backups on the server yet — the first runs tonight, or hit Download to make one now.</p>';
+
+    box.innerHTML=`${contents}${emailLine}
+      <h3 style="margin:16px 0 2px;font-size:1rem">Recent backups on the server</h3>
+      ${list}`;
+  }catch(e){
+    box.innerHTML='<p style="color:var(--muted);font-size:.9rem;margin-top:12px">Could not load backup status.</p>';
+  }
+}
+async function emailBackupNow(btn){
+  const orig=btn.textContent;
+  btn.disabled=true;btn.textContent='Sending…';
+  try{
+    const r=await fetch('/api/admin/backup/email',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Failed');
+    alert('Backup emailed to '+(d.to||'you')+' ✓');
+    loadBackups();
+  }catch(e){
+    alert('Could not email the backup: '+e.message);
+  }finally{ btn.disabled=false;btn.textContent=orig; }
 }
 
 /* ---------- Site traffic ---------- */
@@ -338,6 +403,28 @@ function renderUserFilters(){
 
 function setUserFilter(key){ USER_FILTER=key; renderUserFilters(); renderUsersTable(); }
 
+// "Last active" in words. lastSeen is the honest signal (a session cookie keeps
+// people signed in for weeks, so lastLogin alone can look stale when they're
+// actually using it daily).
+function lastActive(u){
+  const t = u.lastSeen || u.lastLogin;
+  if(!t) return {text:'Never', stale:true, title:'Has not signed in since this was added'};
+  const diff = Date.now() - t;
+  const mins = Math.floor(diff/60000);
+  let text;
+  if(mins < 5) text='Just now';
+  else if(mins < 60) text=mins+'m ago';
+  else if(diff < 86400000) text=Math.floor(diff/3600000)+'h ago';
+  else if(diff < 2592000000) text=Math.floor(diff/86400000)+'d ago';
+  else text=new Date(t).toLocaleDateString('en-GB');
+  const login = u.lastLogin ? new Date(u.lastLogin).toLocaleString('en-GB') : 'never';
+  return {
+    text,
+    stale: diff > 30*86400000,          // quiet for a month
+    title: `Last seen: ${new Date(t).toLocaleString('en-GB')}\nLast sign-in: ${login}\nSign-ins: ${u.loginCount||0}`,
+  };
+}
+
 function renderUsersTable(){
   const list=document.getElementById('users-list');
   const test=(USER_FILTERS.find(f=>f[0]===USER_FILTER)||USER_FILTERS[0])[2];
@@ -348,9 +435,10 @@ function renderUsersTable(){
     const [label,cls]=map[st]||['Free','free'];
     return `<span class="badge ${cls}">${label}</span>`;
   };
-  list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th title="Total events + weddings on the account, including jobs assigned to them">Gigs</th><th>Joined</th><th></th></tr></thead><tbody>${
+  list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th title="Total events + weddings on the account, including jobs assigned to them">Gigs</th><th title="Last time they used Spinlist. Hover a value for sign-in detail.">Last active</th><th>Joined</th><th></th></tr></thead><tbody>${
     users.map(u=>{
       const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
+      const la=lastActive(u);
       const adminTag=u.isAdmin?' <span class="badge comp">admin</span>':'';
       let coupleInfo='';
       if(u.role==='couple'&&u.couple){
@@ -367,6 +455,7 @@ function renderUsersTable(){
         <td>${esc(u.planName)}</td>
         <td>${badge(u.status)}</td>
         <td>${u.eventsCreated}</td>
+        <td title="${la.title}" style="white-space:nowrap;color:${la.stale?'var(--muted)':'var(--ink-2)'}">${la.text}</td>
         <td>${joined}</td>
         <td style="white-space:nowrap">${actions}</td>
       </tr>`;
