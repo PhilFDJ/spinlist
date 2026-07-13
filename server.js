@@ -972,6 +972,68 @@ function describeSongChange(before, after, blockName) {
   return blockName ? `${what} in “${blockName}”` : what;
 }
 
+// Describe a timeline change in words: what rows were actually added, removed
+// or retimed — not just "updated the timeline".
+function describeTimelineChange(before, after) {
+  const key = t => `${(t.time || '').trim()}|${(t.label || '').trim()}`;
+  const b = (before || []).map(key);
+  const a = (after || []).map(key);
+  const added = (after || []).filter(t => !b.includes(key(t)));
+  const removed = (before || []).filter(t => !a.includes(key(t)));
+
+  // A row whose label survives but whose time moved is a retime, not an add+remove.
+  const retimed = [];
+  const addedOnly = [];
+  for (const t of added) {
+    const was = (removed || []).find(r => (r.label || '').trim().toLowerCase() === (t.label || '').trim().toLowerCase());
+    if (was && (was.time || '') !== (t.time || '')) retimed.push(`${t.label}: ${was.time || '—'} → ${t.time || '—'}`);
+    else addedOnly.push(`${t.time ? t.time + ' ' : ''}${t.label || 'untitled'}`);
+  }
+  const retimedLabels = retimed.map(r => r.split(':')[0].trim().toLowerCase());
+  const removedOnly = removed
+    .filter(r => !retimedLabels.includes((r.label || '').trim().toLowerCase()))
+    .map(r => `${r.time ? r.time + ' ' : ''}${r.label || 'untitled'}`);
+
+  const bits = [];
+  const cap = (arr, verb) => {
+    if (!arr.length) return;
+    bits.push(`${verb} ${arr.slice(0, 3).join(', ')}${arr.length > 3 ? ` +${arr.length - 3} more` : ''}`);
+  };
+  cap(addedOnly, 'added');
+  cap(removedOnly, 'removed');
+  cap(retimed, 'moved');
+  return bits.length ? bits.join('; ') : 'reordered the timeline';
+}
+
+// Describe questionnaire answers: which questions were actually answered or
+// changed, and to what.
+function describeAnswerChange(before, after, questions) {
+  const labelFor = id => {
+    const q = (questions || []).find(x => x.id === id);
+    return (q && q.label) ? q.label : id;
+  };
+  const short = v => {
+    if (v === true || v === 'yes') return 'Yes';
+    if (v === false || v === 'no') return 'No';
+    const s = (v == null ? '' : String(v)).trim();
+    if (!s) return '(blank)';
+    return s.length > 40 ? s.slice(0, 40) + '…' : s;
+  };
+  const changes = [];
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const k of keys) {
+    const b = (before || {})[k];
+    const a = (after || {})[k];
+    if (JSON.stringify(b) === JSON.stringify(a)) continue;
+    const blank = b === undefined || b === null || b === '';
+    changes.push(blank
+      ? `${labelFor(k)}: ${short(a)}`
+      : `${labelFor(k)}: ${short(b)} → ${short(a)}`);
+  }
+  if (!changes.length) return 'saved the questionnaire (no changes)';
+  return `${changes.slice(0, 3).join('; ')}${changes.length > 3 ? ` +${changes.length - 3} more` : ''}`;
+}
+
 function notifyCoupleActivity(w, actor, type, text) {
   if (!w || !actor) return;
   if (actor.id !== w.couple_id) return;          // only couple actions notify
@@ -1379,8 +1441,10 @@ app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
     return res.status(423).json({ error: 'Editing is locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
   }
   const timeline = Array.isArray((req.body || {}).timeline) ? req.body.timeline : [];
+  // Snapshot before, so history can say what actually changed on the timeline.
+  const tlBefore = (w.timeline || []).map(t => ({ time: t.time, label: t.label }));
   const updated = db.setWeddingTimeline(w.id, timeline);
-  logWedding(w, req.user, 'timeline', 'updated the timeline');
+  logWedding(w, req.user, 'timeline', describeTimelineChange(tlBefore, timeline));
   notifyCoupleActivity(w, req.user, 'timeline', 'updated the timeline');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
@@ -1453,8 +1517,12 @@ app.post('/api/weddings/:id/answers', auth.requireAuth, (req, res) => {
     return res.status(423).json({ error: 'Editing is locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
   }
   const answers = (req.body || {}).answers || {};
+  // Snapshot before + the question labels, so history reads "Confetti allowed?:
+  // Yes" rather than a bare id.
+  const ansBefore = Object.assign({}, w.answers || {});
+  const questions = (w.questionnaire && w.questionnaire.questions) || [];
   const updated = db.setWeddingAnswers(w.id, answers);
-  logWedding(w, req.user, 'answers', 'answered questionnaire questions');
+  logWedding(w, req.user, 'answers', describeAnswerChange(ansBefore, answers, questions));
   notifyCoupleActivity(w, req.user, 'answers', 'answered questionnaire questions');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
