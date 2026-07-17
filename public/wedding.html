@@ -1021,9 +1021,12 @@ function renderPlan(){
         <button class="btn btn-ghost btn-sm" onclick="openEditWedding()">✎ Edit</button>`:''}
       </div>
     </div>
-    ${isDJ&&!DEMO&&w.inviteCode?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button><button class="btn btn-ghost btn-sm" onclick="emailWeddingInvite()">✉ Email invite</button></div>
+    ${isDJ&&!DEMO&&w.inviteCode?`<div class="panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div><b>Share with the couple</b><div class="muted">They sign up at spinlist.co.uk/wedding.html with this code (or the link).</div></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="code">${esc(w.inviteCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyInvite('${esc(w.inviteCode)}')">Copy link</button><button class="btn btn-ghost btn-sm" onclick="emailWeddingInvite()">✉ ${(w.coupleMembers&&w.coupleMembers.length)?'Resend invite':'Email invite'}</button></div>
+      </div>
+      ${coupleMembersPanel(w)}
     </div>`:''}
     ${isDJ&&!DEMO?`<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><b>Song choice deadline</b><div class="muted">After this date the couple can't edit their choices — giving you time to prep. You can still edit anytime.${w.lockIsDefault?' <span style="color:var(--plum)">Defaulting to 14 days before the wedding — set your own below to change it.</span>':''}</div></div>
@@ -1372,6 +1375,26 @@ function closeHistory(){
   document.removeEventListener('keydown',histEsc);
 }
 function histEsc(e){ if(e.key==='Escape')closeHistory(); }
+
+/* Who has joined this wedding — shown to the DJ under the invite code, so they
+   can see at a glance whether to resend. */
+function coupleMembersPanel(w){
+  const members=w.coupleMembers||[];
+  if(!members.length){
+    return `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+      <span class="muted" style="font-size:.86rem">⏳ Nobody has joined yet. Share the code or email the invite — both partners can sign up with it.</span>
+    </div>`;
+  }
+  const rows=members.map(m=>`
+    <div style="display:flex;align-items:center;gap:8px;font-size:.88rem;padding:3px 0">
+      <span style="width:22px;height:22px;border-radius:50%;background:rgba(233,196,106,.18);color:#e9c46a;font-weight:800;font-size:.72rem;display:inline-flex;align-items:center;justify-content:center;flex:none">${esc((m.name||m.email||'?').trim().charAt(0).toUpperCase())}</span>
+      <span><b>${esc(m.name||'(no name)')}</b> <span class="muted">· ${esc(m.email||'')}</span></span>
+    </div>`).join('');
+  return `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+    <div class="muted" style="font-size:.76rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Joined (${members.length})</div>
+    ${rows}
+  </div>`;
+}
 
 function renderBlocks(){
   const w=CURRENT, isDJ=isDjView(), canEdit=!DEMO&&(CURRENT.canEdit!==false)&&!PREVIEW_COUPLE;
