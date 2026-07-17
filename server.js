@@ -1126,13 +1126,16 @@ function questionnaireWithGigFlags(w, viewerId) {
 function publicWedding(w, viewerId) {
   if (!w) return null;
   const isHost = viewerId && viewerId === w.host_id;
+  // The assigned sub-DJ is also running this wedding, so they get the same
+  // DJ-facing details (invite code + who's joined) as the owner.
+  const isDjSide = isHost || (viewerId && w.assigned_dj === viewerId);
   const isCouple = viewerId && db.isCoupleMember(w, viewerId);
   const liveEv = w.live_event_id ? db.getEvent(w.live_event_id) : null;
   return {
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
-    inviteCode: (isHost ? w.invite_code : undefined),   // only the DJ sees the code
+    inviteCode: (isDjSide ? w.invite_code : undefined),   // the DJ (or sub-DJ) sees the code
     coupleJoined: !!w.couple_id,
-    coupleMembers: isHost ? db.weddingCoupleMembers(w) : undefined,   // DJ sees who's joined
+    coupleMembers: isDjSide ? db.weddingCoupleMembers(w) : undefined,   // DJ/sub-DJ sees who's joined
     blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
@@ -1257,6 +1260,21 @@ app.get('/api/weddings/:id', auth.requireAuth, (req, res) => {
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
   if (!canAccessWedding(req.user, w)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  // TEMP DIAGNOSTIC — remove once the sub-DJ visibility is confirmed.
+  if (req.query.diag === '1') {
+    return res.json({
+      _diag: {
+        viewerId: req.user.id,
+        viewerRole: req.user.role,
+        wedding_host_id: w.host_id,
+        wedding_assigned_dj: w.assigned_dj,
+        assigned_matches_viewer: w.assigned_dj === req.user.id,
+        host_matches_viewer: w.host_id === req.user.id,
+        isDjSide: (w.host_id === req.user.id) || (w.assigned_dj === req.user.id),
+        invite_code_present: !!w.invite_code,
+      },
+    });
   }
   res.json({ wedding: publicWedding(w, req.user.id) });
 });

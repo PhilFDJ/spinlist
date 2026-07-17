@@ -24,6 +24,9 @@
   .btn-neon{background:var(--neon);color:#0a1228}
   .btn-primary{background:var(--ink);color:var(--paper)}
   .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+  /* Archive is a consequential action — make it clearly red so it's not hit by accident. */
+  .btn-archive{background:transparent;color:var(--coral);border:1.5px solid var(--coral)}
+  .btn-archive:hover{background:var(--coral);color:#fff}
   .btn-sm{padding:7px 13px;font-size:.83rem}
   .seg-btn{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:700;font-size:.78rem;padding:7px 14px;border-radius:100px;cursor:pointer;transition:.15s}
   .seg-btn.on{background:var(--ink);color:var(--paper)}
@@ -533,7 +536,7 @@ function djCard(w){
   const dateStr=w.weddingDate?fmtWeddingDate(w.weddingDate):'No date set';
   const archiveBtn=w.archived
     ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();archiveWeddingDJ('${w.id}',false)">Restore</button>`
-    : `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();archiveWeddingDJ('${w.id}',true)">Archive</button>`;
+    : `<button class="btn btn-archive btn-sm" onclick="event.stopPropagation();archiveWeddingDJ('${w.id}',true)">Archive</button>`;
   return `<div class="wcard" onclick="openWedding('${w.id}')">
     <div>
       <b>${esc(w.name)}</b> ${w.coupleJoined?`<span class="pill done">${(w.coupleMembers&&w.coupleMembers.length>1)?w.coupleMembers.length+' joined':'Couple joined'}</span>`:'<span class="pill">Awaiting couple</span>'}
