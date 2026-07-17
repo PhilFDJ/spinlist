@@ -535,7 +535,7 @@ function djCard(w){
     : `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();archiveWeddingDJ('${w.id}',true)">Archive</button>`;
   return `<div class="wcard" onclick="openWedding('${w.id}')">
     <div>
-      <b>${esc(w.name)}</b> ${w.coupleJoined?'<span class="pill done">Couple joined</span>':'<span class="pill">Awaiting couple</span>'}
+      <b>${esc(w.name)}</b> ${w.coupleJoined?`<span class="pill done">${(w.coupleMembers&&w.coupleMembers.length>1)?w.coupleMembers.length+' joined':'Couple joined'}</span>`:'<span class="pill">Awaiting couple</span>'}
       <div class="muted">📅 ${dateStr} · ${esc(w.coupleNames||'')} · ${w.filledCount} songs · code <b>${esc(w.inviteCode)}</b></div>
     </div>
     <div style="display:flex;gap:8px;align-items:center" onclick="event.stopPropagation()">
@@ -1210,6 +1210,99 @@ async function exportBlockApple(blockId,btn){
   }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
 }
 /* ---------- Wedding history (who changed what) ---------- */
+let HISTORY_CACHE=[];
+
+// A printable record of every change — useful for your own files, or to settle
+// a "we never asked for that" conversation with a couple.
+async function exportHistoryPDF(btn){
+  if(!window.jspdf||!window.jspdf.jsPDF){toast('PDF tool could not load — try refreshing');return;}
+  if(!HISTORY_CACHE.length){toast('Nothing in the history to export yet');return;}
+  const orig=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='Building…';}
+  try{
+    const {jsPDF}=window.jspdf;const doc=new jsPDF();const w=CURRENT;
+    const PW=210, M=14;
+    let y=0;
+    const INK=[13,18,30], MUT=[110,120,140], LINE=[224,228,236];
+    const clip=(s,n)=>{s=(s||'').toString();return s.length>n?s.slice(0,n-1)+'…':s;};
+    const need=h=>{ if(y+h>282){doc.addPage();y=18;} };
+
+    // Branded header band, matching the run-sheet.
+    const hexToRgb=h=>{const m=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec((h||'').trim());return m?[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]:null;};
+    const readableOn=rgb=>((rgb[0]*299+rgb[1]*587+rgb[2]*114)/1000>150?[13,11,20]:[255,255,255]);
+    const accent=(w.branding&&w.branding.color&&hexToRgb(w.branding.color))||[13,18,40];
+    const headText=readableOn(accent);
+    doc.setFillColor(accent[0],accent[1],accent[2]);doc.rect(0,0,PW,34,'F');
+    doc.setTextColor(headText[0],headText[1],headText[2]);
+    doc.setFont('helvetica','bold');doc.setFontSize(18);
+    doc.text(clip((w.name||'Wedding')+' — History',46),M,16);
+    doc.setFont('helvetica','normal');doc.setFontSize(10);
+    const sub=[];
+    if(w.coupleNames)sub.push(w.coupleNames);
+    if(w.weddingDate&&typeof fmtWeddingDate==='function')sub.push(fmtWeddingDate(w.weddingDate));
+    sub.push('Exported '+new Date().toLocaleDateString('en-GB'));
+    doc.text(sub.join('   ·   '),M,25);
+    if(w.branding&&w.branding.logo){
+      try{
+        const logoData=await loadImageData(w.branding.logo);
+        if(logoData){const fmt=/\.png|image\/png/i.test(w.branding.logo)?'PNG':(/\.svg|svg\+xml/i.test(w.branding.logo)?'PNG':'JPEG');
+          doc.addImage(logoData,fmt,PW-M-28,3,28,28);}
+      }catch(e){/* skip */}
+    }
+    y=44;
+
+    doc.setTextColor(MUT[0],MUT[1],MUT[2]);doc.setFontSize(9);
+    doc.text(`${HISTORY_CACHE.length} change${HISTORY_CACHE.length===1?'':'s'} recorded, newest first.`,M,y);
+    y+=9;
+
+    const roleLabel=r=>r==='couple'?'COUPLE':r==='subdj'?'SUB-DJ':'DJ';
+    const roleColor=r=>r==='couple'?[196,150,40]:r==='subdj'?[70,110,220]:[110,150,30];
+
+    HISTORY_CACHE.forEach(h=>{
+      const when=new Date(h.at).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+      const detail=(h.detail||h.action||'').toString();
+      const lines=doc.splitTextToSize(detail,PW-M*2-4);
+      need(9+lines.length*4.6);
+
+      // Who + role + when
+      doc.setFont('helvetica','bold');doc.setFontSize(10);
+      doc.setTextColor(INK[0],INK[1],INK[2]);
+      const name=clip(h.actorName||'Someone',34);
+      doc.text(name,M,y);
+      const nameW=doc.getTextWidth(name);
+      const rc=roleColor(h.actorRole);
+      doc.setFont('helvetica','bold');doc.setFontSize(7);
+      doc.setTextColor(rc[0],rc[1],rc[2]);
+      doc.text(roleLabel(h.actorRole),M+nameW+3,y);
+      doc.setFont('helvetica','normal');doc.setFontSize(8);
+      doc.setTextColor(MUT[0],MUT[1],MUT[2]);
+      doc.text(when,PW-M,y,{align:'right'});
+      y+=5;
+
+      // What changed
+      doc.setFont('helvetica','normal');doc.setFontSize(9.5);
+      doc.setTextColor(60,66,80);
+      lines.forEach(ln=>{doc.text(ln,M,y);y+=4.6;});
+      y+=3;
+      doc.setDrawColor(LINE[0],LINE[1],LINE[2]);doc.line(M,y-1.5,PW-M,y-1.5);
+      y+=3;
+    });
+
+    // Footer on every page
+    const pages=doc.internal.getNumberOfPages();
+    for(let i=1;i<=pages;i++){
+      doc.setPage(i);
+      doc.setFont('helvetica','normal');doc.setFontSize(7.5);
+      doc.setTextColor(MUT[0],MUT[1],MUT[2]);
+      doc.text('Spinlist · www.spinlist.co.uk',M,290);
+      doc.text('Page '+i+' of '+pages,PW-M,290,{align:'right'});
+    }
+    doc.save((w.name||'wedding').replace(/\W+/g,'-')+'-history.pdf');
+  }catch(e){
+    toast('Could not build the PDF');
+  }finally{ if(btn){btn.disabled=false;btn.textContent=orig;} }
+}
+
 async function openHistory(){
   closeHistory();
   const box=document.createElement('div');
@@ -1224,7 +1317,10 @@ async function openHistory(){
           <div style="font-weight:800;font-size:1.15rem">History</div>
           <div class="muted" style="font-size:.82rem;margin-top:2px">Who changed what on this wedding</div>
         </div>
-        <button type="button" onclick="closeHistory()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;line-height:1;cursor:pointer;padding:0 2px">×</button>
+        <div style="display:flex;align-items:center;gap:8px;flex:none">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="exportHistoryPDF(this)">⬇ PDF</button>
+          <button type="button" onclick="closeHistory()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;line-height:1;cursor:pointer;padding:0 2px">×</button>
+        </div>
       </div>
       <div id="hist-body" style="margin-top:14px"><p class="muted" style="font-size:.9rem">Loading…</p></div>
     </div>`;
@@ -1235,6 +1331,7 @@ async function openHistory(){
   try{
     const d=await api('/api/weddings/'+CURRENT.id+'/history');
     const items=d.history||[];
+    HISTORY_CACHE=items;          // so the PDF export can use it without refetching
     if(!items.length){
       body.innerHTML='<p class="muted" style="font-size:.9rem">Nothing recorded yet. Changes from here on will show up here.</p>';
       return;

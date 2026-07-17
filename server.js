@@ -210,6 +210,23 @@ app.post('/api/auth/signup', (req, res) => {
   res.json({ user: publicUser(user), wedding: wedding ? { id: wedding.id } : null });
 });
 
+// An already-signed-in person joins a wedding with the code (e.g. the second
+// partner who already has an account). Adds them as a couple member.
+app.post('/api/weddings/join', auth.requireAuth, (req, res) => {
+  const code = String((req.body || {}).weddingCode || '').trim();
+  if (!code) return res.status(400).json({ error: 'Enter your wedding code.' });
+  const wedding = db.getWeddingByCode(code);
+  if (!wedding) return res.status(404).json({ error: 'That wedding code wasn\'t found. Check it with your DJ.' });
+  if (wedding.host_id === req.user.id) {
+    return res.status(400).json({ error: 'This is your own wedding — you already have full access as the DJ.' });
+  }
+  if (db.isCoupleMember(wedding, req.user.id)) {
+    return res.json({ ok: true, wedding: { id: wedding.id }, already: true });
+  }
+  db.linkCoupleToWedding(wedding.id, req.user.id);
+  res.json({ ok: true, wedding: { id: wedding.id } });
+});
+
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body || {};
   const user = email && db.getUserByEmail(email);
@@ -917,7 +934,7 @@ function canAccessEvent(user, e) {
 // True if the user owns this wedding, the linked couple, or it's assigned to them.
 function canAccessWedding(user, w) {
   if (!w) return false;
-  if (w.host_id === user.id || w.couple_id === user.id) return true;
+  if (w.host_id === user.id || db.isCoupleMember(w, user.id)) return true;
   if (w.assigned_dj === user.id) return true;
   return false;
 }
@@ -948,7 +965,7 @@ function coupleEditLocked(w, userId) {
 function logWedding(w, actor, action, detail) {
   if (!w || !actor) return;
   let role = 'dj';
-  if (actor.id === w.couple_id) role = 'couple';
+  if (db.isCoupleMember(w, actor.id)) role = 'couple';
   else if (w.assigned_dj && actor.id === w.assigned_dj && actor.id !== w.host_id) role = 'subdj';
   db.addWeddingHistory(w.id, {
     actorId: actor.id,
@@ -1036,7 +1053,7 @@ function describeAnswerChange(before, after, questions) {
 
 function notifyCoupleActivity(w, actor, type, text) {
   if (!w || !actor) return;
-  if (actor.id !== w.couple_id) return;          // only couple actions notify
+  if (!db.isCoupleMember(w, actor.id)) return;    // only couple actions notify
   const label = w.couple_names || w.name || 'A couple';
   const msg = `${label}: ${text}`;
   // Notify the owner, and also the assigned sub-DJ (if any and different), so
@@ -1109,12 +1126,13 @@ function questionnaireWithGigFlags(w, viewerId) {
 function publicWedding(w, viewerId) {
   if (!w) return null;
   const isHost = viewerId && viewerId === w.host_id;
-  const isCouple = viewerId && viewerId === w.couple_id;
+  const isCouple = viewerId && db.isCoupleMember(w, viewerId);
   const liveEv = w.live_event_id ? db.getEvent(w.live_event_id) : null;
   return {
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
     inviteCode: (isHost ? w.invite_code : undefined),   // only the DJ sees the code
     coupleJoined: !!w.couple_id,
+    coupleMembers: isHost ? db.weddingCoupleMembers(w) : undefined,   // DJ sees who's joined
     blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
@@ -1216,6 +1234,7 @@ app.get('/api/weddings', auth.requireAuth, (req, res) => {
   const list = source.map(w => ({
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
     inviteCode: w.invite_code, coupleJoined: !!w.couple_id,
+    coupleMembers: db.weddingCoupleMembers(w),
     blockCount: (w.blocks || []).length,
     filledCount: (w.blocks || []).reduce((s, b) => s + ((b.songs || []).length), 0),
     archived: !!w.archived,
@@ -1246,7 +1265,7 @@ app.get('/api/weddings/:id', auth.requireAuth, (req, res) => {
 app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   if (coupleEditLocked(w, req.user.id)) {
@@ -1346,7 +1365,7 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
 app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   const blockId = (req.body || {}).blockId || null;
@@ -1434,7 +1453,7 @@ app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
 app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && req.user.id !== w.couple_id) {
+  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   if (coupleEditLocked(w, req.user.id)) {
@@ -1510,7 +1529,7 @@ app.post('/api/weddings/:id/questionnaire', auth.requireAuth, (req, res) => {
 app.post('/api/weddings/:id/answers', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && req.user.id !== w.couple_id && w.assigned_dj !== req.user.id) {
+  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id) && w.assigned_dj !== req.user.id) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   if (coupleEditLocked(w, req.user.id)) {
