@@ -1,3708 +1,3210 @@
-import express from "express";
-import crypto from "crypto";
-import multer from "multer";
-import cookieParser from "cookie-parser";
-import Papa from "papaparse";
-import { Resend } from "resend";
-import Stripe from "stripe";
-import { nanoid } from "nanoid";
-import { fileURLToPath } from "url";
-import path from "path";
-import onedrive from "./onedrive.js";
-import dropbox from "./dropbox.js";
-import gdrive from "./gdrive.js";
-import gcal from "./gcal.js";
+/* ============================================================
+   Spinlist — server
+   ------------------------------------------------------------
+   Adds to the original Spotify search proxy:
+     • Email/password accounts (hosts = subscribers)
+     • Stripe Checkout for Pro/Studio subscriptions
+     • Stripe webhook -> provisions/revokes plan access
+     • Customer portal for managing/cancelling
+     • Server-side gating on event creation by plan
 
-// Map provider name -> module, so the storage flow is provider-agnostic.
-const STORAGE_PROVIDERS = { onedrive, dropbox, gdrive };
-import { pool, initDb } from "./db.js";
-import { extractContacts } from "./extract.js";
+   Guests never sign in. Only hosts subscribe.
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+   Run:  cp .env.example .env  (fill it in) ; npm install ; npm start
+   ============================================================ */
+
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const multer = require('multer');
+require('dotenv').config();
+
+const db = require('./lib/db');
+const auth = require('./lib/auth');
+const PLANS = require('./lib/plans');
+
 const app = express();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+const PORT = process.env.PORT || 3000;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
-// ---------- config from environment ----------
-const {
-  ADMIN_PASSWORD,
-  RESEND_API_KEY,
-  // The verified sending domain and this agency's mailbox prefix. Together they form
-  // the send address, e.g. ldagency@gigconfirm.co.uk. Kept configurable so the
-  // upcoming multi-agency version can set a different prefix per subscriber.
-  SEND_DOMAIN = "gigconfirm.co.uk",
-  SEND_PREFIX = "ldagency",
-  MAIL_FROM,                 // optional full override, e.g. "LD Agency <ldagency@gigconfirm.co.uk>"
-  APP_URL = "http://localhost:3000",
-  CRON_SECRET,
-  STRIPE_SECRET_KEY,          // sk_live_… or sk_test_…
-  STRIPE_PRICE_ID,            // the recurring price for the monthly plan
-  STRIPE_WEBHOOK_SECRET,      // whsec_… for verifying webhook calls
-  PRICE_DISPLAY = "£50",      // shown on home/billing pages (just cosmetic)
-  ADMIN_ALERT_EMAIL,          // where to send platform alerts (new signups). Falls back to platform admins.
-  TOKEN_ENC_KEY,              // secret used to encrypt stored cloud-storage refresh tokens at rest
-  PORT = 3000,
-} = process.env;
+/* Site-level Resend for the public contact form (separate from subscribers'
+   own Resend keys used for wedding invites). Set these in the environment:
+     CONTACT_RESEND_KEY   — a Resend API key for the Spinlist account
+     CONTACT_FROM         — verified from address, e.g. "hello@spinlist.co.uk"
+     CONTACT_FROM_NAME    — optional display name, e.g. "Spinlist"
+     CONTACT_TO           — where messages land, e.g. "phil@phil-freeman.co.uk"
+   If CONTACT_RESEND_KEY or CONTACT_TO is missing, the contact form falls back
+   to telling the user to email directly. */
+const CONTACT_RESEND_KEY = process.env.CONTACT_RESEND_KEY || '';
+const CONTACT_FROM = process.env.CONTACT_FROM || '';
+const CONTACT_FROM_NAME = process.env.CONTACT_FROM_NAME || 'Spinlist';
+const CONTACT_TO = process.env.CONTACT_TO || (process.env.ADMIN_EMAILS || '').split(',')[0].trim();
 
-const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
-const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
-const SEND_ADDRESS = `${SEND_PREFIX}@${SEND_DOMAIN}`;
-// Statuses that count as "may use the app".
-const ACTIVE_STATUSES = new Set(["active", "trialing"]);
-
-
-// Wrapper so the rest of the app can call sendMail({from,to,subject,html,replyTo})
-// uniformly. `to` may be a string or an array of addresses.
-async function sendMail({ from, to, subject, html, replyTo, attachments }) {
-  if (!resend) throw new Error("Email not configured (RESEND_API_KEY missing).");
-  const payload = {
-    from: from || MAIL_FROM || `LD Agency <${SEND_ADDRESS}>`,
-    to: Array.isArray(to) ? to : [to],
-    subject,
-    html,
-  };
-  // Resend's Node SDK (v4) expects camelCase `replyTo`. Only set it when we actually
-  // have an address, so we never send an empty/blank reply-to header. We set both the
-  // camelCase and snake_case forms to be safe across SDK versions.
-  if (replyTo) { payload.replyTo = replyTo; payload.reply_to = replyTo; }
-  if (Array.isArray(attachments) && attachments.length) payload.attachments = attachments;
-  return resend.emails.send(payload);
+// Escape user-supplied text before putting it into an HTML email.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// Build a CSV string from the current bookings of a batch (act, venue, date, status, notes).
-function csvEscape(v) {
-  const s = (v == null ? "" : String(v));
-  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-}
-async function batchCsv(batchId, agencyId) {
-  const rows = (await pool.query(
-    `SELECT a.name AS act_name, bk.performer_name, a.email AS act_email,
-            COALESCE(NULLIF(bk.venue_text,''), v.display_name) AS venue,
-            br.name AS group_name,
-            bk.gig_date, bk.gig_time, bk.status, bk.message, bk.adhoc_note,
-            bk.resolution_note, bk.responded_at
-     FROM bookings bk JOIN acts a ON a.id=bk.act_id
-     LEFT JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-     LEFT JOIN brands br ON br.id=v.brand_id AND br.agency_id=bk.agency_id
-     WHERE bk.batch_id=$1 AND bk.agency_id=$2
-     ORDER BY a.name, bk.gig_date`, [batchId, agencyId]
-  )).rows;
-  const header = ["Act", "Act email", "Venue", "Group", "Date", "Time", "Status", "Act message", "Our note", "Resolution note", "Responded at"];
-  const lines = [header.map(csvEscape).join(",")];
-  for (const r of rows) {
-    const status = r.status === "issue" ? "flagged" : r.status;
-    lines.push([
-      r.performer_name || r.act_name, r.act_email, r.venue, r.group_name, r.gig_date, r.gig_time, status,
-      r.message, r.adhoc_note, r.resolution_note,
-      r.responded_at ? new Date(r.responded_at).toISOString() : "",
-    ].map(csvEscape).join(","));
-  }
-  return lines.join("\r\n");
-}
 
-// If a batch has no pending gigs left and we haven't already emailed the summary,
-// send a completion CSV to the agency's team. Safe to call after any response.
-async function maybeSendCompletion(batchId, agencyId) {
-  if (!resend || !batchId) return;
-  const batch = (await pool.query(
-    "SELECT id, label, completion_emailed, archived FROM batches WHERE id=$1 AND agency_id=$2",
-    [batchId, agencyId]
-  )).rows[0];
-  if (!batch || batch.completion_emailed || batch.archived) return;
-  const counts = (await pool.query(
-    `SELECT count(*)::int AS total,
-            count(*) FILTER (WHERE status='pending')::int AS pending,
-            count(*) FILTER (WHERE status='confirmed')::int AS confirmed,
-            count(*) FILTER (WHERE status='issue')::int AS flagged,
-            count(*) FILTER (WHERE status='resolved')::int AS resolved
-     FROM bookings WHERE batch_id=$1 AND agency_id=$2`, [batchId, agencyId]
-  )).rows[0];
-  if (!counts.total || counts.pending > 0) return; // not complete yet
-
-  // claim the send atomically so concurrent responses can't double-send
-  const claim = await pool.query(
-    "UPDATE batches SET completion_emailed=true WHERE id=$1 AND agency_id=$2 AND completion_emailed=false",
-    [batchId, agencyId]
-  );
-  if (!claim.rowCount) return; // someone else already sent it
-
-  const team = (await pool.query("SELECT email FROM users WHERE agency_id=$1", [agencyId])).rows
-    .map((u) => u.email).filter(Boolean);
-  if (!team.length) return;
-
-  const csv = await batchCsv(batchId, agencyId);
-  const sender = await senderForAgency(agencyId);
-  const label = batch.label || "this week";
-  try {
-    await sendMail({
-      from: sender.from,
-      replyTo: sender.replyTo,
-      to: team,
-      subject: `✅ All checks complete — ${label}`,
-      html: `
-        <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#222">
-          <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-          <p>Every act has now responded for <strong>${esc(label)}</strong>. Here's the summary:</p>
-          <ul style="font-size:14px">
-            <li><strong>${counts.confirmed}</strong> confirmed</li>
-            <li><strong>${counts.flagged}</strong> flagged</li>
-            ${counts.resolved ? `<li><strong>${counts.resolved}</strong> resolved</li>` : ""}
-            <li><strong>${counts.total}</strong> gigs in total</li>
-          </ul>
-          <p>The full breakdown is attached as a CSV.</p>
-          ${emailFooter(sender)}
-        </div>`,
-      attachments: [{
-        filename: `gigconfirm-${(label || "week").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.csv`,
-        content: Buffer.from(csv, "utf8").toString("base64"),
-      }],
-    });
-  } catch (e) {
-    // if sending failed, un-claim so it can retry on the next response
-    await pool.query("UPDATE batches SET completion_emailed=false WHERE id=$1 AND agency_id=$2", [batchId, agencyId]);
-    console.error("completion email failed", e.message);
-  }
-}
-
-// Each agency sends from <their prefix>@<shared domain>, e.g. ldagency@gigconfirm.co.uk,
-// with the agency's display name. Also returns branding for the email templates.
-// replyToEmail: if given (the logged-in user's address), replies route to that person
-// so acts/venues reach whoever ran the checks, not the shared agency mailbox.
-async function senderForAgency(agencyId, replyToEmail) {
-  const replyTo = replyToEmail || undefined;
-  try {
-    const a = (await pool.query(
-      "SELECT id, name, email_prefix, website, phone, (logo_data IS NOT NULL) AS has_logo FROM agencies WHERE id=$1",
-      [agencyId]
-    )).rows[0];
-    if (a && a.email_prefix) {
-      return {
-        from: `${a.name} <${a.email_prefix}@${SEND_DOMAIN}>`,
-        replyTo,
-        logoUrl: a.has_logo ? `${APP_URL}/agency-logo/${a.id}` : `${APP_URL}/logo-email.png`,
-        agencyName: a.name,
-        website: a.website || "",
-        phone: a.phone || "",
-      };
-    }
-  } catch (_) { /* fall through to default */ }
-  return { from: MAIL_FROM || `LD Agency <${SEND_ADDRESS}>`, replyTo,
-           logoUrl: `${APP_URL}/logo-email.png`, agencyName: "GigConfirm", website: "", phone: "" };
-}
-
-// Helper: the logged-in user's email, for use as reply-to on sends they trigger.
-async function userEmail(userId) {
-  if (!userId) return null;
-  try { return (await pool.query("SELECT email FROM users WHERE id=$1", [userId])).rows[0]?.email || null; }
-  catch (_) { return null; }
-}
-
-// Shared email footer with the agency's website/phone, if set.
-// Given a list of email addresses, return a map of address -> latest delivery status
-// (bounced | complained | delivered | delivery_delayed) from the email_events log.
-// Used to flag deliverability anywhere we show a recipient (venues, team, etc.).
-async function latestEmailStatus(emails) {
-  const list = [...new Set((emails || []).map((e) => (e || "").toLowerCase()).filter(Boolean))];
-  if (!list.length) return {};
-  const rows = (await pool.query(
-    `SELECT DISTINCT ON (email) email, type
-     FROM email_events
-     WHERE email = ANY($1)
-     ORDER BY email, created_at DESC`, [list]
-  )).rows;
-  const map = {};
-  for (const r of rows) map[r.email] = r.type;
-  return map;
-}
-
-function emailFooter(sender) {
-  const bits = [];
-  if (sender.website) bits.push(`<a href="${esc(sender.website)}" style="color:#888">${esc(sender.website)}</a>`);
-  if (sender.phone) bits.push(esc(sender.phone));
-  if (!bits.length) return "";
-  return `<p style="color:#999;font-size:12px;margin-top:20px;border-top:1px solid #eee;padding-top:12px">${esc(sender.agencyName)} · ${bits.join(" · ")}</p>`;
-}
-
-// Stripe webhook must read the RAW body, so it's registered before express.json().
-app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(400).send("Stripe not configured.");
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, req.get("stripe-signature"), STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error("webhook signature failed", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-  try {
-    const obj = event.data.object;
-    // Map subscription lifecycle onto the agency.
-    if (event.type === "checkout.session.completed") {
-      const agencyId = obj.metadata?.agencyId || obj.client_reference_id;
-      if (agencyId) {
-        await pool.query(
-          "UPDATE agencies SET stripe_customer_id=$1, stripe_subscription_id=$2, sub_status='active', active=true WHERE id=$3",
-          [obj.customer, obj.subscription, agencyId]
-        );
-        // bump discount usage if a promo code was used
-        const code = obj.metadata?.discountCode;
-        if (code) await pool.query("UPDATE discount_codes SET times_used=times_used+1 WHERE code=$1", [code]);
-      }
-    } else if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
-      const status = event.type === "customer.subscription.deleted" ? "canceled" : obj.status;
-      const active = ACTIVE_STATUSES.has(status);
-      await pool.query(
-        "UPDATE agencies SET sub_status=$1, active=$2 WHERE stripe_subscription_id=$3",
-        [status, active, obj.id]
-      );
-    }
-    res.json({ received: true });
-  } catch (e) {
-    console.error("webhook handling error", e);
-    res.status(500).send("handler error");
-  }
+/* ---------- logo uploads ---------- */
+// Stored on disk and served statically. On hosts with an ephemeral filesystem
+// (e.g. Render's free/standard instances), uploads must live on the SAME
+// persistent disk as the data file, or they vanish on redeploy. We derive the
+// upload dir from UPLOAD_DIR if set, else from the data file's directory, else
+// a local ./uploads for dev.
+const UPLOAD_DIR = process.env.UPLOAD_DIR
+  || (process.env.DATA_FILE ? path.join(path.dirname(process.env.DATA_FILE), 'uploads') : path.join(__dirname, 'uploads'));
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const ALLOWED_LOGO_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (req, file, cb) => {
+      const ext = ALLOWED_LOGO_TYPES[file.mimetype] || 'bin';
+      cb(null, `logo_${req.user.id}_${crypto.randomBytes(6).toString('hex')}.${ext}`);
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },   // 2 MB cap
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_LOGO_TYPES[file.mimetype]) cb(null, true);
+    else cb(new Error('Unsupported file type. Use PNG, JPG, WebP, or SVG.'));
+  },
 });
 
-app.use(express.json());
-app.use(cookieParser());
+/* ---------- Spotify config ---------- */
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+const SPOTIFY_MARKET = process.env.SPOTIFY_MARKET || 'GB';
+if (!CLIENT_ID || !CLIENT_SECRET) {
+  console.error('\n  Missing SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET. See .env.example.\n');
+  process.exit(1);
+}
 
-// Resend delivery-event webhook (bounces, complaints, deliveries). Records the event
-// and flags the affected act so the dashboard can warn about undeliverable addresses.
-// Registered after express.json() is fine — we read req.body as parsed JSON here.
-app.post("/api/resend-webhook", async (req, res) => {
-  try {
-    const evt = req.body || {};
-    const type = (evt.type || "").replace(/^email\./, ""); // bounced | delivered | complained | delivery_delayed
-    const recipients = Array.isArray(evt.data?.to) ? evt.data.to : (evt.data?.to ? [evt.data.to] : []);
-    const detail = evt.data?.bounce?.message || evt.data?.bounce?.subType || null;
-    for (const addr of recipients) {
-      const email = (addr || "").toLowerCase();
-      if (!email) continue;
-
-      // Figure out which agency this address belongs to. Check acts first, then
-      // venues (whose email field may hold several comma/semicolon addresses), then
-      // users. This lets bounces for venue and team emails be attributed correctly.
-      let agencyId = null;
-      const act = (await pool.query("SELECT agency_id FROM acts WHERE lower(email)=$1", [email])).rows[0];
-      if (act) agencyId = act.agency_id;
-      if (!agencyId) {
-        const venue = (await pool.query(
-          `SELECT agency_id FROM venues
-           WHERE email IS NOT NULL AND position($1 in lower(email)) > 0 LIMIT 1`, [email]
-        )).rows[0];
-        if (venue) agencyId = venue.agency_id;
-      }
-      if (!agencyId) {
-        const user = (await pool.query("SELECT agency_id FROM users WHERE lower(email)=$1", [email])).rows[0];
-        if (user) agencyId = user.agency_id;
-      }
-
-      await pool.query(
-        "INSERT INTO email_events (agency_id, email, type, detail) VALUES ($1,$2,$3,$4)",
-        [agencyId, email, type, detail]
-      );
-
-      // Update the act's rolling email status if this address is an act.
-      if (act) {
-        if (type === "bounced" || type === "complained") {
-          await pool.query("UPDATE acts SET email_status=$1, email_status_at=now() WHERE lower(email)=$2 AND agency_id=$3",
-            [type, email, act.agency_id]);
-        } else if (type === "delivered") {
-          await pool.query("UPDATE acts SET email_status='delivered', email_status_at=now() WHERE lower(email)=$1 AND agency_id=$2 AND (email_status IS NULL OR email_status <> 'complained')",
-            [email, act.agency_id]);
-        }
-      }
-    }
-    res.json({ received: true });
-  } catch (e) {
-    console.error("resend webhook error", e);
-    res.status(200).json({ received: true }); // 200 so Resend doesn't hammer retries
+/* Apple Music — optional fallback search source. Used only when Spotify
+   returns 429 (rate limited), so guests never see a dead search at busy
+   events. Catalogue search needs just a developer token, which we sign
+   ourselves from your MusicKit private key. Set in the environment:
+     APPLE_MUSIC_KEY        — contents of the .p8 private key file
+                              (the whole -----BEGIN PRIVATE KEY----- block)
+     APPLE_MUSIC_KEY_ID     — the 10-char Key ID (from the .p8 filename)
+     APPLE_MUSIC_TEAM_ID    — your Apple Team ID (defaults to the app one)
+     APPLE_MUSIC_STOREFRONT — catalogue storefront, defaults to 'gb'
+   If APPLE_MUSIC_KEY / APPLE_MUSIC_KEY_ID are absent, the fallback is simply
+   inactive and Spotify behaves exactly as before. */
+function normalizeApplePem(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim();
+  // Unwrap escaping layers in order, because a value can arrive double-escaped
+  // depending on how it was pasted/stored:
+  //   \\n (backslash backslash n) -> real newline
+  //   \n  (backslash n)           -> real newline
+  //   \r  variants                -> dropped
+  s = s.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '');
+  const beginRe = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+  const endRe = /-----END [A-Z ]*PRIVATE KEY-----/;
+  const begin = (s.match(beginRe) || [])[0];
+  const end = (s.match(endRe) || [])[0];
+  if (begin && end) {
+    // Rebuild a clean PEM from just the base64 body, so it decodes no matter
+    // how the whitespace/escaping arrived.
+    let body = s.slice(s.indexOf(begin) + begin.length, s.indexOf(end));
+    body = body.replace(/\s+/g, '').replace(/\\/g, ''); // strip whitespace + stray backslashes
+    const wrapped = body.match(/.{1,64}/g) || [];
+    return `${begin}\n${wrapped.join('\n')}\n${end}\n`;
   }
-});
+  // No recognisable header/footer — return as-is and let it fail loudly.
+  return s;
+}
+const APPLE_MUSIC_KEY = normalizeApplePem(process.env.APPLE_MUSIC_KEY || '');
+const APPLE_MUSIC_KEY_ID = (process.env.APPLE_MUSIC_KEY_ID || '').trim();
+const APPLE_MUSIC_TEAM_ID = (process.env.APPLE_MUSIC_TEAM_ID || process.env.APPLE_TEAM_ID || '3LVYMTC2X7').trim();
+const APPLE_MUSIC_STOREFRONT = (process.env.APPLE_MUSIC_STOREFRONT || 'gb').toLowerCase().trim();
+const APPLE_MUSIC_ENABLED = !!(APPLE_MUSIC_KEY && APPLE_MUSIC_KEY_ID);
 
-// ---------- helpers ----------
-const normKey = (s) => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
-const norm = (s) => (s || "").toString().trim();
-const esc = (s) => (s || "").toString().replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-
-// Strip decorative words so "Blue Dolphin Holiday Park" and "Blue Dolphin" match.
-// Used only for fuzzy matching, never as the stored key.
-const VENUE_FILLER = /\b(holiday|park|parks|resort|resorts|country|village|hp|haven|the|hotel|spa|leisure|caravan|centre|center|parcs|club|estates|complex|coastal|of|at|on|sea)\b/g;
-function fuzzyVenue(s) {
-  return (s || "")
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9 ]/g, " ")
-    .replace(VENUE_FILLER, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+/* ---------- Stripe config (optional until you add keys) ---------- */
+const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+let stripe = null;
+if (STRIPE_SECRET) {
+  // Let the installed Stripe SDK use its own pinned default API version.
+  // (Hard-coding a date string here can break if it doesn't match the SDK.)
+  stripe = require('stripe')(STRIPE_SECRET);
+} else {
+  console.warn('  [warn] STRIPE_SECRET_KEY not set — billing routes will return a setup notice.\n');
 }
 
-// Resolve a booking's venue text to an EXISTING stored venue, tolerating naming
-// differences. Returns the stored venue's exact key, or null if no safe match.
-// Strategy: exact key → fuzzy-equal → one side's words fully contained in the other.
-async function resolveVenueKey(venueText, storedList) {
-  const exactKey = normKey(venueText);
-  if (!venueText) return null;
-  // storedList is always supplied by callers (already agency-scoped). Never query
-  // all venues here — that would ignore agency boundaries.
-  const stored = storedList || [];
-  // 1. exact
-  if (stored.some((v) => v.name === exactKey)) return exactKey;
-  // 2. fuzzy-equal — but if MORE THAN ONE stored venue is fuzzy-equal, it's
-  //    ambiguous (e.g. two "Golden Sands"), so refuse rather than guess wrong.
-  const fb = fuzzyVenue(venueText);
-  if (!fb) return null;
-  const fuzzyHits = stored.filter((v) => fuzzyVenue(v.display_name) === fb);
-  if (fuzzyHits.length === 1) return fuzzyHits[0].name;
-  if (fuzzyHits.length > 1) return null; // ambiguous → leave for manual assignment
-  // 3. subset (all words of one appear in the other) with a distinctive shared
-  //    word — again, only if exactly one stored venue qualifies.
-  const bt = new Set(fb.split(" ").filter(Boolean));
-  const subsetHits = [];
-  for (const v of stored) {
-    const ct = new Set(fuzzyVenue(v.display_name).split(" ").filter(Boolean));
-    if (!bt.size || !ct.size) continue;
-    const inter = [...bt].filter((w) => ct.has(w));
-    const subset = inter.length === bt.size || inter.length === ct.size;
-    const distinctive = inter.some((w) => w.length >= 3);
-    if (subset && distinctive) subsetHits.push(v.name);
-  }
-  if (subsetHits.length === 1) return subsetHits[0];
-  return null; // none, or ambiguous
-}
-
-// Booking-system exports are often Windows/Latin-1, not UTF-8, so "£" arrives as a
-// stray byte. Decode as UTF-8 first; if that produces replacement chars, fall back to Latin-1.
-function decodeCsv(buffer) {
-  if (!buffer) return undefined;
-  const asUtf8 = buffer.toString("utf8");
-  if (asUtf8.includes("\uFFFD")) {
-    return buffer.toString("latin1");
-  }
-  return asUtf8;
-}
-
-// Parse a decoded CSV string robustly: strip a BOM, skip any leading title rows
-// (some exports put a sheet title on line 1 above the real headers), and let Papa
-// auto-detect the delimiter (handles Excel exports using ";" or tabs).
-function parseCsv(text) {
-  if (!text) return [];
-  let clean = text.replace(/^\uFEFF/, "");
-
-  // Find the real header line: the first line that contains a column we recognise.
-  // This skips a stray title row like "gig confirm sheet" sitting above the headers.
-  const lines = clean.split(/\r?\n/);
-  const headerHints = ["act", "venue", "email", "date"];
-  let headerIdx = 0;
-  for (let i = 0; i < Math.min(lines.length, 10); i++) {
-    const low = lines[i].toLowerCase();
-    const hits = headerHints.filter((h) => low.includes(h)).length;
-    if (hits >= 2) { headerIdx = i; break; }
-  }
-  if (headerIdx > 0) clean = lines.slice(headerIdx).join("\n");
-
-  const res = Papa.parse(clean, {
-    header: true,
-    skipEmptyLines: "greedy",
-    transformHeader: (h) => h.trim(),
-  });
-  return res.data;
-}
-
-function pick(row, candidates) {
-  const keys = Object.keys(row);
-  for (const c of candidates) {
-    const hit = keys.find((k) => normKey(k) === normKey(c));
-    if (hit) return norm(row[hit]);
-  }
-  for (const c of candidates) {
-    const hit = keys.find((k) => normKey(k).includes(normKey(c)));
-    if (hit) return norm(row[hit]);
-  }
-  return "";
-}
-
-// ---------- auth: per-user login, agency-scoped sessions ----------
-// Encrypt/decrypt cloud-storage refresh tokens at rest (AES-256-GCM). The key is
-// derived from TOKEN_ENC_KEY (or CRON_SECRET as a fallback) so tokens are never stored
-// in plaintext.
-const _encKey = crypto.createHash("sha256").update(String(TOKEN_ENC_KEY || CRON_SECRET || "gigconfirm-fallback-key")).digest();
-function encryptToken(plain) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", _encKey, iv);
-  const enc = Buffer.concat([cipher.update(String(plain), "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${iv.toString("hex")}:${tag.toString("hex")}:${enc.toString("hex")}`;
-}
-function decryptToken(blob) {
-  const [ivh, tagh, dh] = String(blob).split(":");
-  const decipher = crypto.createDecipheriv("aes-256-gcm", _encKey, Buffer.from(ivh, "hex"));
-  decipher.setAuthTag(Buffer.from(tagh, "hex"));
-  return Buffer.concat([decipher.update(Buffer.from(dh, "hex")), decipher.final()]).toString("utf8");
-}
-
-// Password hashing with Node's built-in scrypt (no extra dependency).
-function hashPassword(pw) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(pw, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
-}
-function verifyPassword(pw, stored) {
-  if (!stored || !stored.includes(":")) return false;
-  const [salt, hash] = stored.split(":");
-  const test = crypto.scryptSync(pw, salt, 64).toString("hex");
-  const a = Buffer.from(hash, "hex");
-  const b = Buffer.from(test, "hex");
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-// Sessions map a random token -> { userId, agencyId }. Kept in memory; on restart
-// users simply log in again.
-const sessions = new Map();
-function makeToken() { return nanoid(40); }
-
-// Look up the current session from the cookie. Returns { userId, agencyId } or null.
-function sessionFor(req) {
-  const t = req.cookies?.gc_admin;
-  return (t && sessions.get(t)) || null;
-}
-
-// Gate for all admin routes. Also attaches req.agencyId / req.userId for scoping.
+/* ---------- admin config ----------
+   Only these accounts can create/manage complimentary & discount codes.
+   Comma-separated list in .env, e.g. ADMIN_EMAILS=you@x.com,partner@x.com */
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+function isAdmin(user) { return !!user && ADMIN_EMAILS.includes(user.email.toLowerCase()); }
 function requireAdmin(req, res, next) {
-  const s = sessionFor(req);
-  if (s) {
-    req.agencyId = s.agencyId;
-    req.userId = s.userId;
-    req.isAdmin = !!s.isAdmin;
-    return next();
-  }
-  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Not signed in." });
-  return res.redirect("/login.html");
+  if (!req.user) return res.status(401).json({ error: 'Please sign in.' });
+  if (!isAdmin(req.user)) return res.status(403).json({ error: 'Admin only.' });
+  next();
 }
 
-// Gate for platform-admin-only routes (discount management, etc.).
-function requirePlatformAdmin(req, res, next) {
-  const s = sessionFor(req);
-  if (s && s.isAdmin) { req.agencyId = s.agencyId; req.userId = s.userId; req.isAdmin = true; return next(); }
-  return res.status(403).json({ error: "Admin only." });
-}
-
-app.post("/api/login", async (req, res) => {
-  const email = (req.body?.email || "").trim().toLowerCase();
-  const password = req.body?.password || "";
-  if (!email || !password) return res.status(400).json({ error: "Email and password required." });
-  const user = (await pool.query(
-    `SELECT u.*, a.active AS agency_active, a.sub_status FROM users u
-     JOIN agencies a ON a.id = u.agency_id WHERE u.email=$1`, [email]
-  )).rows[0];
-  if (!user || !verifyPassword(password, user.pass_hash)) {
-    return res.status(401).json({ error: "Wrong email or password." });
-  }
-  // We allow login even when the subscription is inactive — the dashboard will send
-  // them to the billing page. This lets a lapsed agency log in to pay again.
-  const t = makeToken();
-  sessions.set(t, { userId: user.id, agencyId: user.agency_id, isAdmin: !!user.is_admin });
-  res.cookie("gc_admin", t, { httpOnly: true, sameSite: "lax", secure: APP_URL.startsWith("https"), maxAge: 7 * 864e5 });
-  res.json({ ok: true });
-});
-
-app.post("/api/logout", (req, res) => {
-  const t = req.cookies?.gc_admin;
-  if (t) sessions.delete(t);
-  res.clearCookie("gc_admin");
-  res.json({ ok: true });
-});
-
-// ---------- public signup (Stage C) ----------
-// Prefixes that can't be taken (system/role addresses, and the founding agency).
-const RESERVED_PREFIXES = new Set([
-  "admin", "administrator", "info", "hello", "support", "help", "noreply", "no-reply",
-  "postmaster", "webmaster", "billing", "sales", "contact", "team", "root", "gigs",
-  "gigconfirm", "mail", "email", "test", "ldagency",
-]);
-
-function normalisePrefix(raw) {
-  return (raw || "").toLowerCase().trim().replace(/[^a-z0-9-]/g, "");
-}
-function prefixError(prefix) {
-  if (!prefix) return "Choose an email prefix.";
-  if (prefix.length < 3) return "Prefix must be at least 3 characters.";
-  if (prefix.length > 30) return "Prefix must be 30 characters or fewer.";
-  if (!/^[a-z0-9-]+$/.test(prefix)) return "Use only lowercase letters, numbers and hyphens.";
-  if (/^-|-$/.test(prefix)) return "Prefix can't start or end with a hyphen.";
-  if (RESERVED_PREFIXES.has(prefix)) return "That prefix isn't available.";
-  return null;
-}
-
-// Live availability check for the signup form.
-app.get("/api/check-prefix", async (req, res) => {
-  const prefix = normalisePrefix(req.query.prefix);
-  const err = prefixError(prefix);
-  if (err) return res.json({ available: false, reason: err, prefix });
-  const taken = (await pool.query("SELECT 1 FROM agencies WHERE email_prefix=$1", [prefix])).rows[0];
-  res.json({ available: !taken, reason: taken ? "That prefix is already taken." : null, prefix });
-});
-
-app.post("/api/signup", async (req, res) => {
-  try {
-    const agencyName = (req.body?.agencyName || "").trim();
-    const prefix = normalisePrefix(req.body?.prefix);
-    const userName = (req.body?.userName || "").trim();
-    const email = (req.body?.email || "").trim().toLowerCase();
-    const password = req.body?.password || "";
-
-    if (!agencyName) return res.status(400).json({ error: "Enter your agency name." });
-    const pErr = prefixError(prefix);
-    if (pErr) return res.status(400).json({ error: pErr });
-    if (!email || !/\S+@\S+\.\S+/.test(email)) return res.status(400).json({ error: "Enter a valid email." });
-    if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
-
-    // uniqueness checks
-    if ((await pool.query("SELECT 1 FROM agencies WHERE email_prefix=$1", [prefix])).rows[0])
-      return res.status(409).json({ error: "That email prefix is already taken." });
-    if ((await pool.query("SELECT 1 FROM users WHERE email=$1", [email])).rows[0])
-      return res.status(409).json({ error: "That email is already registered." });
-
-    const agencyId = nanoid(16);
-    await pool.query(
-      "INSERT INTO agencies (id, name, email_prefix, active) VALUES ($1,$2,$3,true)",
-      [agencyId, agencyName, prefix]
-    );
-    const userId = nanoid(16);
-    await pool.query(
-      "INSERT INTO users (id, agency_id, email, name, pass_hash, is_owner) VALUES ($1,$2,$3,$4,$5,true)",
-      [userId, agencyId, email, userName || null, hashPassword(password)]
-    );
-    // start them with an active week so the dashboard has somewhere to put a first upload
-    await pool.query(
-      "INSERT INTO batches (id, agency_id, label, archived) VALUES ($1,$2,$3,false)",
-      [nanoid(16), agencyId, "Current week"]
-    );
-
-    // log them straight in
-    const t = makeToken();
-    sessions.set(t, { userId, agencyId });
-    res.cookie("gc_admin", t, { httpOnly: true, sameSite: "lax", secure: APP_URL.startsWith("https"), maxAge: 7 * 864e5 });
-    res.json({ ok: true });
-
-    // Alert the platform admin that a new agency has signed up (best-effort — never
-    // blocks or fails the signup itself).
-    notifyNewAgency({ agencyName, prefix, userName, email }).catch((e) =>
-      console.error("new-agency alert failed", e.message)
-    );
-  } catch (e) {
-    console.error("signup failed", e);
-    res.status(500).json({ error: "Couldn't complete signup: " + e.message });
-  }
-});
-
-// Public contact form — emails the platform owner. No auth (it's a public page), but
-// lightly rate-limited per-process to deter abuse.
-const contactHits = [];
-app.post("/api/contact", async (req, res) => {
-  try {
-    const name = (req.body?.name || "").toString().trim().slice(0, 120);
-    const from = (req.body?.email || "").toString().trim().slice(0, 160);
-    const agency = (req.body?.agency || "").toString().trim().slice(0, 160);
-    const message = (req.body?.message || "").toString().trim().slice(0, 4000);
-    if (!name || !from || !message) return res.status(400).json({ error: "Please fill in your name, email and message." });
-    if (!/\S+@\S+\.\S+/.test(from)) return res.status(400).json({ error: "That email doesn't look valid." });
-
-    // simple rolling rate limit: max 5 messages per 10 minutes per process
-    const now = Date.now();
-    while (contactHits.length && now - contactHits[0] > 600000) contactHits.shift();
-    if (contactHits.length >= 5) return res.status(429).json({ error: "Too many messages just now — please try again shortly." });
-    contactHits.push(now);
-
-    if (!resend) return res.status(500).json({ error: "Messaging isn't configured right now." });
-    const to = ADMIN_ALERT_EMAIL ? ADMIN_ALERT_EMAIL.split(",").map((s) => s.trim()).filter(Boolean) : ["phil@phil-freeman.co.uk"];
-    await sendMail({
-      from: MAIL_FROM || `GigConfirm <${SEND_ADDRESS}>`,
-      to,
-      replyTo: from,     // so you can reply straight to the sender
-      subject: `Contact form: ${name}${agency ? " (" + agency + ")" : ""}`,
-      html: `
-        <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#222">
-          <h2 style="margin:0 0 10px">New message via GigConfirm</h2>
-          <table style="border-collapse:collapse;font-size:14px;margin-bottom:12px">
-            <tr><td style="padding:4px 12px 4px 0;color:#667"><b>Name</b></td><td style="padding:4px 0">${esc(name)}</td></tr>
-            <tr><td style="padding:4px 12px 4px 0;color:#667"><b>Email</b></td><td style="padding:4px 0">${esc(from)}</td></tr>
-            ${agency ? `<tr><td style="padding:4px 12px 4px 0;color:#667"><b>Agency</b></td><td style="padding:4px 0">${esc(agency)}</td></tr>` : ""}
-          </table>
-          <div style="white-space:pre-wrap;background:#f4f7fa;border-radius:8px;padding:12px 14px;font-size:14px">${esc(message)}</div>
-          <p style="margin:14px 0 0;color:#889;font-size:12px">Reply to this email to respond directly to ${esc(name)}.</p>
-        </div>`,
-    });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("contact form failed", e);
-    res.status(500).json({ error: "Couldn't send your message. Please email phil@phil-freeman.co.uk directly." });
-  }
-});
-
-// Email the platform admin(s) when a new agency joins.
-async function notifyNewAgency({ agencyName, prefix, userName, email }) {
-  if (!resend) return;
-  // Recipients: the ADMIN_ALERT_EMAIL override if set, otherwise every platform admin.
-  let recipients = [];
-  if (ADMIN_ALERT_EMAIL) {
-    recipients = ADMIN_ALERT_EMAIL.split(",").map((s) => s.trim()).filter(Boolean);
-  } else {
-    recipients = (await pool.query("SELECT email FROM users WHERE is_admin=true")).rows.map((r) => r.email).filter(Boolean);
-  }
-  if (!recipients.length) return;
-  await sendMail({
-    from: MAIL_FROM || `GigConfirm <${SEND_ADDRESS}>`,
-    to: recipients,
-    subject: `New agency signed up: ${agencyName}`,
-    html: `
-      <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#222">
-        <h2 style="margin:0 0 10px">New agency on GigConfirm 🎉</h2>
-        <p style="margin:0 0 12px">A new agency just signed up:</p>
-        <table style="border-collapse:collapse;font-size:14px">
-          <tr><td style="padding:4px 12px 4px 0;color:#667"><b>Agency</b></td><td style="padding:4px 0">${esc(agencyName)}</td></tr>
-          <tr><td style="padding:4px 12px 4px 0;color:#667"><b>Email prefix</b></td><td style="padding:4px 0">${esc(prefix)}@${esc(SEND_DOMAIN)}</td></tr>
-          <tr><td style="padding:4px 12px 4px 0;color:#667"><b>Owner</b></td><td style="padding:4px 0">${esc(userName || "—")}</td></tr>
-          <tr><td style="padding:4px 12px 4px 0;color:#667"><b>Login email</b></td><td style="padding:4px 0">${esc(email)}</td></tr>
-        </table>
-        <p style="margin:14px 0 0;color:#889;font-size:12px">Sent automatically by GigConfirm.</p>
-      </div>`,
-  });
-}
-
-// Who am I — used by the dashboard to show the logged-in user & agency.
-app.get("/api/me", requireAdmin, async (req, res) => {
-  const u = (await pool.query(
-    `SELECT u.name, u.email, u.is_admin, u.is_owner, u.notifs_seen_at, a.name AS agency_name, a.email_prefix,
-            a.sub_status, a.active, a.id AS agency_id, (a.logo_data IS NOT NULL) AS has_logo
-     FROM users u JOIN agencies a ON a.id=u.agency_id WHERE u.id=$1`, [req.userId]
-  )).rows[0] || {};
-  const hasBookings = (await pool.query("SELECT 1 FROM bookings WHERE agency_id=$1 LIMIT 1", [req.agencyId])).rows[0];
-  u.isNew = !hasBookings;
-  u.needsSubscription = !(ACTIVE_STATUSES.has(u.sub_status) || u.active === true);
-  res.json(u);
-});
-
-// Public config for the marketing/billing pages (no auth).
-app.get("/api/public-config", (req, res) => {
-  res.json({ price: PRICE_DISPLAY, billingEnabled: !!(stripe && STRIPE_PRICE_ID) });
-});
-
-// ---------- notifications ----------
-// Gathers things needing attention for this agency: bounced emails, flagged gigs,
-// and billing problems. Anything newer than the user's notifs_seen_at is "unread".
-app.get("/api/notifications", requireAdmin, async (req, res) => {
-  const items = [];
-
-  // 1) bounced / spam-complaint emails for this agency (last 30 days). Include the
-  // bounce detail/reason and identify what kind of recipient the address is.
-  const bounces = (await pool.query(
-    `SELECT DISTINCT ON (ee.email) ee.email, ee.type, ee.detail, ee.created_at,
-            (SELECT a.name FROM acts a WHERE lower(a.email)=ee.email AND a.agency_id=$1 LIMIT 1) AS act_name,
-            (SELECT v.display_name FROM venues v WHERE v.agency_id=$1 AND v.email IS NOT NULL
-               AND position(ee.email in lower(v.email))>0 LIMIT 1) AS venue_name,
-            (SELECT u.name FROM users u WHERE lower(u.email)=ee.email AND u.agency_id=$1 LIMIT 1) AS user_name
-     FROM email_events ee
-     WHERE ee.agency_id=$1 AND ee.type IN ('bounced','complained')
-       AND ee.created_at > now() - interval '30 days'
-     ORDER BY ee.email, ee.created_at DESC`, [req.agencyId]
-  )).rows;
-  for (const b of bounces) {
-    // describe who the address belongs to
-    let who = b.email;
-    if (b.act_name) who = `${b.act_name} (act · ${b.email})`;
-    else if (b.venue_name) who = `${b.venue_name} (venue · ${b.email})`;
-    else if (b.user_name) who = `${b.user_name} (team · ${b.email})`;
-    const verb = b.type === "complained" ? "was marked as spam" : "bounced";
-    items.push({
-      type: "bounce",
-      at: b.created_at,
-      text: `Email to ${who} ${verb}`,
-      detail: b.detail || (b.type === "complained"
-        ? "The recipient's mail provider flagged this as spam."
-        : "The address may be wrong, full, or no longer exist."),
-      target: b.venue_name ? "venues" : "acts",
-    });
-  }
-
-  // 2) gigs an act flagged as an issue, in the current (non-archived) batch
-  const flagged = (await pool.query(
-    `SELECT bk.id, bk.responded_at, bk.message, a.name AS act_name,
-            COALESCE(NULLIF(bk.venue_text,''), v.display_name) AS venue
-     FROM bookings bk
-     JOIN acts a ON a.id=bk.act_id
-     LEFT JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-     LEFT JOIN batches ba ON ba.id=bk.batch_id
-     WHERE bk.agency_id=$1 AND bk.status='issue' AND COALESCE(ba.archived,false)=false
-     ORDER BY bk.responded_at DESC NULLS LAST`, [req.agencyId]
-  )).rows;
-  for (const f of flagged) {
-    items.push({
-      type: "issue",
-      at: f.responded_at || new Date(0).toISOString(),
-      text: `${f.act_name} flagged an issue with ${f.venue || "a gig"}`,
-      detail: f.message ? `“${f.message}”` : "No message left — you may want to check with them.",
-      target: "bookings",
-    });
-  }
-
-  // 3) billing alerts for this agency. Uses a stable timestamp (the agency's created
-  // time) so it doesn't count as "new" on every refresh once read.
-  const ag = (await pool.query("SELECT sub_status, created_at FROM agencies WHERE id=$1", [req.agencyId])).rows[0];
-  if (ag && (ag.sub_status === "past_due" || ag.sub_status === "canceled")) {
-    items.push({
-      type: "billing",
-      at: ag.created_at || new Date(0).toISOString(),
-      text: ag.sub_status === "past_due"
-        ? "Your last subscription payment failed."
-        : "Your subscription is cancelled.",
-      detail: ag.sub_status === "past_due"
-        ? "Please update your billing to keep sending confirmations."
-        : "Resubscribe to keep sending confirmations.",
-      target: "billing",
-    });
-  }
-
-  // sort newest first
-  items.sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
-
-  // A "mark all read" records notifs_seen_at = now. Items at or before that marker are
-  // treated as dismissed and excluded, so they don't reappear on refresh. Only things
-  // that happen *after* the last dismissal show up.
-  const u = (await pool.query("SELECT notifs_seen_at FROM users WHERE id=$1", [req.userId])).rows[0];
-  const seenAt = u?.notifs_seen_at ? new Date(u.notifs_seen_at) : null;
-  const visible = seenAt ? items.filter((i) => new Date(i.at || 0) > seenAt) : items;
-  const unread = visible.length;
-
-  res.json({ items: visible, unread });
-});
-
-// Mark notifications as seen (updates the last-seen marker to now).
-app.post("/api/notifications/seen", requireAdmin, async (req, res) => {
-  await pool.query("UPDATE users SET notifs_seen_at=now() WHERE id=$1", [req.userId]);
-  res.json({ ok: true });
-});
-
-// ---------- billing (Stripe) ----------
-// Start a checkout for the monthly plan, optionally with a discount code.
-app.post("/api/create-checkout", requireAdmin, async (req, res) => {
-  try {
-    if (!stripe || !STRIPE_PRICE_ID) return res.status(500).json({ error: "Billing isn't configured yet." });
-    const agency = (await pool.query("SELECT * FROM agencies WHERE id=$1", [req.agencyId])).rows[0];
-    const codeStr = (req.body?.code || "").trim().toUpperCase();
-
-    // resolve a discount code -> Stripe coupon
-    let discounts;
-    let usedCode = null;
-    if (codeStr) {
-      const dc = (await pool.query("SELECT * FROM discount_codes WHERE code=$1 AND active=true", [codeStr])).rows[0];
-      if (!dc) return res.status(400).json({ error: "That discount code isn't valid." });
-      const couponId = await ensureStripeCoupon(dc);
-      discounts = [{ coupon: couponId }];
-      usedCode = dc.code;
-    }
-
-    // ensure a Stripe customer exists for this agency
-    let customerId = agency.stripe_customer_id;
-    if (!customerId) {
-      const c = await stripe.customers.create({ name: agency.name, metadata: { agencyId: agency.id } });
-      customerId = c.id;
-      await pool.query("UPDATE agencies SET stripe_customer_id=$1 WHERE id=$2", [customerId, agency.id]);
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      customer: customerId,
-      line_items: [{ price: STRIPE_PRICE_ID, quantity: 1 }],
-      discounts,
-      client_reference_id: agency.id,
-      metadata: { agencyId: agency.id, discountCode: usedCode || "" },
-      subscription_data: { metadata: { agencyId: agency.id } },
-      success_url: `${APP_URL}/dashboard.html?sub=success`,
-      cancel_url: `${APP_URL}/billing.html?sub=cancelled`,
-    });
-    res.json({ url: session.url });
-  } catch (e) {
-    console.error("checkout error", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Open Stripe's billing portal so they can manage/cancel their subscription.
-app.post("/api/billing-portal", requireAdmin, async (req, res) => {
-  try {
-    if (!stripe) return res.status(500).json({ error: "Billing isn't configured." });
-    const agency = (await pool.query("SELECT stripe_customer_id FROM agencies WHERE id=$1", [req.agencyId])).rows[0];
-    if (!agency?.stripe_customer_id) return res.status(400).json({ error: "No billing account yet." });
-    const portal = await stripe.billingPortal.sessions.create({
-      customer: agency.stripe_customer_id,
-      return_url: `${APP_URL}/dashboard.html`,
-    });
-    res.json({ url: portal.url });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Validate a discount code for the signup/billing page (shows the effect).
-app.get("/api/check-code", async (req, res) => {
-  const code = (req.query.code || "").toString().trim().toUpperCase();
-  if (!code) return res.json({ valid: false });
-  const dc = (await pool.query("SELECT code, kind, value, duration FROM discount_codes WHERE code=$1 AND active=true", [code])).rows[0];
-  if (!dc) return res.json({ valid: false, reason: "Not a valid code." });
-  const desc = dc.kind === "percent" ? `${dc.value}% off` : `£${(dc.value/100).toFixed(2)} off`;
-  res.json({ valid: true, description: desc + (dc.duration === "forever" ? " (ongoing)" : " (first payment)") });
-});
-
-// Create the Stripe coupon for a discount code if it doesn't have one yet.
-async function ensureStripeCoupon(dc) {
-  if (dc.stripe_coupon_id) return dc.stripe_coupon_id;
-  const params = { duration: dc.duration === "forever" ? "forever" : "once" };
-  if (dc.kind === "percent") params.percent_off = dc.value;
-  else { params.amount_off = dc.value; params.currency = "gbp"; }
-  const coupon = await stripe.coupons.create(params);
-  await pool.query("UPDATE discount_codes SET stripe_coupon_id=$1 WHERE code=$2", [coupon.id, dc.code]);
-  return coupon.id;
-}
-
-// ---------- discount codes (platform admin) ----------
-app.get("/api/discounts", requirePlatformAdmin, async (req, res) => {
-  const rows = (await pool.query("SELECT code, kind, value, duration, active, times_used FROM discount_codes ORDER BY created_at DESC")).rows;
-  res.json({ codes: rows });
-});
-
-app.post("/api/discounts", requirePlatformAdmin, async (req, res) => {
-  try {
-    const code = (req.body?.code || "").trim().toUpperCase();
-    const kind = req.body?.kind === "amount" ? "amount" : "percent";
-    const duration = req.body?.duration === "forever" ? "forever" : "once";
-    let value = parseInt(req.body?.value, 10);
-    if (!/^[A-Z0-9]{3,40}$/.test(code)) return res.status(400).json({ error: "Code must be 3–40 letters/numbers." });
-    if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ error: "Enter a positive value." });
-    if (kind === "percent" && value > 100) return res.status(400).json({ error: "Percent can't exceed 100." });
-    const exists = (await pool.query("SELECT 1 FROM discount_codes WHERE code=$1", [code])).rows[0];
-    if (exists) return res.status(409).json({ error: "That code already exists." });
-    await pool.query(
-      "INSERT INTO discount_codes (code, kind, value, duration, active) VALUES ($1,$2,$3,$4,true)",
-      [code, kind, value, duration]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post("/api/discounts/toggle", requirePlatformAdmin, async (req, res) => {
-  const code = (req.body?.code || "").trim().toUpperCase();
-  await pool.query("UPDATE discount_codes SET active = NOT active WHERE code=$1", [code]);
-  res.json({ ok: true });
-});
-
-app.post("/api/discounts/delete", requirePlatformAdmin, async (req, res) => {
-  const code = (req.body?.code || "").trim().toUpperCase();
-  await pool.query("DELETE FROM discount_codes WHERE code=$1", [code]);
-  res.json({ ok: true });
-});
-
-// ---------- subscribers overview (platform admin) ----------
-app.get("/api/subscribers", requirePlatformAdmin, async (req, res) => {
-  const agencies = (await pool.query(
-    `SELECT a.id, a.name, a.email_prefix, a.sub_status, a.active, a.created_at,
-            (SELECT count(*)::int FROM users u WHERE u.agency_id=a.id) AS user_count,
-            (SELECT count(*)::int FROM bookings b WHERE b.agency_id=a.id) AS booking_count
-     FROM agencies a ORDER BY a.created_at DESC`
-  )).rows;
-  const users = (await pool.query(
-    "SELECT id, agency_id, name, email, is_admin FROM users ORDER BY created_at"
-  )).rows;
-  const statusMap = await latestEmailStatus(users.map((u) => u.email));
-  for (const u of users) u.email_status = statusMap[(u.email || "").toLowerCase()] || null;
-  // nest users under their agency
-  const byAgency = {};
-  for (const u of users) (byAgency[u.agency_id] ||= []).push(u);
-  for (const a of agencies) a.users = byAgency[a.id] || [];
-  res.json({ agencies });
-});
-
-// Reset a user's password to a fresh random one and email it to them.
-app.post("/api/reset-user-password", requirePlatformAdmin, async (req, res) => {
-  try {
-    const userId = (req.body?.userId || "").toString();
-    const user = (await pool.query(
-      `SELECT u.id, u.email, u.name, u.agency_id, a.name AS agency_name
-       FROM users u JOIN agencies a ON a.id=u.agency_id WHERE u.id=$1`, [userId]
-    )).rows[0];
-    if (!user) return res.status(404).json({ error: "No such user." });
-
-    // generate a readable temporary password
-    const newPass = "gc-" + nanoid(10);
-    await pool.query("UPDATE users SET pass_hash=$1 WHERE id=$2", [hashPassword(newPass), userId]);
-
-    let emailed = false, emailError = null;
-    if (resend) {
-      try {
-        const sender = await senderForAgency(user.agency_id);
-        await sendMail({
-          from: sender.from,
-          replyTo: sender.replyTo,
-          to: user.email,
-          subject: `Your GigConfirm password has been reset`,
-          html: `
-            <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#222">
-              <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-              <p>Hi${user.name ? " " + esc(user.name) : ""},</p>
-              <p>Your GigConfirm password has been reset. Here are your updated login details:</p>
-              <div style="background:#f5f3ee;border-radius:10px;padding:14px 16px;margin:14px 0">
-                <div><strong>Email:</strong> ${esc(user.email)}</div>
-                <div><strong>New password:</strong> ${esc(newPass)}</div>
-              </div>
-              <p style="text-align:center;margin:24px 0">
-                <a href="${APP_URL}/login.html" style="background:#25d366;color:#0b1220;padding:13px 26px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;display:inline-block">Sign in</a>
-              </p>
-              <p style="color:#666;font-size:13px">Please change it after signing in, under "Team &amp; account".</p>
-              ${emailFooter(sender)}
-            </div>
-          `,
-        });
-        emailed = true;
-      } catch (e) { emailError = e.message; console.error("reset email failed", e.message); }
-    }
-    // return the new password too, so the admin can pass it on if email failed
-    res.json({ ok: true, emailed, emailError, newPass });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Permanently delete a whole agency and everything belonging to it (platform admin).
-// Requires the exact agency name as confirmation. The founding agency can't be deleted.
-app.post("/api/delete-agency", requirePlatformAdmin, async (req, res) => {
-  const agencyId = (req.body?.agencyId || "").toString();
-  const confirmName = (req.body?.confirmName || "").toString().trim();
-  if (agencyId === "ld-agency") return res.status(400).json({ error: "The founding agency can't be deleted." });
-
-  const agency = (await pool.query("SELECT id, name FROM agencies WHERE id=$1", [agencyId])).rows[0];
-  if (!agency) return res.status(404).json({ error: "No such agency." });
-  if (confirmName !== agency.name) {
-    return res.status(400).json({ error: "The name you typed doesn't match. Deletion cancelled." });
-  }
-  // Guard against deleting your own agency (you're operating as platform admin).
-  if (agencyId === req.agencyId) return res.status(400).json({ error: "You can't delete the agency you're signed in under." });
-
-  // Cancel any live Stripe subscription first, so they aren't billed after deletion.
-  try {
-    const sub = (await pool.query("SELECT stripe_subscription_id FROM agencies WHERE id=$1", [agencyId])).rows[0];
-    if (stripe && sub?.stripe_subscription_id) {
-      await stripe.subscriptions.cancel(sub.stripe_subscription_id).catch((e) => console.error("stripe cancel on delete failed", e.message));
-    }
-  } catch (e) { console.error("stripe cancel lookup failed", e.message); }
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    // Only delete from tables that actually have an agency_id column on THIS database
-    // (older DBs may differ). Anything with an ON DELETE CASCADE FK is also cleaned up
-    // automatically when the agency row goes, so this is belt-and-braces.
-    const candidates = ["bookings", "batches", "acts", "venues", "settings", "email_events", "users"];
-    for (const t of candidates) {
-      const hasCol = (await client.query(
-        `SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name='agency_id' LIMIT 1`, [t]
-      )).rows[0];
-      if (hasCol) await client.query(`DELETE FROM ${t} WHERE agency_id=$1`, [agencyId]);
-    }
-    await client.query("DELETE FROM agencies WHERE id=$1", [agencyId]);
-    await client.query("COMMIT");
-    res.json({ ok: true });
-  } catch (e) {
-    await client.query("ROLLBACK");
-    console.error("delete-agency failed", e.message);
-    res.status(500).json({ error: e.message });
-  } finally {
-    client.release();
-  }
-});
-
-// Diagnostic: show the most recent email delivery events recorded (platform admin).
-// Lets us confirm whether Resend webhooks are actually landing and being stored.
-// Diagnostic: show stored performer_name per booking for an act, so we can confirm
-// whether per-gig stage names were captured from the CSV (platform admin only).
-app.get("/api/debug-performer", requirePlatformAdmin, async (req, res) => {
-  const act = (req.query.act || "").toString();
-  const rows = (await pool.query(
-    `SELECT bk.id, bk.performer_name, a.name AS account_name,
-            COALESCE(NULLIF(bk.venue_text,''), '') AS venue, bk.gig_date, bk.created_at
-     FROM bookings bk JOIN acts a ON a.id=bk.act_id
-     WHERE bk.act_id=$1 AND bk.agency_id=$2
-     ORDER BY bk.created_at DESC LIMIT 50`, [act, req.agencyId]
-  )).rows;
-  res.json({ act, bookings: rows });
-});
-
-app.get("/api/email-events", requirePlatformAdmin, async (req, res) => {
-  const rows = (await pool.query(
-    `SELECT email, type, agency_id, detail, created_at
-     FROM email_events ORDER BY created_at DESC LIMIT 50`
-  )).rows;
-  const total = (await pool.query("SELECT count(*)::int AS n FROM email_events")).rows[0].n;
-  res.json({ total, recent: rows });
-});
-
-// ---------- team / user management (within the agency) ----------
-app.get("/api/users", requireAdmin, async (req, res) => {
-  const rows = (await pool.query(
-    "SELECT id, name, email, created_at FROM users WHERE agency_id=$1 ORDER BY created_at", [req.agencyId]
-  )).rows;
-  const statusMap = await latestEmailStatus(rows.map((u) => u.email));
-  for (const u of rows) u.email_status = statusMap[(u.email || "").toLowerCase()] || null;
-  res.json({ users: rows, me: req.userId });
-});
-
-app.post("/api/add-user", requireAdmin, async (req, res) => {
-  try {
-    const name = (req.body?.name || "").trim();
-    const email = (req.body?.email || "").trim().toLowerCase();
-    const password = req.body?.password || "";
-    if (!email || !password) return res.status(400).json({ error: "Email and password are required." });
-    if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
-    const exists = (await pool.query("SELECT 1 FROM users WHERE email=$1", [email])).rows[0];
-    if (exists) return res.status(409).json({ error: "That email is already in use." });
-    await pool.query(
-      "INSERT INTO users (id, agency_id, email, name, pass_hash) VALUES ($1,$2,$3,$4,$5)",
-      [nanoid(16), req.agencyId, email, name || null, hashPassword(password)]
-    );
-
-    // Email the new member their login details (best-effort — don't fail the add if
-    // the email can't be sent; just report it back so the admin can share manually).
-    let invited = false, inviteError = null;
-    if (resend) {
-      try {
-        const sender = await senderForAgency(req.agencyId);
-        const loginUrl = `${APP_URL}/login.html`;
-        await sendMail({
-          from: sender.from,
-          replyTo: sender.replyTo,
-          to: email,
-          subject: `You've been added to ${sender.agencyName} on GigConfirm`,
-          html: `
-            <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#222">
-              <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-              <p>Hi${name ? " " + esc(name) : ""},</p>
-              <p>You've been added to <strong>${esc(sender.agencyName)}</strong>'s GigConfirm account, so you can manage gig confirmations for the agency.</p>
-              <p>Here are your login details:</p>
-              <div style="background:#f5f3ee;border-radius:10px;padding:14px 16px;margin:14px 0">
-                <div><strong>Email:</strong> ${esc(email)}</div>
-                <div><strong>Password:</strong> ${esc(password)}</div>
-              </div>
-              <p style="text-align:center;margin:24px 0">
-                <a href="${loginUrl}" style="background:#25d366;color:#0b1220;padding:13px 26px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;display:inline-block">Sign in to GigConfirm</a>
-              </p>
-              <p style="color:#666;font-size:13px">For your security, please change your password after signing in — you can do it under "Team &amp; account".</p>
-              ${emailFooter(sender)}
-            </div>
-          `,
-        });
-        invited = true;
-      } catch (e) {
-        inviteError = e.message;
-        console.error("invite email failed for", email, e.message);
-      }
-    }
-    res.json({ ok: true, invited, inviteError });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post("/api/delete-user", requireAdmin, async (req, res) => {
-  const id = (req.body?.id || "").toString();
-  if (id === req.userId) return res.status(400).json({ error: "You can't delete your own account." });
-  // count remaining users so an agency can't be left with none
-  const n = (await pool.query("SELECT count(*)::int AS n FROM users WHERE agency_id=$1", [req.agencyId])).rows[0].n;
-  if (n <= 1) return res.status(400).json({ error: "An agency must keep at least one user." });
-  await pool.query("DELETE FROM users WHERE id=$1 AND agency_id=$2", [id, req.agencyId]);
-  res.json({ ok: true });
-});
-
-// Change your own password.
-app.post("/api/change-password", requireAdmin, async (req, res) => {
-  const current = req.body?.current || "";
-  const next = req.body?.next || "";
-  if (next.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters." });
-  const u = (await pool.query("SELECT pass_hash FROM users WHERE id=$1", [req.userId])).rows[0];
-  if (!u || !verifyPassword(current, u.pass_hash)) return res.status(403).json({ error: "Current password is wrong." });
-  await pool.query("UPDATE users SET pass_hash=$1 WHERE id=$2", [hashPassword(next), req.userId]);
-  res.json({ ok: true });
-});
-
-// ---------- agency branding (logo, website, phone) ----------
-app.get("/api/agency", requireAdmin, async (req, res) => {
-  const a = (await pool.query(
-    "SELECT id, name, email_prefix, website, phone, (logo_data IS NOT NULL) AS has_logo FROM agencies WHERE id=$1",
-    [req.agencyId]
-  )).rows[0];
-  res.json(a || {});
-});
-
-app.post("/api/agency", requireAdmin, async (req, res) => {
-  const website = (req.body?.website || "").trim().slice(0, 200);
-  const phone = (req.body?.phone || "").trim().slice(0, 40);
-  await pool.query("UPDATE agencies SET website=$1, phone=$2 WHERE id=$3", [website, phone, req.agencyId]);
-  res.json({ ok: true });
-});
-
-// Upload a logo image (stored in the DB as a data URI so it survives redeploys).
-app.post("/api/agency-logo", requireAdmin, upload.single("logo"), async (req, res) => {
-  try {
-    const f = req.file;
-    if (!f) return res.status(400).json({ error: "No image received." });
-    if (!/^image\/(png|jpe?g|gif|webp)$/.test(f.mimetype)) {
-      return res.status(400).json({ error: "Please upload a PNG, JPG, GIF or WebP image." });
-    }
-    if (f.buffer.length > 500 * 1024) {
-      return res.status(400).json({ error: "Image is too large — please use one under 500 KB." });
-    }
-    const dataUri = `data:${f.mimetype};base64,${f.buffer.toString("base64")}`;
-    await pool.query("UPDATE agencies SET logo_data=$1 WHERE id=$2", [dataUri, req.agencyId]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Serve an agency's logo publicly (emails link here). No auth: it's just a logo,
-// and email clients can't send cookies anyway.
-app.get("/agency-logo/:id", async (req, res) => {
-  const row = (await pool.query("SELECT logo_data FROM agencies WHERE id=$1", [req.params.id])).rows[0];
-  if (!row || !row.logo_data) {
-    // fall back to the default GigConfirm/LD logo
-    return res.redirect("/logo.png");
-  }
-  const m = row.logo_data.match(/^data:([^;]+);base64,(.*)$/);
-  if (!m) return res.redirect("/logo.png");
-  res.setHeader("Content-Type", m[1]);
-  res.setHeader("Cache-Control", "public, max-age=300");
-  res.send(Buffer.from(m[2], "base64"));
-});
-
-
-
-
-// ---------- CSV upload + match (admin) ----------
-// Import venue rows (from a parsed contacts CSV) into the venues table, upserting by
-// name. Reads up to 3 contacts (name/role/phone/email each) plus address. Returns a count.
-async function importVenueRows(agencyId, crows) {
-  let count = 0;
-  const touchedKeys = new Set();   // normalized venue keys present/created from this file
-  // Preload this agency's groups (brands) so we can match/create by name.
-  const brandRows = (await pool.query("SELECT id, name, office_email FROM brands WHERE agency_id=$1", [agencyId])).rows;
-  const brandByName = new Map(brandRows.map((b) => [normKey(b.name), b]));
-  let groupsCreated = 0, renamed = 0;
-
-  for (const r of crows) {
-    const display = pick(r, ["venue", "location", "place"]);
-    if (!display) continue;
-    const newKey = normKey(display);
-    // Optional hidden identity column (from the export) so we can track renames.
-    const oldKey = normKey(pick(r, ["venue key", "venuekey", "key", "id"]));
-
-    // Resolve the venue's group / parent company (create it if new; update its
-    // head-office email if the file provides one).
-    const groupName = pick(r, ["group", "parent company", "parent", "brand", "venue group"]);
-    const groupEmail = pick(r, ["head office email", "office email", "group email", "head office"]);
-    let brandId = null;
-    if (groupName) {
-      const key = normKey(groupName);
-      let brand = brandByName.get(key);
-      if (!brand) {
-        const newId = nanoid(16);
-        await pool.query("INSERT INTO brands (id, agency_id, name, office_email) VALUES ($1,$2,$3,$4)",
-          [newId, agencyId, groupName, groupEmail || null]);
-        brand = { id: newId, name: groupName, office_email: groupEmail || null };
-        brandByName.set(key, brand);
-        groupsCreated++;
-      } else if (groupEmail && groupEmail !== brand.office_email) {
-        await pool.query("UPDATE brands SET office_email=$1 WHERE id=$2 AND agency_id=$3", [groupEmail, brand.id, agencyId]);
-        brand.office_email = groupEmail;
-      }
-      brandId = brand.id;
-    }
-
-    // Rename handling: if the file carries an old key that differs from the new name, and
-    // that old venue exists, rename it (and re-point its bookings) before upserting.
-    if (oldKey && oldKey !== newKey) {
-      const oldV = (await pool.query("SELECT name FROM venues WHERE name=$1 AND agency_id=$2", [oldKey, agencyId])).rows[0];
-      if (oldV) {
-        // avoid clashing with an existing venue already at the new key
-        const clash = (await pool.query("SELECT 1 FROM venues WHERE name=$1 AND agency_id=$2", [newKey, agencyId])).rows[0];
-        if (!clash) {
-          await pool.query("UPDATE venues SET name=$1, display_name=$2 WHERE name=$3 AND agency_id=$4", [newKey, display, oldKey, agencyId]);
-          await pool.query("UPDATE bookings SET venue_key=$1 WHERE venue_key=$2 AND agency_id=$3", [newKey, oldKey, agencyId]);
-          renamed++;
-        }
-      }
-    }
-
-    await pool.query(
-      `INSERT INTO venues (agency_id, name, display_name,
-         contact_name, contact_role, phone, email,
-         contact2_name, contact2_role, contact2_phone, contact2_email,
-         contact3_name, contact3_role, contact3_phone, contact3_email,
-         address, brand_id, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-       ON CONFLICT (agency_id, name) DO UPDATE SET
-         display_name=EXCLUDED.display_name,
-         contact_name=EXCLUDED.contact_name, contact_role=EXCLUDED.contact_role,
-         phone=EXCLUDED.phone, email=EXCLUDED.email,
-         contact2_name=EXCLUDED.contact2_name, contact2_role=EXCLUDED.contact2_role,
-         contact2_phone=EXCLUDED.contact2_phone, contact2_email=EXCLUDED.contact2_email,
-         contact3_name=EXCLUDED.contact3_name, contact3_role=EXCLUDED.contact3_role,
-         contact3_phone=EXCLUDED.contact3_phone, contact3_email=EXCLUDED.contact3_email,
-         address=EXCLUDED.address,
-         brand_id=COALESCE(EXCLUDED.brand_id, venues.brand_id),
-         notes=EXCLUDED.notes`,
-      [agencyId, normKey(display), display,
-       pick(r, ["contact 1 name", "contact1 name", "contact name", "contact", "manager", "name"]) || null,
-       pick(r, ["contact 1 role", "contact1 role", "contact role", "role 1", "role"]) || null,
-       pick(r, ["contact 1 phone", "contact1 phone", "phone", "mobile", "tel", "number", "phone 1"]) || null,
-       pick(r, ["contact 1 email", "contact1 email", "email", "email 1"]) || null,
-       pick(r, ["contact 2 name", "contact2 name", "contact 2", "name 2"]) || null,
-       pick(r, ["contact 2 role", "contact2 role", "role 2"]) || null,
-       pick(r, ["contact 2 phone", "contact2 phone", "phone 2", "mobile 2"]) || null,
-       pick(r, ["contact 2 email", "contact2 email", "email 2"]) || null,
-       pick(r, ["contact 3 name", "contact3 name", "contact 3", "name 3"]) || null,
-       pick(r, ["contact 3 role", "contact3 role", "role 3"]) || null,
-       pick(r, ["contact 3 phone", "contact3 phone", "phone 3", "mobile 3"]) || null,
-       pick(r, ["contact 3 email", "contact3 email", "email 3"]) || null,
-       pick(r, ["address", "addr", "postcode"]) || null,
-       brandId,
-       pick(r, ["notes", "note", "venue notes"]) || null]
-    );
-    touchedKeys.add(newKey);
-    count++;
-  }
-  return { count, groupsCreated, renamed, touchedKeys };
-}
-
-// Standalone venue import — restore/update venue details from a CSV WITHOUT running a
-// check-off. Accepts the same columns as the export, so an exported file round-trips.
-app.post("/api/import-venues", requireAdmin, upload.single("contacts"), async (req, res) => {
-  try {
-    // Restore is destructive (overwrites venue details, can delete groups), so it's
-    // restricted to the agency head and requires their password every time.
-    const password = (req.body?.password || "").toString();
-    const me = (await pool.query(
-      "SELECT is_owner, pass_hash FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId]
-    )).rows[0];
-    if (!me || !me.is_owner) {
-      return res.status(403).json({ error: "Only the agency's head can restore venues from a file." });
-    }
-    if (!password || !verifyPassword(password, me.pass_hash)) {
-      return res.status(403).json({ error: "Password incorrect." });
-    }
-
-    const csv = decodeCsv(req.file?.buffer);
-    if (!csv) return res.status(400).json({ error: "No venue file received." });
-    const crows = parseCsv(csv);
-    if (!crows.length) return res.status(400).json({ error: "That file has no rows we could read." });
-    const withVenue = crows.filter((r) => pick(r, ["venue", "location", "place"]));
-    if (!withVenue.length) return res.status(400).json({ error: "No 'venue' column found. Make sure there's a Venue/Location/Place column." });
-
-    const confirmDelete = req.body?.confirmDelete === "true" || req.body?.confirmDelete === true;
-
-    // ----- work out what a full sync would DELETE (groups + venues) -----
-
-    // Groups mentioned in the CSV
-    const csvGroupNames = new Set();
-    let fileHasGroupColumn = false;
-    for (const r of crows) {
-      const gn = pick(r, ["group", "parent company", "parent", "brand", "venue group"]);
-      const hasCol = Object.keys(r).some((k) => ["group", "parent company", "parent", "brand", "venue group"].includes(normKey(k)));
-      if (hasCol) fileHasGroupColumn = true;
-      if (gn) csvGroupNames.add(normKey(gn));
-    }
-    const existingBrands = (await pool.query("SELECT id, name FROM brands WHERE agency_id=$1", [req.agencyId])).rows;
-    const brandsToDelete = fileHasGroupColumn ? existingBrands.filter((b) => !csvGroupNames.has(normKey(b.name))) : [];
-
-    // Venues represented by the CSV: final names, plus any old keys being renamed
-    // (so a renamed venue isn't mistaken for a deletion).
-    const csvVenueKeys = new Set();
-    for (const r of crows) {
-      const display = pick(r, ["venue", "location", "place"]);
-      if (!display) continue;
-      csvVenueKeys.add(normKey(display));
-      const oldKey = normKey(pick(r, ["venue key", "venuekey", "key", "id"]));
-      if (oldKey) csvVenueKeys.add(oldKey);   // its old identity maps into this file too
-    }
-    const existingVenues = (await pool.query("SELECT name, display_name FROM venues WHERE agency_id=$1", [req.agencyId])).rows;
-    const venuesToDelete = existingVenues.filter((v) => !csvVenueKeys.has(normKey(v.name)));
-
-    const anyDeletions = brandsToDelete.length + venuesToDelete.length > 0;
-
-    // Preview step: if anything would be deleted and we haven't been told to proceed,
-    // return the lists and make NO changes yet.
-    if (anyDeletions && !confirmDelete) {
-      return res.json({
-        ok: true, needsConfirm: true,
-        deleteCount: brandsToDelete.length,
-        deleteNames: brandsToDelete.map((b) => b.name),
-        venueDeleteCount: venuesToDelete.length,
-        venueDeleteNames: venuesToDelete.map((v) => v.display_name),
-      });
-    }
-
-    // Proceed: import (handles renames + re-linking), then delete what's missing.
-    const result = await importVenueRows(req.agencyId, crows);
-
-    let groupsDeleted = 0, venuesDeleted = 0;
-    if (confirmDelete) {
-      // Delete venues not represented in the file. Their bookings keep the venue_text
-      // name; if another venue of the same display name exists, bookings re-link to it.
-      for (const v of venuesToDelete) {
-        // don't delete something the import just (re)created/renamed into
-        if (result.touchedKeys && result.touchedKeys.has(normKey(v.name))) continue;
-        // try to re-link this venue's bookings to a same-named surviving venue
-        const survivor = (await pool.query(
-          "SELECT name FROM venues WHERE agency_id=$1 AND lower(display_name)=lower($2) AND name<>$3 LIMIT 1",
-          [req.agencyId, v.display_name, v.name]
-        )).rows[0];
-        if (survivor) {
-          await pool.query("UPDATE bookings SET venue_key=$1 WHERE venue_key=$2 AND agency_id=$3", [survivor.name, v.name, req.agencyId]);
-        }
-        await pool.query("DELETE FROM venues WHERE name=$1 AND agency_id=$2", [v.name, req.agencyId]);
-        venuesDeleted++;
-      }
-      // Delete groups not named in the file (unassign their venues first).
-      if (brandsToDelete.length) {
-        const ids = brandsToDelete.map((b) => b.id);
-        await pool.query("UPDATE venues SET brand_id=NULL WHERE brand_id = ANY($1) AND agency_id=$2", [ids, req.agencyId]);
-        await pool.query("DELETE FROM brands WHERE id = ANY($1) AND agency_id=$2", [ids, req.agencyId]);
-        groupsDeleted = ids.length;
-      }
-    }
-    res.json({ ok: true, imported: result.count, renamed: result.renamed || 0,
-               groupsCreated: result.groupsCreated, groupsDeleted, venuesDeleted });
-  } catch (e) {
-    console.error("import-venues failed", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post(
-  "/api/upload",
-  requireAdmin,
-  upload.fields([{ name: "bookings" }, { name: "contacts" }]),
-  async (req, res) => {
+/* ============================================================
+   IMPORTANT: the Stripe webhook needs the RAW body for signature
+   verification, so it is mounted BEFORE express.json().
+   ============================================================ */
+app.post('/api/stripe/webhook',
+  express.raw({ type: 'application/json' }),
+  (req, res) => {
+    if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(503).end();
+    let event;
     try {
-      const weekTag = new Date().toISOString().slice(0, 10);
-      const bookingsFile = req.files?.bookings?.[0];
-      const debug = {
-        fileName: bookingsFile?.originalname || null,
-        sizeBytes: bookingsFile?.buffer?.length || 0,
-        firstBytes: bookingsFile?.buffer ? [...bookingsFile.buffer.slice(0, 12)] : [],
-        preview: bookingsFile?.buffer ? decodeCsv(bookingsFile.buffer).slice(0, 200) : "",
-      };
-      const bookingsCsv = decodeCsv(bookingsFile?.buffer);
-      const contactsCsv = decodeCsv(req.files?.contacts?.[0]?.buffer);
-      if (!bookingsCsv) return res.status(400).json({ error: "No bookings file received." });
-
-      // A new upload starts a new active batch. Archive whatever was active before,
-      // so the dashboard shows only this week while old weeks stay in History.
-      const label = (req.body?.label || "").trim() || ("Week of " + weekTag);
-      await pool.query("UPDATE batches SET archived=true WHERE archived=false AND agency_id=$1", [req.agencyId]);
-      const batchId = nanoid(16);
-      await pool.query("INSERT INTO batches (id,agency_id,label,archived) VALUES ($1,$2,$3,false)", [batchId, req.agencyId, label]);
-
-      // Auto-remove this agency's batches (and their bookings) older than ~6 months.
-      await pool.query("DELETE FROM batches WHERE agency_id=$1 AND created_at < now() - interval '6 months'", [req.agencyId]);
-      await pool.query("DELETE FROM bookings WHERE agency_id=$1 AND batch_id NOT IN (SELECT id FROM batches WHERE agency_id=$1)", [req.agencyId]);
-
-      // --- venues first ---
-      if (contactsCsv) {
-        const crows = parseCsv(contactsCsv);
-        await importVenueRows(req.agencyId, crows);
-      }
-
-      // --- bookings ---
-      const brows = parseCsv(bookingsCsv);
-      const summary = { created: 0, emailed: 0, emailFailed: 0, unmatchedVenues: new Set(),
-                        rowsSeen: brows.length, headers: brows[0] ? Object.keys(brows[0]) : [],
-                        skippedNoEmail: 0 };
-      const actsWithGigs = new Map();
-      // Load venues once so fuzzy matching doesn't hit the DB per row.
-      const storedVenues = (await pool.query("SELECT name, display_name, share_contact FROM venues WHERE agency_id=$1", [req.agencyId])).rows;
-
-      for (const r of brows) {
-        const actName = pick(r, ["act", "artist", "performer", "band", "name"]);
-        let actEmail = pick(r, ["act email", "email"]).toLowerCase();
-        const venueText = pick(r, ["venue", "location", "place"]);
-        if (!actName) continue;
-
-        // If the act has no direct email, fall back to their booking agent's email.
-        const agentEmail = pick(r, ["act agent email", "agent email"]).toLowerCase();
-        const agentName = pick(r, ["act's agent", "agent", "acts agent"]);
-        // A named agent contact to greet in the email instead of the act (used when
-        // the act is represented by another agency).
-        const agentContactName = pick(r, ["act agent contact name", "agent contact name", "agent contact", "agent name"]);
-        // The act's real contact name (person behind the stage name) — greeted first.
-        const actContactName = pick(r, ["act contact name", "act contact", "contact name"]);
-        let bookedViaAgent = false;
-        if (!actEmail && agentEmail) {
-          actEmail = agentEmail;
-          bookedViaAgent = true;
-        }
-        if (!actEmail) { summary.skippedNoEmail++; continue; }
-
-        // upsert act (scoped to this agency — the same email may exist for another)
-        let act = (await pool.query("SELECT * FROM acts WHERE email=$1 AND agency_id=$2", [actEmail, req.agencyId])).rows[0];
-        let isNew = false;
-        if (!act) {
-          const id = nanoid(16);
-          act = (await pool.query(
-            "INSERT INTO acts (id,agency_id,name,email) VALUES ($1,$2,$3,$4) RETURNING *",
-            [id, req.agencyId, actName, actEmail]
-          )).rows[0];
-          isNew = true;
-        }
-
-        // Match this booking's venue to a stored one, tolerating naming differences.
-        const matchedKey = await resolveVenueKey(venueText, storedVenues);
-        const venueKey = matchedKey || normKey(venueText);
-        if (venueText && !matchedKey) summary.unmatchedVenues.add(venueText);
-        // inherit the venue's "share contact" default (true if venue unknown)
-        const matchedVenue = storedVenues.find((v) => v.name === venueKey);
-        const shareVenue = matchedVenue ? matchedVenue.share_contact !== false : true;
-
-        // "Performance" holds the set details (e.g. "1 x 45", "Speed Quiz") — show it as notes.
-        const performance = pick(r, ["performance", "set", "type"]);
-        const extraNotes = pick(r, ["notes", "note", "details"]);
-        const combinedNotes = [performance, extraNotes].filter(Boolean).join(" — ");
-
-        const bookingId = nanoid(16);
-        await pool.query(
-          `INSERT INTO bookings (id,agency_id,act_id,performer_name,venue_key,venue_text,gig_date,gig_time,fee,notes,week_tag,batch_id,share_venue,agent_contact_name,act_contact_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-          [bookingId, req.agencyId, act.id, actName, venueKey, venueText,
-           pick(r, ["date", "gig date", "day"]),
-           pick(r, ["time", "start", "set time", "load in"]),
-           null,                       // fee deliberately not shown to the act
-           combinedNotes,
-           weekTag, batchId, shareVenue,
-           (bookedViaAgent && agentContactName) ? agentContactName : (agentContactName || null),
-           actContactName || null]
-        );
-        summary.created++;
-        // Track which acts got bookings this upload, so we email each one once afterwards.
-        actsWithGigs.set(act.id, (actsWithGigs.get(act.id) || 0) + 1);
-      }
-      // NOTE: we no longer email acts automatically here. The dashboard now shows a
-      // review step so the user can choose who sees venue contact before sending.
-      res.json({
-        ...summary,
-        batchId,
-        unmatchedVenues: [...summary.unmatchedVenues],
-        debug,
-      });
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ error: "Upload failed: " + e.message });
+      event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+      console.error('Webhook signature verification failed:', err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
     }
+
+    // Idempotency: Stripe guarantees at-least-once delivery.
+    if (db.alreadyProcessed(event.id)) return res.json({ received: true, duplicate: true });
+
+    try {
+      handleStripeEvent(event);
+      db.markProcessed(event.id);
+    } catch (err) {
+      console.error('Webhook handler error:', err.message);
+      return res.status(500).end(); // let Stripe retry
+    }
+    res.json({ received: true });
   }
 );
 
-// Review list for the active (or given) batch: one row per act to be emailed, with
-// how many gigs, whether any of their gigs have venue contact available, and the
-// Review the active (or given) batch, grouped by VENUE. Each venue shows how many
-// acts/gigs are booked there and whether acts should see its contact details.
-app.get("/api/review", requireAdmin, async (req, res) => {
-  const batchId = req.query.batchId;
-  const batch = batchId
-    ? (await pool.query("SELECT id,label FROM batches WHERE id=$1 AND agency_id=$2", [batchId, req.agencyId])).rows[0]
-    : (await pool.query("SELECT id,label FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1", [req.agencyId])).rows[0];
-  if (!batch) return res.json({ venues: [], batch: null, actCount: 0 });
+/* ---------- normal middleware (after webhook) ---------- */
+app.use(express.json({ limit: '25mb' }));
+app.use(auth.attachUser);
 
-  const venues = (await pool.query(
-    `SELECT COALESCE(v.name, bk.venue_key, lower(bk.venue_text)) AS venue_key,
-            COALESCE(v.display_name, bk.venue_text) AS venue_name,
-            count(*)::int AS gigs,
-            count(DISTINCT bk.act_id)::int AS acts,
-            bool_or(v.phone IS NOT NULL OR v.email IS NOT NULL OR v.contact_name IS NOT NULL) AS has_venue_contact,
-            -- current effective choice: use the booking flag (already defaulted from venue)
-            bool_and(bk.share_venue) AS share_venue,
-            bool_or(bk.invited_at IS NOT NULL) AS already_sent
-     FROM bookings bk
-     LEFT JOIN venues v ON v.name = bk.venue_key AND v.agency_id = bk.agency_id
-     WHERE bk.batch_id=$1 AND bk.agency_id=$2
-     GROUP BY 1,2
-     ORDER BY venue_name`, [batch.id, req.agencyId]
-  )).rows;
+/* =========================================================
+   AUTH ROUTES
+   ========================================================= */
+app.post('/api/auth/signup', (req, res) => {
+  const { email, password, name, weddingCode } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  if (db.getUserByEmail(email)) return res.status(409).json({ error: 'An account with that email already exists.' });
 
-  const actCount = (await pool.query(
-    "SELECT count(DISTINCT act_id)::int AS n FROM bookings WHERE batch_id=$1 AND agency_id=$2", [batch.id, req.agencyId]
-  )).rows[0].n;
-
-  // Act-grouped view: each act with their individual gigs (for the review-by-act UI).
-  const gigRows = (await pool.query(
-    `SELECT bk.id, bk.act_id, a.name AS act_name, a.email AS act_email,
-            bk.performer_name, bk.gig_date, bk.gig_time, bk.status, bk.adhoc_note,
-            bk.agent_contact_name, bk.act_contact_name,
-            COALESCE(NULLIF(bk.venue_text,''), v.display_name) AS venue,
-            COALESCE(v.name, bk.venue_key, lower(bk.venue_text)) AS venue_key,
-            bk.share_venue,
-            (v.phone IS NOT NULL OR v.email IS NOT NULL OR v.contact_name IS NOT NULL) AS has_venue_contact,
-            bk.invited_at IS NOT NULL AS already_sent
-     FROM bookings bk
-     JOIN acts a ON a.id=bk.act_id
-     LEFT JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-     WHERE bk.batch_id=$1 AND bk.agency_id=$2
-     ORDER BY a.name, bk.gig_date`, [batch.id, req.agencyId]
-  )).rows;
-  // sort each act's gigs by real date, group by act
-  const actMap = new Map();
-  for (const g of gigRows) {
-    if (!actMap.has(g.act_id)) actMap.set(g.act_id, { act_id: g.act_id, act_name: g.act_name, act_email: g.act_email, adhoc_note: g.adhoc_note || "", agent_contact_name: g.agent_contact_name || "", act_contact_name: g.act_contact_name || "", gigs: [] });
-    actMap.get(g.act_id).gigs.push(g);
+  // If a wedding code is supplied, this is a couple joining their DJ's wedding.
+  let wedding = null;
+  if (weddingCode) {
+    wedding = db.getWeddingByCode(String(weddingCode).trim());
+    if (!wedding) return res.status(404).json({ error: 'That wedding code wasn\'t found. Check it with your DJ.' });
   }
-  const acts = [...actMap.values()];
-  for (const a of acts) a.gigs.sort((x, y) => {
-    const dx = parseGigDate(x.gig_date), dy = parseGigDate(y.gig_date);
-    if (dx && dy) return dx - dy; if (dx) return -1; if (dy) return 1; return 0;
-  });
 
-  res.json({ venues, acts, batch, actCount });
+  const user = db.createUser({
+    id: auth.newId(),
+    email: email.toLowerCase(),
+    password_hash: auth.hashPassword(password),
+    name: name || '',
+    role: wedding ? 'couple' : 'host',
+    created_at: Date.now(),
+  });
+  if (wedding) db.linkCoupleToWedding(wedding.id, user.id);
+  const token = auth.startSession(user.id);
+  res.setHeader('Set-Cookie', auth.sessionCookie(token));
+  res.json({ user: publicUser(user), wedding: wedding ? { id: wedding.id } : null });
 });
 
-// Apply per-VENUE "share contact" choices, then email one confirmation per act.
-app.post("/api/send-confirmations", requireAdmin, async (req, res) => {
+// An already-signed-in person joins a wedding with the code (e.g. the second
+// partner who already has an account). Adds them as a couple member.
+app.post('/api/weddings/join', auth.requireAuth, (req, res) => {
+  const code = String((req.body || {}).weddingCode || '').trim();
+  if (!code) return res.status(400).json({ error: 'Enter your wedding code.' });
+  const wedding = db.getWeddingByCode(code);
+  if (!wedding) return res.status(404).json({ error: 'That wedding code wasn\'t found. Check it with your DJ.' });
+  if (wedding.host_id === req.user.id) {
+    return res.status(400).json({ error: 'This is your own wedding — you already have full access as the DJ.' });
+  }
+  if (db.isCoupleMember(wedding, req.user.id)) {
+    return res.json({ ok: true, wedding: { id: wedding.id }, already: true });
+  }
+  db.linkCoupleToWedding(wedding.id, req.user.id);
+  res.json({ ok: true, wedding: { id: wedding.id } });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { email, password } = req.body || {};
+  const user = email && db.getUserByEmail(email);
+  if (!user || !auth.verifyPassword(password || '', user.password_hash)) {
+    return res.status(401).json({ error: 'Wrong email or password.' });
+  }
+  const token = auth.startSession(user.id);
+  db.recordLogin(user.id);            // so admin can see who's actually active
+  res.setHeader('Set-Cookie', auth.sessionCookie(token));
+  res.json({ user: publicUser(user) });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  if (req.sessionToken) db.deleteSession(req.sessionToken);
+  res.setHeader('Set-Cookie', auth.clearCookie());
+  res.json({ ok: true });
+});
+
+app.get('/api/me', (req, res) => {
+  if (!req.user) return res.json({ user: null });
+  // lazily drop expired comp access before reporting state
+  if (db.expireCompIfNeeded(req.user)) req.user = db.getUserById(req.user.id);
+  db.touchSeen(req.user.id);   // throttled — shows real activity, not just logins
+  res.json({
+    user: publicUser(req.user),
+    plan: PLANS[req.user.plan] || PLANS.none,
+    eventsThisMonth: db.countEventsThisMonth(req.user.id),
+    eventsLifetime: db.countEventsLifetime(req.user.id),
+    branding: db.getBranding(req.user.id),
+    isAdmin: isAdmin(req.user),
+    compUntil: req.user.comp_until || null,
+  });
+});
+
+app.get('/api/plans', (_req, res) => res.json({ plans: PLANS }));
+
+/* Public contact form → emails us via the site Resend account.
+   Rate-limited lightly per-IP to deter abuse. No login required. */
+const contactHits = new Map();   // ip -> [timestamps]
+function contactRateOk(ip) {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;      // 10 minutes
+  const max = 5;                        // 5 messages per window
+  const arr = (contactHits.get(ip) || []).filter(t => now - t < windowMs);
+  if (arr.length >= max) return false;
+  arr.push(now);
+  contactHits.set(ip, arr);
+  return true;
+}
+
+app.get('/api/contact/status', (_req, res) => {
+  res.json({ enabled: !!(CONTACT_RESEND_KEY && CONTACT_FROM && CONTACT_TO) });
+});
+
+app.post('/api/contact', async (req, res) => {
   try {
-    if (!resend) return res.status(500).json({ error: "Email not configured." });
-    const batchId = (req.body?.batchId || "").toString();
-    const choices = req.body?.choices || {};   // { venueKey: shareBool }
-    const notes = req.body?.notes || {};       // { actId: adhoc note text }
-    const blockedGigs = Array.isArray(req.body?.blockedGigs) ? req.body.blockedGigs.map(String) : []; // gig ids to flag instead of send
-    const saveDefault = req.body?.saveDefault !== false; // also store choice on the venue
-    const onlyUnsent = req.body?.onlyUnsent !== false;
-    const batch = (await pool.query("SELECT id FROM batches WHERE id=$1 AND agency_id=$2", [batchId, req.agencyId])).rows[0];
-    if (!batch) return res.status(404).json({ error: "No such week." });
+    const name = String((req.body && req.body.name) || '').trim().slice(0, 80);
+    const email = String((req.body && req.body.email) || '').trim().slice(0, 120);
+    const message = String((req.body && req.body.message) || '').trim().slice(0, 3000);
 
-    // Any gig the user unticked is flagged as an issue (needs attention) and won't be
-    // included in the confirmation email.
-    let flaggedCount = 0;
-    if (blockedGigs.length) {
-      const r = await pool.query(
-        `UPDATE bookings SET status='issue', message=COALESCE(message,'Held back before sending'), responded_at=now()
-         WHERE agency_id=$1 AND batch_id=$2 AND id = ANY($3::text[])`,
-        [req.agencyId, batchId, blockedGigs]
-      );
-      flaggedCount = r.rowCount || 0;
+    if (!message) return res.status(400).json({ error: 'Please enter a message.' });
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(400).json({ error: 'That email address doesn\'t look right.' });
+    }
+    // Honeypot: bots fill hidden fields. If present, pretend success and drop it.
+    if (req.body && req.body.website) return res.json({ ok: true });
+
+    if (!(CONTACT_RESEND_KEY && CONTACT_FROM && CONTACT_TO)) {
+      return res.status(503).json({ error: 'unconfigured' });
     }
 
-    // Apply each venue's choice to this batch's bookings at that venue, and optionally
-    // save it as the venue's default for future weeks.
-    for (const [venueKey, share] of Object.entries(choices)) {
-      await pool.query(
-        "UPDATE bookings SET share_venue=$1 WHERE batch_id=$2 AND agency_id=$3 AND COALESCE(venue_key, lower(venue_text))=$4",
-        [!!share, batchId, req.agencyId, venueKey]
-      );
-      if (saveDefault) {
-        await pool.query(
-          "UPDATE venues SET share_contact=$1 WHERE agency_id=$2 AND name=$3",
-          [!!share, req.agencyId, venueKey]
-        );
+    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    if (!contactRateOk(ip)) {
+      return res.status(429).json({ error: 'You\'ve sent a few messages already — please try again a little later.' });
+    }
+
+    const html =
+      `<div style="font-family:system-ui,Arial,sans-serif;font-size:14px;line-height:1.5">` +
+      `<p><b>New Spinlist contact message</b></p>` +
+      `<p><b>Name:</b> ${escapeHtml(name || '(not given)')}<br>` +
+      `<b>Email:</b> ${escapeHtml(email || '(not given)')}</p>` +
+      `<p style="white-space:pre-wrap;border-left:3px solid #c6f24e;padding-left:12px">${escapeHtml(message)}</p>` +
+      `</div>`;
+
+    const result = await sendViaResend(
+      { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME },
+      {
+        to: CONTACT_TO,
+        subject: `Spinlist contact: ${name || email || 'message'}`.slice(0, 120),
+        html,
+        replyTo: email || undefined,
       }
-    }
+    );
+    if (!result.ok) return res.status(502).json({ error: 'Could not send right now. Please try again, or email us directly.' });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: 'Something went wrong. Please email us directly.' });
+  }
+});
 
-    // Save any per-gig ad-hoc notes onto the specific booking.
-    for (const [gigId, note] of Object.entries(notes)) {
-      await pool.query(
-        "UPDATE bookings SET adhoc_note=$1 WHERE id=$2 AND batch_id=$3 AND agency_id=$4",
-        [(note || "").toString().slice(0, 500) || null, gigId, batchId, req.agencyId]
-      );
-    }
 
-    // One email per act — counting only gigs that are NOT blocked/flagged.
-    const acts = (await pool.query(
-      `SELECT bk.act_id, a.name, a.email, a.agency_id, a.via_agent, a.agent_email,
-              count(*) FILTER (WHERE bk.status <> 'issue')::int AS gigs,
-              array_agg(DISTINCT bk.performer_name) FILTER (
-                WHERE bk.performer_name IS NOT NULL AND bk.performer_name <> '' AND bk.status <> 'issue'
-              ) AS stage_names,
-              (array_agg(bk.agent_contact_name) FILTER (
-                WHERE bk.agent_contact_name IS NOT NULL AND bk.agent_contact_name <> ''
-              ))[1] AS agent_contact_name,
-              (array_agg(bk.act_contact_name) FILTER (
-                WHERE bk.act_contact_name IS NOT NULL AND bk.act_contact_name <> ''
-              ))[1] AS act_contact_name,
-              json_agg(json_build_object('venue', COALESCE(NULLIF(bk.venue_text,''), bk.venue_key), 'note', bk.adhoc_note))
-                FILTER (WHERE bk.adhoc_note IS NOT NULL AND bk.adhoc_note <> '' AND bk.status <> 'issue') AS notes,
-              bool_or(bk.invited_at IS NOT NULL) AS already_sent
-       FROM bookings bk JOIN acts a ON a.id=bk.act_id
-       WHERE bk.batch_id=$1 AND bk.agency_id=$2
-       GROUP BY bk.act_id, a.name, a.email, a.agency_id, a.via_agent, a.agent_email`, [batchId, req.agencyId]
-    )).rows;
+/* =========================================================
+   BILLING ROUTES (Stripe Checkout + Portal)
+   ========================================================= */
+app.post('/api/billing/checkout', auth.requireAuth, async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Billing is not configured yet (no Stripe key).' });
+  const planId = (req.body || {}).plan;
+  const plan = PLANS[planId];
+  if (!plan || !plan.stripePriceEnv) return res.status(400).json({ error: 'Pick a paid plan.' });
+  const priceId = process.env[plan.stripePriceEnv];
+  if (!priceId) return res.status(500).json({ error: `Missing ${plan.stripePriceEnv} in environment.` });
 
-    const sender = await senderForAgency(req.agencyId, await userEmail(req.userId));
-    let emailed = 0, failed = 0, skipped = 0;
-    for (const a of acts) {
-      // Who receives the check: the act's own email, or the agent's email when the act is
-      // booked via an agent and has no direct email of their own.
-      const recipient = (a.email && a.email.trim()) ? a.email.trim()
-        : (a.via_agent && a.agent_email ? a.agent_email.trim() : "");
-      if (!recipient) { skipped++; continue; }
-      if (a.gigs < 1) { skipped++; continue; }          // all their gigs were blocked
-      if (onlyUnsent && a.already_sent) { skipped++; continue; }
+  try {
+    // Reuse an existing Stripe customer if we have one — but verify it still
+    // exists in the CURRENT Stripe environment. A customer saved while testing
+    // in live mode won't exist in a sandbox (and vice versa), so we recreate.
+    let customerId = req.user.stripe_customer;
+    if (customerId) {
       try {
-        // Greeting precedence: the act's real contact name, then the agent contact
-        // (if repped by another agency), then the stage name(s) they're booked under.
-        const names = a.act_contact_name
-          ? [a.act_contact_name]
-          : (a.agent_contact_name
-              ? [a.agent_contact_name]
-              : ((a.stage_names && a.stage_names.length) ? a.stage_names : [a.name]));
-        await sendConfirmEmail({ id: a.act_id, name: a.name, email: recipient, agency_id: a.agency_id, greetNames: names }, a.gigs, sender, a.notes || []);
-        // only mark the non-flagged gigs as invited
-        await pool.query("UPDATE bookings SET invited_at=now() WHERE batch_id=$1 AND act_id=$2 AND agency_id=$3 AND status <> 'issue'", [batchId, a.act_id, req.agencyId]);
-        emailed++;
+        const existing = await stripe.customers.retrieve(customerId);
+        if (!existing || existing.deleted) customerId = null;
       } catch (e) {
-        console.error("confirm email failed for", recipient, e.message);
-        failed++;
+        customerId = null;   // not found in this environment
       }
     }
-    res.json({ emailed, failed, skipped, flagged: flaggedCount });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    if (!customerId) {
+      const customer = await stripe.customers.create({ email: req.user.email, metadata: { userId: req.user.id } });
+      customerId = customer.id;
+      db.setStripeCustomer(req.user.id, customerId);
+    }
 
-
-// ---------- contact extraction from Excel/Word/PDF (admin) ----------
-// Step 1: extract candidates and return them for on-screen review (saves nothing).
-app.post("/api/extract-contacts", requireAdmin, upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: "No file received." });
-    const result = await extractContacts(req.file);
-
-    // Compare each extracted contact against what's already stored, so the UI can
-    // show only new + changed venues and flag exactly which fields differ.
-    const existingRows = (await pool.query(
-      "SELECT name, display_name, contact_name, phone, email, address FROM venues"
-    )).rows;
-    const existing = new Map(existingRows.map((v) => [v.name, v]));
-    const same = (a, b) => (a || "").trim() === (b || "").trim();
-
-    let counts = { new: 0, changed: 0, unchanged: 0 };
-    const contacts = (result.contacts || []).map((c) => {
-      const key = (c.venue || "").toLowerCase().replace(/\s+/g, " ");
-      const prev = existing.get(key);
-      if (!prev) { counts.new++; return { ...c, _status: "new" }; }
-      const fields = ["contact", "phone", "email", "address"];
-      const prevMap = { contact: prev.contact_name, phone: prev.phone, email: prev.email, address: prev.address };
-      const diffs = {};
-      let changed = false;
-      for (const f of fields) {
-        if (!same(c[f], prevMap[f])) { diffs[f] = prevMap[f] || ""; changed = true; }
-      }
-      // venue display name change (same key, different capitalisation/wording)
-      if (!same(c.venue, prev.display_name)) { diffs.venue = prev.display_name || ""; changed = true; }
-      if (changed) { counts.changed++; return { ...c, _status: "changed", _old: diffs }; }
-      counts.unchanged++;
-      return { ...c, _status: "unchanged" };
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      client_reference_id: req.user.id,
+      metadata: { userId: req.user.id, plan: plan.id },
+      subscription_data: { metadata: { userId: req.user.id, plan: plan.id } },
+      allow_promotion_codes: true,
+      success_url: `${BASE_URL}/?checkout=success`,
+      cancel_url: `${BASE_URL}/pricing.html?checkout=cancelled`,
     });
-
-    // Venues stored but NOT present in this file — candidates for deletion if the
-    // admin chooses to treat the file as the complete list.
-    const fileKeys = new Set(
-      (result.contacts || [])
-        .map((c) => (c.venue || "").toLowerCase().replace(/\s+/g, " "))
-        .filter(Boolean)
-    );
-    const missing = existingRows
-      .filter((v) => !fileKeys.has(v.name))
-      .map((v) => v.display_name);
-
-    let note = "";
-    if (result.warning === "scanned") {
-      note = "This PDF looks like a scan (an image of a page), so no text could be read. You'll need to type these contacts in, or send a Word/Excel version.";
-    } else if (result.warning === "unsupported") {
-      note = "Unsupported file type. Use CSV, Excel (.xlsx), Word (.docx) or PDF.";
-    } else if (!result.contacts.length) {
-      note = "No contact details could be found in that file. Check it actually contains venue contacts, or add them by hand.";
-    } else if (result.kind === "word" || result.kind === "pdf") {
-      note = "These were read from a document, so please check each row carefully before saving — names and venues are best-guess.";
-    }
-    res.json({ contacts, kind: result.kind, note, counts, missing });
-  } catch (e) {
-    console.error("extract failed", e);
-    res.status(500).json({ error: "Couldn't read that file: " + e.message });
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('checkout error:', err.message);
+    res.status(500).json({ error: 'Could not start checkout.' });
   }
 });
 
-// Step 2: save the reviewed/edited contacts as venues.
-// Save a venue contact from the review step, keyed to the exact venue_key the
-// current bookings use, so it immediately links to them. Creates or updates the venue.
-app.post("/api/review-add-contact", requireAdmin, async (req, res) => {
+// Customer portal: lets a subscriber update card / cancel.
+app.post('/api/billing/portal', auth.requireAuth, async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Billing is not configured yet.' });
+  if (!req.user.stripe_customer) return res.status(400).json({ error: 'No subscription on file.' });
   try {
-    const venueKey = (req.body?.venueKey || "").trim();
-    const venueName = (req.body?.venue || "").trim() || venueKey;
-    if (!venueKey) return res.status(400).json({ error: "Missing venue." });
-    await pool.query(
-      `INSERT INTO venues (agency_id, name, display_name, contact_name, phone, email, address, share_contact)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,true)
-       ON CONFLICT (agency_id, name) DO UPDATE SET
-         display_name=EXCLUDED.display_name, contact_name=EXCLUDED.contact_name,
-         phone=EXCLUDED.phone, email=EXCLUDED.email, address=EXCLUDED.address,
-         share_contact=true`,
-      [req.agencyId, venueKey, venueName,
-       (req.body?.contact || "").trim(), (req.body?.phone || "").trim(),
-       (req.body?.email || "").trim(), (req.body?.address || "").trim()]
-    );
-    // make sure the current batch's bookings for this venue share the contact
-    await pool.query(
-      "UPDATE bookings SET share_venue=true WHERE agency_id=$1 AND venue_key=$2",
-      [req.agencyId, venueKey]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post("/api/save-contacts", requireAdmin, async (req, res) => {
-  try {
-    const contacts = Array.isArray(req.body?.contacts) ? req.body.contacts : [];
-    let saved = 0;
-    for (const c of contacts) {
-      const display = (c.venue || "").trim();
-      if (!display) continue; // a venue name is required to key on
-      const share = c.share_contact === false ? false : true; // default share
-      await pool.query(
-        `INSERT INTO venues (agency_id, name, display_name, contact_name, phone, email, address, share_contact)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT (agency_id, name) DO UPDATE SET
-           display_name=EXCLUDED.display_name, contact_name=EXCLUDED.contact_name,
-           phone=EXCLUDED.phone, email=EXCLUDED.email, address=EXCLUDED.address,
-           share_contact=EXCLUDED.share_contact`,
-        [req.agencyId, display.toLowerCase().replace(/\s+/g, " "), display,
-         (c.contact || "").trim(), (c.phone || "").trim(),
-         (c.email || "").trim(), (c.address || "").trim(), share]
-      );
-      saved++;
-    }
-    res.json({ saved });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// List all saved venue contacts, with a count of how many bookings reference each.
-// ---------- brands (parent groups with head-office emails) ----------
-app.get("/api/brands", requireAdmin, async (req, res) => {
-  const rows = (await pool.query(
-    `SELECT b.id, b.name, b.office_email,
-            (SELECT count(*)::int FROM venues v WHERE v.brand_id=b.id AND v.agency_id=b.agency_id) AS venue_count
-     FROM brands b WHERE b.agency_id=$1 ORDER BY b.name`, [req.agencyId]
-  )).rows;
-  res.json({ brands: rows });
-});
-
-app.post("/api/brand", requireAdmin, async (req, res) => {
-  const id = (req.body?.id || "").toString();
-  const name = (req.body?.name || "").trim().slice(0, 120);
-  const officeEmail = (req.body?.office_email || "").trim().slice(0, 500);
-  if (!name) return res.status(400).json({ error: "Brand name is required." });
-  if (id) {
-    const existing = (await pool.query("SELECT id FROM brands WHERE id=$1 AND agency_id=$2", [id, req.agencyId])).rows[0];
-    if (!existing) return res.status(404).json({ error: "No such brand." });
-    await pool.query("UPDATE brands SET name=$1, office_email=$2 WHERE id=$3 AND agency_id=$4",
-      [name, officeEmail || null, id, req.agencyId]);
-    return res.json({ ok: true, id });
-  }
-  const newId = nanoid(16);
-  await pool.query("INSERT INTO brands (id, agency_id, name, office_email) VALUES ($1,$2,$3,$4)",
-    [newId, req.agencyId, name, officeEmail || null]);
-  res.json({ ok: true, id: newId });
-});
-
-app.post("/api/delete-brand", requireAdmin, async (req, res) => {
-  const id = (req.body?.id || "").toString();
-  // unassign venues from this brand, then remove it
-  await pool.query("UPDATE venues SET brand_id=NULL WHERE brand_id=$1 AND agency_id=$2", [id, req.agencyId]);
-  await pool.query("DELETE FROM brands WHERE id=$1 AND agency_id=$2", [id, req.agencyId]);
-  res.json({ ok: true });
-});
-
-app.get("/api/venues", requireAdmin, async (req, res) => {
-  const rows = (await pool.query(
-    `SELECT v.name, v.display_name, v.contact_name, v.phone, v.email, v.address, v.share_contact, v.brand_id,
-            v.contact_role, v.contact2_name, v.contact2_role, v.contact2_phone, v.contact2_email,
-            v.contact3_name, v.contact3_role, v.contact3_phone, v.contact3_email, v.notes,
-            (SELECT count(*)::int FROM bookings b WHERE b.venue_key = v.name AND b.agency_id=v.agency_id) AS booking_count
-     FROM venues v WHERE v.agency_id=$1 ORDER BY v.display_name`, [req.agencyId]
-  )).rows;
-  // flag deliverability: a venue email field may hold several comma/semicolon addresses
-  const allAddrs = [];
-  for (const v of rows) (v.email || "").split(/[,;]+/).forEach((e) => { const t = e.trim().toLowerCase(); if (t) allAddrs.push(t); });
-  const statusMap = await latestEmailStatus(allAddrs);
-  for (const v of rows) {
-    const addrs = (v.email || "").split(/[,;]+/).map((e) => e.trim().toLowerCase()).filter(Boolean);
-    v.email_status = addrs.map((a) => statusMap[a]).find((s) => s === "bounced" || s === "complained") ||
-                     (addrs.some((a) => statusMap[a] === "delivered") ? "delivered" : null);
-  }
-  res.json({ venues: rows });
-});
-
-// Update one venue (identified by its current key). Handles a venue rename safely.
-app.post("/api/update-venue", requireAdmin, async (req, res) => {
-  try {
-    const { key, venue, contact, phone, email, address } = req.body || {};
-    const share = req.body?.share_contact === false ? false : true;
-    const brandId = req.body?.brand_id ? req.body.brand_id.toString() : null;
-    const display = (venue || "").trim();
-    if (!key || !display) return res.status(400).json({ error: "Missing venue name." });
-    const newKey = display.toLowerCase().replace(/\s+/g, " ");
-    if (newKey !== key) {
-      const clash = (await pool.query("SELECT 1 FROM venues WHERE name=$1 AND agency_id=$2", [newKey, req.agencyId])).rows[0];
-      if (clash) return res.status(409).json({ error: "Another venue already has that name." });
-    }
-    await pool.query(
-      `UPDATE venues SET name=$1, display_name=$2, contact_name=$3, phone=$4, email=$5, address=$6, share_contact=$7, brand_id=$8,
-              contact_role=$9, contact2_name=$10, contact2_role=$11, contact2_phone=$12, contact2_email=$13,
-              contact3_name=$14, contact3_role=$15, contact3_phone=$16, contact3_email=$17, notes=$18
-       WHERE name=$19 AND agency_id=$20`,
-      [newKey, display, (contact || "").trim(), (phone || "").trim(),
-       (email || "").trim(), (address || "").trim(), share, brandId,
-       (req.body?.contact_role || "").trim() || null,
-       (req.body?.contact2_name || "").trim() || null, (req.body?.contact2_role || "").trim() || null, (req.body?.contact2_phone || "").trim() || null, (req.body?.contact2_email || "").trim() || null,
-       (req.body?.contact3_name || "").trim() || null, (req.body?.contact3_role || "").trim() || null, (req.body?.contact3_phone || "").trim() || null, (req.body?.contact3_email || "").trim() || null,
-       (req.body?.notes || "").trim() || null,
-       key, req.agencyId]
-    );
-    if (newKey !== key) {
-      await pool.query("UPDATE bookings SET venue_key=$1 WHERE venue_key=$2 AND agency_id=$3", [newKey, key, req.agencyId]);
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Delete one venue contact.
-app.post("/api/delete-venue", requireAdmin, async (req, res) => {
-  try {
-    const key = (req.body?.key || "").trim();
-    if (!key) return res.status(400).json({ error: "Missing venue." });
-    await pool.query("DELETE FROM venues WHERE name=$1 AND agency_id=$2", [key, req.agencyId]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Export all venue contacts as a CSV download (re-imports cleanly).
-// Export all acts to CSV (full record). The hidden "act email" is the key for re-import.
-// Remove every act that has no bookings attached. Owner-only + password. Useful for
-// resetting after a messy import before re-importing cleanly. Acts WITH bookings are
-// never touched, so nothing with gig history is lost. Two-step: returns a count to
-// confirm, then deletes when confirm=true.
-app.post("/api/clear-empty-acts", requireAdmin, async (req, res) => {
-  try {
-    const password = (req.body?.password || "").toString();
-    const me = (await pool.query("SELECT is_owner, pass_hash FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId])).rows[0];
-    if (!me || !me.is_owner) return res.status(403).json({ error: "Only the agency head can do this." });
-    if (!password || !verifyPassword(password, me.pass_hash)) return res.status(403).json({ error: "Password incorrect." });
-
-    const empties = (await pool.query(
-      `SELECT a.id, a.name FROM acts a
-       WHERE a.agency_id=$1
-         AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.act_id=a.id)`, [req.agencyId]
-    )).rows;
-
-    const confirm = req.body?.confirm === "true" || req.body?.confirm === true;
-    if (!confirm) {
-      return res.json({ ok: true, needsConfirm: true, count: empties.length });
-    }
-    if (empties.length) {
-      await pool.query("DELETE FROM acts WHERE id = ANY($1) AND agency_id=$2", [empties.map((a) => a.id), req.agencyId]);
-    }
-    res.json({ ok: true, deleted: empties.length });
-  } catch (e) {
-    console.error("clear-empty-acts failed", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Demo reset — wipes ALL venues, acts and bookings for the agency so a fresh demo set can
-// be imported. Restricted to the platform owner account and password-confirmed. Two-step:
-// returns counts to confirm, then wipes when confirm=true.
-app.post("/api/demo-reset", requireAdmin, async (req, res) => {
-  try {
-    const me = (await pool.query("SELECT email, is_owner, pass_hash FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId])).rows[0];
-    // gate strictly to the platform owner account
-    if (!me || (me.email || "").toLowerCase() !== "phil@phil-freeman.co.uk") {
-      return res.status(403).json({ error: "This is only available on the demo account." });
-    }
-    const password = (req.body?.password || "").toString();
-    if (!password || !verifyPassword(password, me.pass_hash)) return res.status(403).json({ error: "Password incorrect." });
-
-    const counts = {
-      venues: (await pool.query("SELECT count(*)::int c FROM venues WHERE agency_id=$1", [req.agencyId])).rows[0].c,
-      acts: (await pool.query("SELECT count(*)::int c FROM acts WHERE agency_id=$1", [req.agencyId])).rows[0].c,
-      bookings: (await pool.query("SELECT count(*)::int c FROM bookings WHERE agency_id=$1", [req.agencyId])).rows[0].c,
-    };
-
-    const confirm = req.body?.confirm === "true" || req.body?.confirm === true;
-    if (!confirm) return res.json({ ok: true, needsConfirm: true, counts });
-
-    // wipe bookings first (they reference acts), then acts, venues, and their batches/brands
-    await pool.query("DELETE FROM bookings WHERE agency_id=$1", [req.agencyId]);
-    await pool.query("DELETE FROM acts WHERE agency_id=$1", [req.agencyId]);
-    await pool.query("DELETE FROM venues WHERE agency_id=$1", [req.agencyId]);
-    await pool.query("DELETE FROM batches WHERE agency_id=$1", [req.agencyId]);
-    await pool.query("DELETE FROM brands WHERE agency_id=$1", [req.agencyId]);
-    res.json({ ok: true, wiped: counts });
-  } catch (e) {
-    console.error("demo-reset failed", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Whether the demo controls should show (only on the platform owner demo account).
-app.get("/api/demo-enabled", requireAdmin, async (req, res) => {
-  const me = (await pool.query("SELECT email FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId])).rows[0];
-  res.json({ enabled: !!me && (me.email || "").toLowerCase() === "phil@phil-freeman.co.uk" });
-});
-
-app.get("/api/export-acts", requireAdmin, async (req, res) => {
-  const rows = (await pool.query(
-    `SELECT a.name, a.email, a.phone, a.contact_name, a.via_agent, a.agent_name, a.agent_email, a.car_reg,
-            a.stage_names,
-            (SELECT string_agg(DISTINCT bk.performer_name, ', ')
-             FROM bookings bk
-             WHERE bk.act_id = a.id AND bk.performer_name IS NOT NULL AND bk.performer_name <> ''
-               AND lower(bk.performer_name) <> lower(a.name)) AS booked_names
-     FROM acts a WHERE a.agency_id=$1 ORDER BY a.name`, [req.agencyId]
-  )).rows;
-  const esc = (v) => {
-    const s = (v == null ? "" : String(v));
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  // Merge the stored stage-names list with any distinct performer names from bookings.
-  const mergeStage = (stored, booked) => {
-    const set = new Set();
-    for (const part of [stored, booked]) {
-      (part || "").split(",").map((s) => s.trim()).filter(Boolean).forEach((n) => set.add(n));
-    }
-    return [...set].join(", ");
-  };
-  const header = "actual name,stage names,email,phone,contact name,booked via agent,agent name,agent email,car reg";
-  const body = rows.map((r) =>
-    [r.name, mergeStage(r.stage_names, r.booked_names), r.email, r.phone, r.contact_name,
-     r.via_agent ? "yes" : "", r.agent_name, r.agent_email, r.car_reg].map(esc).join(",")
-  ).join("\n");
-  const csv = "\uFEFF" + header + "\n" + body;
-  const date = new Date().toISOString().slice(0, 10);
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="acts_${date}.csv"`);
-  res.send(csv);
-});
-
-// Import / restore acts from CSV. Upserts by email (the stable key). Owner-only +
-// password, mirroring venue restore. Optional full-sync deletes acts not in the file
-// (only after on-screen confirm, and never deletes an act that has bookings).
-app.post("/api/import-acts", requireAdmin, upload.single("acts"), async (req, res) => {
-  try {
-    const password = (req.body?.password || "").toString();
-    const me = (await pool.query("SELECT is_owner, pass_hash FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId])).rows[0];
-    if (!me || !me.is_owner) return res.status(403).json({ error: "Only the agency head can import acts." });
-    if (!password || !verifyPassword(password, me.pass_hash)) return res.status(403).json({ error: "Password incorrect." });
-
-    const csv = decodeCsv(req.file?.buffer);
-    if (!csv) return res.status(400).json({ error: "No acts file received." });
-    const rows = parseCsv(csv);
-    if (!rows.length) return res.status(400).json({ error: "That file has no rows we could read." });
-
-    // Map each row to act fields. Header matching covers GigConfirm's own export AND common
-    // booking-system exports (e.g. "Act" = stage name, "Act Contact Name" = real person,
-    // "Act's agent" = agent, "Act Mob" = phone).
-    const validEmail = (e) => e && /\S+@\S+\.\S+/.test(e);
-    const mapped = rows.map((r) => {
-      const email = pick(r, ["act email", "email", "e-mail", "act e-mail"]).toLowerCase();
-      const agent_email = pick(r, ["act agent email", "agent email", "agent e-mail"]).toLowerCase();
-      let via_agent = /^(y|yes|true|1)$/i.test(pick(r, ["booked via agent", "via agent", "agent?"]) || "");
-
-      // The main name shown everywhere. In a booking-system export the "Act" column is the
-      // stage/performing name — use that as the main name if there's no explicit "actual name".
-      const actCol = pick(r, ["actual name", "act name", "act", "name", "performer", "artist"]);
-      // The real person behind the act.
-      const contact_name = pick(r, ["act contact name", "contact name", "contact", "real name"]);
-      // Stage names: an explicit column if present, otherwise the "Act" value itself is the
-      // stage name they perform under.
-      const stageCol = pick(r, ["stage names", "stage name", "stagenames", "stage_names", "performing names", "performs as", "performer names", "aka", "also known as", "other names"]);
-      const stage_names = stageCol || actCol || "";
-
-      const agent_name = pick(r, ["act's agent", "acts agent", "agent name", "agent", "agency"]);
-      const agent_contact = pick(r, ["act agent contact name", "agent contact name", "agent contact"]);
-
-      // agent-booked: explicit flag, OR an agent email present, OR an agent company named
-      if (!validEmail(email) && (validEmail(agent_email) || agent_name)) via_agent = true;
-
-      return {
-        name: actCol,
-        stage_names,
-        email,
-        phone: pick(r, ["act mob", "mobile", "act mobile", "phone", "tel", "number", "act phone"]),
-        contact_name,
-        via_agent,
-        agent_name,
-        agent_contact,
-        agent_email,
-        car_reg: pick(r, ["car reg", "car registration", "reg", "registration"]).toUpperCase(),
-      };
-    }).filter((a) => a.name || a.email || a.agent_email);
-    if (!mapped.length) return res.status(400).json({ error: "No act names or emails found. Make sure there's an 'Act'/'name', 'email', or 'agent email' column." });
-
-    // DEDUPE: booking-system exports repeat an act once per booking. Collapse to unique acts,
-    // keyed by act email → else agent email → else the act name (lowercased). Merge stage
-    // names across duplicates, and keep the first non-empty value for every other field.
-    const dedupeKey = (a) => (validEmail(a.email) ? "e:" + a.email
-      : validEmail(a.agent_email) ? "g:" + a.agent_email + "|" + (a.name || "").toLowerCase()
-      : "n:" + (a.name || "").toLowerCase());
-    const byKey = new Map();
-    for (const a of mapped) {
-      const k = dedupeKey(a);
-      if (!byKey.has(k)) { byKey.set(k, { ...a, _stageSet: new Set() }); }
-      const acc = byKey.get(k);
-      // accumulate stage names from every duplicate row
-      for (const s of (a.stage_names || "").split(",").map((x) => x.trim()).filter(Boolean)) acc._stageSet.add(s);
-      // fill any blank field from later rows
-      for (const f of ["name", "email", "phone", "contact_name", "agent_name", "agent_contact", "agent_email", "car_reg"]) {
-        if (!acc[f] && a[f]) acc[f] = a[f];
-      }
-      if (a.via_agent) acc.via_agent = true;
-    }
-    const usable = [...byKey.values()].map((a) => {
-      // final stage_names string: merged set, but drop it if it's identical to the name only
-      const list = [...a._stageSet];
-      a.stage_names = list.join(", ");
-      delete a._stageSet;
-      return a;
+    const session = await stripe.billingPortal.sessions.create({
+      customer: req.user.stripe_customer,
+      return_url: `${BASE_URL}/account.html`,
     });
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('portal error:', err.message);
+    res.status(500).json({ error: 'Could not open billing portal.' });
+  }
+});
 
-    // A row is importable if it has EITHER a valid act email OR (booked via agent + a valid
-    // agent email). The agent email becomes the matching/sending route when act email is blank.
-    const importable = usable.filter((a) => validEmail(a.email) || (a.via_agent && validEmail(a.agent_email)));
+/* ---------- webhook event handling ---------- */
+function handleStripeEvent(event) {
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      const s = event.data.object;
+      const userId = s.metadata?.userId || s.client_reference_id;
+      if (userId && s.customer) db.setStripeCustomer(userId, s.customer);
+      // Set the plan here too — checkout completion is a reliable "they paid"
+      // signal. The subscription.* events below also set it (idempotent), but
+      // this guarantees the upgrade even if those events are delayed/missing.
+      if (userId && s.mode === 'subscription') {
+        const user = db.getUserById(userId);
+        const planId = s.metadata?.plan || 'pro';
+        if (user) db.setPlan(user.id, { plan: planId, sub_status: 'active', stripe_sub: s.subscription || null });
+      }
+      break;
+    }
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated': {
+      const sub = event.data.object;
+      const user = resolveUser(sub);
+      if (!user) break;
+      const planId = sub.metadata?.plan || planFromPrice(sub) || 'pro';
+      const active = ['active', 'trialing'].includes(sub.status);
+      db.setPlan(user.id, {
+        plan: active ? planId : 'none',
+        sub_status: sub.status,
+        stripe_sub: sub.id,
+      });
+      break;
+    }
+    case 'customer.subscription.deleted': {
+      const sub = event.data.object;
+      const user = resolveUser(sub);
+      // Only drop access if the deleted subscription is the one currently on
+      // file. When a user upgrades/downgrades, an OLD subscription can be
+      // deleted while a NEW active one exists — deleting the old must not wipe
+      // the new plan.
+      if (user && (!user.stripe_sub || user.stripe_sub === sub.id)) {
+        db.setPlan(user.id, { plan: 'none', sub_status: 'canceled', stripe_sub: null });
+      }
+      break;
+    }
+    case 'invoice.payment_failed': {
+      const inv = event.data.object;
+      const user = inv.customer && db.getUserByCustomer(inv.customer);
+      if (user) db.setPlan(user.id, { plan: user.plan, sub_status: 'past_due', stripe_sub: user.stripe_sub });
+      break;
+    }
+    default:
+      // ignore the rest
+      break;
+  }
+}
+function resolveUser(sub) {
+  if (sub.metadata?.userId) return db.getUserById(sub.metadata.userId);
+  if (sub.customer) return db.getUserByCustomer(sub.customer);
+  return null;
+}
+function planFromPrice(sub) {
+  const priceId = sub.items?.data?.[0]?.price?.id;
+  for (const p of Object.values(PLANS)) {
+    if (p.stripePriceEnv && process.env[p.stripePriceEnv] === priceId) return p.id;
+  }
+  return null;
+}
 
-    const confirmDelete = req.body?.confirmDelete === "true" || req.body?.confirmDelete === true;
+/* =========================================================
+   EVENT CREATION — gated by plan (server-side enforcement)
+   ========================================================= */
+app.post('/api/events', auth.requireAuth, (req, res) => {
+  // Sub-DJs can only run assigned jobs, not create their own.
+  if (req.user.role === 'subdj') {
+    return res.status(403).json({ error: 'Your account can run assigned events but not create new ones.' });
+  }
+  // drop expired comp access first
+  if (db.expireCompIfNeeded(req.user)) req.user = db.getUserById(req.user.id);
 
-    // A row's identity for matching: the act email if it has one, else the agent email.
-    const keyOf = (a) => (validEmail(a.email) ? a.email : a.agent_email);
+  const plan = PLANS[req.user.plan] || PLANS.none;
 
-    // full-sync preview: existing acts (matched by act email OR agent email) not in the
-    // file, with no bookings, are deletable.
-    const keysInFile = new Set(importable.map(keyOf).filter(Boolean));
-    const existing = (await pool.query(
-      `SELECT a.id, a.name, a.email, a.agent_email,
-              (SELECT count(*)::int FROM bookings b WHERE b.act_id=a.id) AS bc
-       FROM acts a WHERE a.agency_id=$1`, [req.agencyId]
-    )).rows;
-    const existKey = (a) => (validEmail(a.email) ? a.email.toLowerCase() : (a.agent_email || "").toLowerCase());
-    const deletable = existing.filter((a) => existKey(a) && !keysInFile.has(existKey(a)) && a.bc === 0);
+  // no active plan at all → must subscribe or redeem a code
+  if (req.user.plan === 'none' || plan.maxEventsPerMonth === 0) {
+    return res.status(403).json({
+      error: 'You need an active plan to create events. Subscribe or redeem a complimentary code.',
+      upgrade: true,
+    });
+  }
 
-    if (deletable.length && !confirmDelete) {
-      return res.json({
-        ok: true, needsConfirm: true,
-        deleteCount: deletable.length,
-        deleteNames: deletable.map((a) => a.name || a.email || a.agent_email),
+  // Free trial: lifetime cap on total events ever created.
+  if (plan.maxEventsLifetime != null) {
+    const everCreated = db.countEventsLifetime(req.user.id);
+    if (everCreated >= plan.maxEventsLifetime) {
+      return res.status(403).json({
+        error: `Your free trial includes ${plan.maxEventsLifetime} events. Subscribe to keep creating events.`,
+        upgrade: true, trialEnded: true,
       });
     }
-
-    // Merge two comma-separated stage-name lists, case-insensitive dedupe, keep first spelling.
-    const mergeStageNames = (existing, incoming) => {
-      const seen = new Set(); const out = [];
-      for (const part of [existing, incoming]) {
-        for (const raw of (part || "").split(",")) {
-          const s = raw.trim(); if (!s) continue;
-          const k = s.toLowerCase();
-          if (!seen.has(k)) { seen.add(k); out.push(s); }
-        }
-      }
-      return out.join(", ");
-    };
-
-    // upsert each act. Match by act email when present, otherwise by agent email (agent-
-    // booked acts keep a blank act email and are reached via the agent).
-    let created = 0, updated = 0;
-    for (const a of importable) {
-      const hasActEmail = validEmail(a.email);
-      const existingAct = hasActEmail
-        ? (await pool.query("SELECT id, stage_names FROM acts WHERE email=$1 AND agency_id=$2", [a.email, req.agencyId])).rows[0]
-        : (await pool.query("SELECT id, stage_names FROM acts WHERE (email IS NULL OR email='') AND agent_email=$1 AND agency_id=$2", [a.agent_email, req.agencyId])).rows[0];
-      if (existingAct) {
-        const mergedStage = mergeStageNames(existingAct.stage_names, a.stage_names) || null;
-        await pool.query(
-          `UPDATE acts SET name=COALESCE(NULLIF($1,''),name), phone=$2, contact_name=$3,
-                 via_agent=$4, agent_name=$5, agent_email=$6, car_reg=$7, stage_names=$8, agent_contact_name=$9
-           WHERE id=$10 AND agency_id=$11`,
-          [a.name, a.phone || null, a.contact_name || null, a.via_agent, a.agent_name || null, a.agent_email || null, a.car_reg || null, mergedStage, a.agent_contact || null, existingAct.id, req.agencyId]
-        );
-        updated++;
-      } else {
-        await pool.query(
-          `INSERT INTO acts (id, agency_id, name, email, phone, contact_name, via_agent, agent_name, agent_email, car_reg, stage_names, agent_contact_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [nanoid(16), req.agencyId, a.name || (hasActEmail ? a.email : (a.agent_name || a.agent_email)), hasActEmail ? a.email : null,
-           a.phone || null, a.contact_name || null, a.via_agent, a.agent_name || null, a.agent_email || null, a.car_reg || null, a.stage_names || null, a.agent_contact || null]
-        );
-        created++;
-      }
-    }
-
-    let deleted = 0;
-    if (confirmDelete && deletable.length) {
-      const ids = deletable.map((a) => a.id);
-      await pool.query("DELETE FROM acts WHERE id = ANY($1) AND agency_id=$2", [ids, req.agencyId]);
-      deleted = ids.length;
-    }
-    const skipped = usable.length - importable.length;
-    res.json({ ok: true, created, updated, deleted, skipped });
-  } catch (e) {
-    console.error("import-acts failed", e);
-    res.status(500).json({ error: e.message });
   }
-});
 
-app.get("/api/export-contacts", requireAdmin, async (req, res) => {
-  const rows = (await pool.query(
-    `SELECT v.name AS venue_key, v.display_name,
-            v.contact_name, v.contact_role, v.phone, v.email,
-            v.contact2_name, v.contact2_role, v.contact2_phone, v.contact2_email,
-            v.contact3_name, v.contact3_role, v.contact3_phone, v.contact3_email,
-            v.address, v.notes, b.name AS group_name, b.office_email AS group_office_email
-     FROM venues v
-     LEFT JOIN brands b ON b.id = v.brand_id AND b.agency_id = v.agency_id
-     WHERE v.agency_id=$1 ORDER BY v.display_name`,
-    [req.agencyId]
-  )).rows;
-  const esc = (v) => {
-    const s = (v == null ? "" : String(v));
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  const header = "venue key,venue," +
-    "contact 1 name,contact 1 role,contact 1 phone,contact 1 email," +
-    "contact 2 name,contact 2 role,contact 2 phone,contact 2 email," +
-    "contact 3 name,contact 3 role,contact 3 phone,contact 3 email," +
-    "address,notes,group,head office email";
-  const body = rows.map((r) =>
-    [r.venue_key, r.display_name,
-     r.contact_name, r.contact_role, r.phone, r.email,
-     r.contact2_name, r.contact2_role, r.contact2_phone, r.contact2_email,
-     r.contact3_name, r.contact3_role, r.contact3_phone, r.contact3_email,
-     r.address, r.notes, r.group_name, r.group_office_email].map(esc).join(",")
-  ).join("\n");
-  const csv = "\uFEFF" + header + "\n" + body; // BOM so Excel reads UTF-8 correctly
-  const date = new Date().toISOString().slice(0, 10);
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="venue_contacts_${date}.csv"`);
-  res.send(csv);
-});
-
-// Delete venues whose keys are NOT in the supplied list (used by the "complete list"
-// sync option, only after the admin has confirmed on screen).
-app.post("/api/delete-missing", requireAdmin, async (req, res) => {
-  try {
-    const keep = Array.isArray(req.body?.keepKeys) ? req.body.keepKeys.filter(Boolean) : [];
-    const all = (await pool.query("SELECT name FROM venues WHERE agency_id=$1", [req.agencyId])).rows.map((r) => r.name);
-    const keepSet = new Set(keep);
-    const toDelete = all.filter((n) => !keepSet.has(n));
-    for (const n of toDelete) {
-      await pool.query("DELETE FROM venues WHERE name=$1 AND agency_id=$2", [n, req.agencyId]);
-    }
-    res.json({ deleted: toDelete.length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+  const used = db.countEventsThisMonth(req.user.id);
+  if (plan.maxEventsPerMonth !== null && used >= plan.maxEventsPerMonth) {
+    return res.status(403).json({
+      error: `Your ${plan.name} plan allows ${plan.maxEventsPerMonth} event(s) per month. Upgrade to create more.`,
+      upgrade: true,
+    });
   }
-});
 
-// ---------- acts management (admin) ----------
-app.get("/api/acts", requireAdmin, async (req, res) => {
-  const rows = (await pool.query(
-    `SELECT a.id, a.name, a.email, a.email_status, a.email_status_at, a.car_reg,
-            a.contact_name, a.phone, a.via_agent, a.agent_name, a.agent_email, a.stage_names,
-            (SELECT count(*)::int FROM bookings b WHERE b.act_id = a.id) AS booking_count,
-            (SELECT array_agg(DISTINCT b.performer_name)
-               FROM bookings b
-              WHERE b.act_id = a.id AND b.performer_name IS NOT NULL AND b.performer_name <> ''
-            ) AS performed_as
-     FROM acts a WHERE a.agency_id=$1 ORDER BY a.name`, [req.agencyId]
-  )).rows;
-  res.json({ acts: rows });
-});
-
-app.post("/api/update-act", requireAdmin, async (req, res) => {
-  try {
-    const { id, name, email } = req.body || {};
-    const nm = (name || "").trim();
-    const em = (email || "").trim().toLowerCase();
-    if (!id || !nm) return res.status(400).json({ error: "A name is required." });
-    // Email is optional (agent-booked acts are reached via the agent). If present, don't
-    // let two acts collide on the same email.
-    if (em) {
-      const clash = (await pool.query("SELECT 1 FROM acts WHERE email=$1 AND id<>$2 AND agency_id=$3", [em, id, req.agencyId])).rows[0];
-      if (clash) return res.status(409).json({ error: "Another act already uses that email." });
-    }
-
-    // Build an update from whichever fields were supplied (name always; email set to null
-    // when blank; the rest only when present, so a simple save doesn't wipe contact details).
-    const sets = ["name=$1", "email=$2"];
-    const vals = [nm, em || null];
-    let n = 3;
-    const opt = (key, col, transform) => {
-      if (req.body?.[key] !== undefined) {
-        const v = (req.body[key] || "").toString().trim();
-        sets.push(`${col}=$${n++}`);
-        vals.push(transform ? transform(v) : (v || null));
-      }
-    };
-    opt("car_reg", "car_reg", (v) => v.slice(0, 20).toUpperCase() || null);
-    opt("contact_name", "contact_name");
-    opt("phone", "phone");
-    opt("stage_names", "stage_names");
-    opt("agent_name", "agent_name");
-    opt("agent_email", "agent_email", (v) => v.toLowerCase() || null);
-    if (req.body?.via_agent !== undefined) {
-      sets.push(`via_agent=$${n++}`);
-      vals.push(req.body.via_agent === true || req.body.via_agent === "true");
-    }
-    vals.push(id, req.agencyId);
-    await pool.query(`UPDATE acts SET ${sets.join(", ")} WHERE id=$${n++} AND agency_id=$${n++}`, vals);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post("/api/delete-act", requireAdmin, async (req, res) => {
-  try {
-    const id = (req.body?.id || "").trim();
-    if (!id) return res.status(400).json({ error: "Missing act." });
-    // bookings reference acts with ON DELETE CASCADE, so this removes their bookings too
-    await pool.query("DELETE FROM acts WHERE id=$1 AND agency_id=$2", [id, req.agencyId]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-async function sendConfirmEmail(act, gigCount, sender, notesList) {
-  const link = `${APP_URL}/act/?act=${act.id}`;
-  const plural = gigCount === 1 ? "a gig" : `${gigCount} gigs`;
-  sender = sender || await senderForAgency(act.agency_id);
-  // Greeting: list every stage name they're booked under this week, e.g.
-  // "DJ Sparkle", "DJ Sparkle & The Sparkler", "A, B & C". Each name is escaped.
-  const names = (Array.isArray(act.greetNames) && act.greetNames.length ? act.greetNames : [act.name])
-    .filter(Boolean).map(esc);
-  let greetHtml;
-  if (names.length <= 1) greetHtml = names[0] || esc(act.name);
-  else greetHtml = `${names.slice(0, -1).join(", ")} &amp; ${names[names.length - 1]}`;
-  let noteHtml = "";
-  const list = Array.isArray(notesList) ? notesList.filter(n => n && n.note && n.note.trim()) : [];
-  if (list.length) {
-    const items = list.map(n => `<li style="margin-bottom:4px"><strong>${esc(n.venue || "")}:</strong> ${esc(n.note.trim()).replace(/\n/g, "<br>")}</li>`).join("");
-    noteHtml = `<div style="background:#fff8ec;border-left:4px solid #e8a13a;border-radius:8px;padding:12px 14px;margin:14px 0"><strong>Notes from us:</strong><ul style="margin:8px 0 0;padding-left:18px">${items}</ul></div>`;
-  }
-  await sendMail({
-    from: sender.from,
-    replyTo: sender.replyTo,
-    to: act.email,
-    subject: `Please confirm ${plural} for next week`,
-    html: `
-      <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#222">
-        <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-        <p>Hi ${greetHtml},</p>
-        <p>You're booked for <strong>${plural}</strong> next week. Please tap the button below to
-           review the details and confirm you're all good. You'll also find the venue contact there.</p>
-        ${noteHtml}
-        <p style="text-align:center;margin:28px 0">
-          <a href="${link}" style="background:#e8a13a;color:#14130f;padding:14px 26px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;display:inline-block">Review &amp; confirm my gigs</a>
-        </p>
-        <p style="color:#666;font-size:13px">If the button doesn't work, paste this into your browser:<br>${link}</p>
-        <p style="color:#999;font-size:12px;margin-top:24px">Thanks!</p>
-        ${emailFooter(sender)}
-      </div>
-    `,
+  const b = req.body || {};
+  const id = auth.newId().slice(0, 6).toUpperCase();
+  db.recordEvent(id, req.user.id);                 // usage counter
+  const event = db.createEvent({                   // the real stored event
+    id,
+    host_id: req.user.id,
+    name: (b.name || 'Untitled Event').toString().slice(0, 120),
+    type: (b.type || 'Event').toString().slice(0, 40),
+    host: (b.host || req.user.name || 'Your host').toString().slice(0, 80),
+    votes_per: Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999)),
+    deadline: b.deadline ? Number(b.deadline) : null,
+    event_date: b.eventDate ? Number(b.eventDate) : null,
+    locked: false,
+    ask_name: !!b.askName,
+    ask_nationality: !!b.askNationality,
+    // Use the host's preferred search source, but only honour 'apple' when
+    // Apple Music is actually configured on the server.
+    search_source: (APPLE_MUSIC_ENABLED && req.user.search_source === 'apple') ? 'apple' : 'spotify',
+    created_at: Date.now(),
   });
-}
-
-// ---------- daily reminders for still-pending future gigs ----------
-
-// Parse booking date strings like "Wed 3 Jun 2026" into a Date (UTC midnight).
-function parseGigDate(s) {
-  if (!s) return null;
-  const t = s.replace(/^[A-Za-z]{3,}\s+/, "").trim();
-  const m = t.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/);
-  if (!m) return null;
-  const months = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
-  const mon = months[m[2].slice(0, 3).toLowerCase()];
-  if (mon === undefined) return null;
-  return new Date(Date.UTC(+m[3], mon, +m[1]));
-}
-
-async function sendReminderEmail(act, gigCount, sender) {
-  const link = `${APP_URL}/act/?act=${act.id}`;
-  const plural = gigCount === 1 ? "a gig that's" : `${gigCount} gigs that are`;
-  sender = sender || await senderForAgency(act.agency_id);
-  const greet = esc(act.name || "there");
-  await sendMail({
-    from: sender.from,
-    replyTo: sender.replyTo,
-    to: act.email,
-    subject: `Reminder: please confirm your upcoming ${gigCount === 1 ? "gig" : "gigs"}`,
-    html: `
-      <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#222">
-        <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-        <p>Hi ${greet},</p>
-        <p>Just a quick reminder — you have <strong>${plural}</strong> still awaiting confirmation.
-           Please tap below to review and confirm.</p>
-        <p style="text-align:center;margin:28px 0">
-          <a href="${link}" style="background:#e8a13a;color:#14130f;padding:14px 26px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;display:inline-block">Review &amp; confirm</a>
-        </p>
-        <p style="color:#666;font-size:13px">If the button doesn't work, paste this into your browser:<br>${link}</p>
-        ${emailFooter(sender)}
-      </div>
-    `,
-  });
-}
-
-// Find acts with pending FUTURE gigs and send each one reminder (once per day).
-// If agencyId is given, only that agency is processed (manual button); otherwise all
-// agencies are processed (nightly cron), each using its own sender address.
-async function runReminders(agencyId, replyToEmail) {
-  if (!resend) return { error: "Email not configured." };
-  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().slice(0, 10);
-
-  const params = [todayStr];
-  let agencyFilter = "";
-  if (agencyId) { params.push(agencyId); agencyFilter = " AND bk.agency_id = $2"; }
-
-  const rows = (await pool.query(
-    `SELECT bk.id, bk.gig_date, bk.act_id, bk.agency_id, a.name AS act_name, a.email AS act_email,
-            a.via_agent, a.agent_email,
-            bk.act_contact_name, bk.agent_contact_name, bk.performer_name
-     FROM bookings bk JOIN acts a ON a.id = bk.act_id
-     LEFT JOIN batches ba ON ba.id = bk.batch_id
-     WHERE bk.status = 'pending'
-       AND COALESCE(ba.archived, false) = false
-       AND (bk.last_reminded IS NULL OR bk.last_reminded < $1)${agencyFilter}`, params
-  )).rows;
-
-  const future = rows.filter((r) => {
-    const d = parseGigDate(r.gig_date);
-    return d && d >= today;
-  });
-
-  // group by (agency, act) so each act/agent gets ONE reminder from their agency.
-  // Greeting precedence matches the confirmation email: act contact > agent > stage/name.
-  const byKey = new Map();
-  for (const r of future) {
-    const k = r.agency_id + "|" + r.act_id;
-    if (!byKey.has(k)) {
-      const greetName = r.act_contact_name || r.agent_contact_name || r.performer_name || r.act_name;
-      const recipient = (r.act_email && r.act_email.trim()) ? r.act_email.trim()
-        : (r.via_agent && r.agent_email ? r.agent_email.trim() : "");
-      byKey.set(k, { agencyId: r.agency_id, act: { id: r.act_id, name: greetName, email: recipient }, ids: [] });
-    }
-    byKey.get(k).ids.push(r.id);
-  }
-
-  let emailed = 0, failed = 0, gigs = 0, skipped = 0;
-  for (const { agencyId: aid, act, ids } of byKey.values()) {
-    if (!act.email) { skipped++; continue; }   // no act email and not reachable via agent
-    try {
-      const sender = await senderForAgency(aid, replyToEmail);
-      await sendReminderEmail(act, ids.length, sender);
-      emailed++; gigs += ids.length;
-      await pool.query(
-        `UPDATE bookings SET last_reminded=$1, reminders_sent=reminders_sent+1 WHERE id = ANY($2)`,
-        [todayStr, ids]
-      );
-    } catch (e) {
-      failed++;
-      console.error("reminder failed for", act.email, e.message);
-    }
-  }
-  // Breakdown of why the scanned pending gigs weren't all emailed, to aid diagnosis.
-  const unparseable = rows.filter((r) => !parseGigDate(r.gig_date)).length;
-  const pastDated = rows.filter((r) => { const d = parseGigDate(r.gig_date); return d && d < today; }).length;
-  return { acts: emailed, gigs, failed, skipped,
-           scanned: rows.length, futureCount: future.length, groups: byKey.size,
-           emailConfigured: !!resend, unparseableDates: unparseable, pastDated };
-}
-
-// Cron endpoint — called by Render Cron Job. Protected by a secret, not the admin cookie.
-// Diagnostic: show why pending gigs are / aren't eligible for reminders (platform admin).
-app.get("/api/debug-reminders", requireAdmin, async (req, res) => {
-  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().slice(0, 10);
-  const rows = (await pool.query(
-    `SELECT bk.id, bk.gig_date, bk.status, bk.last_reminded, a.email AS act_email,
-            COALESCE(ba.archived,false) AS archived
-     FROM bookings bk JOIN acts a ON a.id=bk.act_id
-     LEFT JOIN batches ba ON ba.id=bk.batch_id
-     WHERE bk.agency_id=$1 ORDER BY bk.created_at DESC LIMIT 50`, [req.agencyId]
-  )).rows;
-  const out = rows.map((r) => {
-    const d = parseGigDate(r.gig_date);
-    return {
-      gig_date_raw: r.gig_date,
-      parsed: d ? d.toISOString().slice(0, 10) : "COULD NOT PARSE",
-      is_future: d ? (d >= today) : false,
-      status: r.status,
-      archived: r.archived,
-      already_reminded_today: r.last_reminded ? (r.last_reminded >= todayStr) : false,
-      has_email: !!r.act_email,
-    };
-  });
-  res.json({ today: todayStr, emailConfigured: !!resend, gigs: out });
-});
-
-// Dry-run the reminder query (no emails sent) and report the exact counts at each
-// stage, scoped to this agency — the definitive "why zero" check.
-// Diagnostic: for one act, show each gig's venue linkage, share flag and resolved address.
-app.get("/api/debug-act-venue", requireAdmin, async (req, res) => {
-  const act = (req.query.act || "").toString();
-  const rows = (await pool.query(
-    `SELECT bk.id, bk.venue_text, bk.venue_key, bk.share_venue,
-            v.name AS matched_venue, v.display_name, v.address AS venue_address
-     FROM bookings bk
-     LEFT JOIN venues v ON v.name = bk.venue_key AND v.agency_id = bk.agency_id
-     WHERE bk.act_id=$1 AND bk.agency_id=$2
-     ORDER BY bk.created_at DESC LIMIT 20`, [act, req.agencyId]
-  )).rows;
-  res.json({ act, gigs: rows.map((r) => ({
-    venue_text: r.venue_text,
-    venue_key: r.venue_key,
-    share_venue: r.share_venue,
-    matched_a_saved_venue: !!r.matched_venue,
-    venue_has_address: !!r.venue_address,
-    address_would_show: !!(r.share_venue && r.venue_address),
-  })) });
-});
-
-app.get("/api/debug-reminders-run", requireAdmin, async (req, res) => {
-  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().slice(0, 10);
-  const rows = (await pool.query(
-    `SELECT bk.id, bk.gig_date, bk.act_id, a.email AS act_email
-     FROM bookings bk JOIN acts a ON a.id = bk.act_id
-     LEFT JOIN batches ba ON ba.id = bk.batch_id
-     WHERE bk.status = 'pending'
-       AND COALESCE(ba.archived, false) = false
-       AND (bk.last_reminded IS NULL OR bk.last_reminded < $1)
-       AND bk.agency_id = $2`, [todayStr, req.agencyId]
-  )).rows;
-  const future = rows.filter((r) => { const d = parseGigDate(r.gig_date); return d && d >= today; });
-  const acts = new Set(future.map((r) => r.act_id));
   res.json({
-    today: todayStr,
-    emailConfigured: !!resend,
-    pendingUnremindedScanned: rows.length,
-    futureEligible: future.length,
-    distinctActsToEmail: acts.size,
-    sampleDates: rows.slice(0, 5).map((r) => r.gig_date),
+    eventId: id,
+    hostId: req.user.id,
+    maxGuests: plan.maxGuestsPerEvent,
+    plan: plan.id,
+    event: publicEvent(event),
   });
 });
 
-app.post("/api/run-reminders", async (req, res) => {
-  const provided = req.get("x-cron-secret") || req.query.secret;
-  if (!CRON_SECRET || provided !== CRON_SECRET) return res.status(403).json({ error: "Forbidden." });
-  const result = await runReminders();     // all agencies
-  res.json(result);
-});
+// --- list my events (host dashboard) ---
+app.get('/api/my-events', auth.requireAuth, (req, res) => {
+  // Wedding live-requests events never show as standalone events (planner-only).
+  const liveIds = new Set(db.allWeddingLiveEventIds());
 
-// Manual trigger from the dashboard — this agency only.
-app.post("/api/send-reminders-now", requireAdmin, async (req, res) => {
-  const result = await runReminders(req.agencyId, await userEmail(req.userId));
-  res.json(result);
-});
-
-// Weekly team digest: emails each agency's team members a list of acts/gigs still
-// unconfirmed for the current (non-archived) week. Only future-dated pending gigs.
-async function runWeeklyDigest(agencyId) {
-  if (!resend) return { error: "Email not configured." };
-  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-
-  // agencies to process
-  const agencies = agencyId
-    ? (await pool.query("SELECT id FROM agencies WHERE id=$1", [agencyId])).rows
-    : (await pool.query("SELECT id FROM agencies WHERE active=true").catch(() => ({ rows: [] }))).rows;
-
-  let sent = 0;
-  for (const ag of agencies) {
-    const aid = ag.id;
-    // pending gigs in the current active batch
-    const rows = (await pool.query(
-      `SELECT a.name AS act_name, a.email AS act_email, bk.performer_name, bk.gig_date, bk.gig_time,
-              COALESCE(NULLIF(bk.venue_text,''), v.display_name) AS venue
-       FROM bookings bk
-       JOIN acts a ON a.id=bk.act_id
-       LEFT JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-       LEFT JOIN batches ba ON ba.id=bk.batch_id
-       WHERE bk.agency_id=$1 AND bk.status='pending' AND COALESCE(ba.archived,false)=false`,
-      [aid]
-    )).rows;
-
-    // keep only future-dated gigs
-    const pending = rows.filter((r) => { const d = parseGigDate(r.gig_date); return d && d >= today; });
-    if (!pending.length) continue; // only send if something's outstanding
-
-    // team recipients
-    const team = (await pool.query("SELECT email FROM users WHERE agency_id=$1", [aid])).rows.map((u) => u.email).filter(Boolean);
-    if (!team.length) continue;
-
-    // build the list, grouped by act
-    const byAct = new Map();
-    for (const p of pending) {
-      const key = p.act_name + "|" + p.act_email;
-      if (!byAct.has(key)) byAct.set(key, { name: p.performer_name || p.act_name, email: p.act_email, gigs: [] });
-      byAct.get(key).gigs.push({ venue: p.venue, when: [p.gig_date, p.gig_time].filter(Boolean).join(" · ") });
-    }
-
-    const sender = await senderForAgency(aid);
-    const rowsHtml = [...byAct.values()].map((a) => {
-      const gigLines = a.gigs.map((g) => `<div style="color:#555;font-size:13px">• ${esc(g.venue || "")}${g.when ? " — " + esc(g.when) : ""}</div>`).join("");
-      return `<tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>${esc(a.name)}</strong><br><span style="color:#888;font-size:12px">${esc(a.email || "")}</span></td><td style="padding:8px 12px;border-bottom:1px solid #eee">${gigLines}</td></tr>`;
-    }).join("");
-
-    try {
-      await sendMail({
-        from: sender.from,
-        replyTo: sender.replyTo,
-        to: team,
-        subject: `${pending.length} gig${pending.length === 1 ? "" : "s"} still unconfirmed`,
-        html: `
-          <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:600px;margin:0 auto;color:#222">
-            <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-            <p>Here's this week's outstanding confirmations — <strong>${byAct.size} act${byAct.size === 1 ? "" : "s"}</strong> still to confirm <strong>${pending.length} gig${pending.length === 1 ? "" : "s"}</strong>:</p>
-            <table style="border-collapse:collapse;width:100%;margin:12px 0">
-              <thead><tr><th style="text-align:left;padding:8px 12px;border-bottom:2px solid #ddd">Act</th><th style="text-align:left;padding:8px 12px;border-bottom:2px solid #ddd">Unconfirmed gigs</th></tr></thead>
-              <tbody>${rowsHtml}</tbody>
-            </table>
-            <p style="color:#666;font-size:13px">You may want to chase these before the weekend. Reminders are also sent to acts automatically each morning.</p>
-            ${emailFooter(sender)}
-          </div>`,
-      });
-      sent++;
-    } catch (e) {
-      console.error("weekly digest failed for agency", aid, e.message);
-    }
+  // Sub-DJs (managed accounts) see only the events assigned to them.
+  if (req.user.role === 'subdj') {
+    const events = db.listEventsAssignedTo(req.user.id)
+      .filter(e => !liveIds.has(e.id))
+      .map(e => Object.assign(summaryEvent(e), { assignedToMe: true }));
+    return res.json({ events });
   }
-  return { sent };
+  // Regular hosts: their own events PLUS any assigned to them — both with
+  // wedding live-events filtered out.
+  const own = db.listEventsByHost(req.user.id)
+    .filter(e => !liveIds.has(e.id))
+    .map(summaryEvent);
+  const assigned = db.listEventsAssignedTo(req.user.id)
+    .filter(e => e.host_id !== req.user.id && !liveIds.has(e.id))
+    .map(e => Object.assign(summaryEvent(e), { assignedToMe: true }));
+  res.json({ events: [...own, ...assigned] });
+});
+
+/* =========================================================
+   CALENDAR FEED (iCal / .ics) — DJs subscribe to their gigs
+   ========================================================= */
+
+// Escape text for iCal per RFC 5545 (commas, semicolons, backslashes, newlines).
+function icsEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,')
+    .replace(/\r?\n/g, '\\n');
+}
+// Format a timestamp (ms) as an all-day iCal date (YYYYMMDD) in local terms.
+function icsDate(ms) {
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
+}
+function icsStamp(ms) {
+  // UTC timestamp for DTSTAMP: YYYYMMDDTHHMMSSZ
+  return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+// Fold long lines to 75 octets per RFC 5545.
+function icsFold(line) {
+  if (line.length <= 73) return line;
+  const parts = [];
+  let s = line;
+  parts.push(s.slice(0, 73));
+  s = s.slice(73);
+  while (s.length) { parts.push(' ' + s.slice(0, 72)); s = s.slice(72); }
+  return parts.join('\r\n');
 }
 
-// Cron endpoint for the weekly digest. Protected by the shared secret.
-// Render cron runs in UTC; to hit 10am UK time year-round (handling BST/GMT), the
-// cron fires at both 09:00 and 10:00 UTC on Wednesday and this guard runs the digest
-// only when it's actually 10am in London. Pass ?force=1 to bypass (manual/testing).
-app.post("/api/run-weekly-digest", async (req, res) => {
-  const provided = req.get("x-cron-secret") || req.query.secret;
-  if (!CRON_SECRET || provided !== CRON_SECRET) return res.status(403).json({ error: "Forbidden." });
-  if (!req.query.force) {
-    const londonHour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hour12: false }).format(new Date()));
-    if (londonHour !== 10) return res.json({ skipped: true, reason: `Not 10am in London (currently ${londonHour}:00).` });
+// Build the full iCal document for a given DJ (their own + assigned gigs).
+function buildCalendarForUser(user) {
+  const isSub = user.role === 'subdj';
+  const liveIds = new Set(db.allWeddingLiveEventIds());
+
+  // Collect events: own + assigned (sub-DJs get assigned only).
+  let events = [];
+  if (isSub) {
+    events = db.listEventsAssignedTo(user.id);
+  } else {
+    events = db.listEventsByHost(user.id)
+      .concat(db.listEventsAssignedTo(user.id).filter(e => e.host_id !== user.id));
   }
-  const result = await runWeeklyDigest();
-  res.json(result);
-});
+  events = events.filter(e => !liveIds.has(e.id) && !e.archived && e.event_date);
 
-// Manual trigger from the dashboard — this agency's team only.
-app.post("/api/send-digest-now", requireAdmin, async (req, res) => {
-  const result = await runWeeklyDigest(req.agencyId);
-  res.json(result);
-});
-
-// ---------- per-agency cloud storage (OneDrive) ----------
-
-// Get a usable access token + drive id for an agency, refreshing and persisting the
-// rotated refresh token. Returns null if the agency has no (working) connection.
-async function agencyStorage(agencyId) {
-  const row = (await pool.query("SELECT provider, refresh_token, drive_id, account_name FROM storage_connections WHERE agency_id=$1", [agencyId])).rows[0];
-  if (!row || !row.refresh_token) return null;
-  const mod = STORAGE_PROVIDERS[row.provider];
-  if (!mod) return null;
-  try {
-    const { accessToken, refreshToken } = await mod.refresh(decryptToken(row.refresh_token));
-    // persist rotated refresh token (OneDrive rotates; Dropbox returns the same one)
-    await pool.query("UPDATE storage_connections SET refresh_token=$1 WHERE agency_id=$2", [encryptToken(refreshToken), agencyId]);
-    return { provider: row.provider, mod, accessToken, driveId: row.drive_id, accountName: row.account_name };
-  } catch (e) {
-    console.error("storage refresh failed for", agencyId, e.message);
-    return null;
+  // Collect weddings similarly.
+  let weddings = [];
+  if (isSub) {
+    weddings = db.listWeddingsAssignedTo(user.id);
+  } else {
+    weddings = db.listWeddingsByHost(user.id)
+      .concat(db.listWeddingsAssignedTo(user.id).filter(w => w.host_id !== user.id));
   }
-}
+  weddings = weddings.filter(w => !w.archived && w.wedding_date);
 
-// Owner starts the connect flow for a provider — redirect to its consent screen.
-app.get("/api/storage/:provider/connect", requireAdmin, async (req, res) => {
-  const mod = STORAGE_PROVIDERS[req.params.provider];
-  if (!mod) return res.status(404).send("Unknown provider.");
-  if (!mod.isConfigured()) return res.status(503).send("That storage provider isn't configured on the server yet.");
-  const me = (await pool.query("SELECT is_owner FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId])).rows[0];
-  if (!me || !me.is_owner) return res.status(403).send("Only the agency head can connect storage.");
-  // signed state carries provider + agency id + nonce, so the callback is trustworthy
-  const payload = `${req.params.provider}.${req.agencyId}.${Date.now()}`;
-  const sig = crypto.createHmac("sha256", _encKey).update(payload).digest("hex").slice(0, 32);
-  const state = `${payload}.${sig}`;
-  res.redirect(mod.authUrl(state));
-});
-
-// Provider redirects back here with a code; we store the agency's tokens.
-app.get("/api/storage/:provider/callback", async (req, res) => {
-  try {
-    const mod = STORAGE_PROVIDERS[req.params.provider];
-    if (!mod) return res.status(404).send("Unknown provider.");
-    const { code, state, error, error_description } = req.query;
-    if (error) return res.send(`<p>Connection cancelled: ${esc(error_description || error)}. You can close this window.</p>`);
-    if (!code || !state) return res.status(400).send("Missing code/state.");
-    const [provider, agencyId, ts, sig] = String(state).split(".");
-    if (provider !== req.params.provider) return res.status(400).send("Provider mismatch.");
-    const expect = crypto.createHmac("sha256", _encKey).update(`${provider}.${agencyId}.${ts}`).digest("hex").slice(0, 32);
-    if (sig !== expect) return res.status(400).send("Invalid state.");
-
-    const tokens = await mod.exchangeCode(code);
-    if (!tokens.refresh_token) return res.status(400).send("No refresh token returned — please try again.");
-    const info = await mod.getAccountInfo(tokens.access_token);
-    await pool.query(
-      `INSERT INTO storage_connections (agency_id, provider, account_name, drive_id, refresh_token, connected_at)
-       VALUES ($1,$2,$3,$4,$5,now())
-       ON CONFLICT (agency_id) DO UPDATE SET provider=EXCLUDED.provider, account_name=EXCLUDED.account_name,
-         drive_id=EXCLUDED.drive_id, refresh_token=EXCLUDED.refresh_token, connected_at=now()`,
-      [agencyId, provider, info.accountName, info.driveId, encryptToken(tokens.refresh_token)]
-    );
-    const label = provider === "dropbox" ? "Dropbox" : provider === "gdrive" ? "Google Drive" : "OneDrive";
-    res.send(`<!doctype html><meta charset=utf-8><body style="font-family:sans-serif;text-align:center;padding:40px">
-      <h2>✓ ${label} connected</h2>
-      <p>Connected as <b>${esc(info.accountName)}</b>. Your acts can now upload photos and videos, and they'll appear in your ${label} under "GigConfirm Uploads".</p>
-      <p>You can close this window and return to GigConfirm.</p>
-      <script>setTimeout(()=>{window.close&&window.close();},2500)</script></body>`);
-  } catch (e) {
-    console.error("storage callback failed", e);
-    res.status(500).send("Couldn't complete the connection. Please try again.");
-  }
-});
-
-// Status for the settings UI.
-app.get("/api/storage/status", requireAdmin, async (req, res) => {
-  const row = (await pool.query("SELECT provider, account_name, connected_at FROM storage_connections WHERE agency_id=$1", [req.agencyId])).rows[0];
-  // which providers are configured on the server (so the UI shows the right buttons)
-  const available = Object.entries(STORAGE_PROVIDERS).filter(([, m]) => m.isConfigured()).map(([k]) => k);
-  res.json({
-    serverConfigured: available.length > 0,
-    available,
-    connected: !!row,
-    provider: row?.provider || null,
-    accountName: row?.account_name || null,
-    connectedAt: row?.connected_at || null,
-  });
-});
-
-// Disconnect (owner-only).
-app.post("/api/storage/disconnect", requireAdmin, async (req, res) => {
-  const me = (await pool.query("SELECT is_owner FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId])).rows[0];
-  if (!me || !me.is_owner) return res.status(403).json({ error: "Only the agency head can disconnect storage." });
-  await pool.query("DELETE FROM storage_connections WHERE agency_id=$1", [req.agencyId]);
-  res.json({ ok: true });
-});
-
-// ---------- Google Calendar import ----------
-
-// Get a working access token for the agency's calendar connection.
-async function agencyCalendar(agencyId) {
-  const row = (await pool.query("SELECT refresh_token, account_name FROM calendar_connections WHERE agency_id=$1", [agencyId])).rows[0];
-  if (!row || !row.refresh_token) return null;
-  try {
-    const { accessToken } = await gcal.refresh(decryptToken(row.refresh_token));
-    return { accessToken, accountName: row.account_name };
-  } catch (e) {
-    console.error("calendar refresh failed for", agencyId, e.message);
-    return null;
-  }
-}
-
-app.get("/api/calendar/status", requireAdmin, async (req, res) => {
-  const row = (await pool.query("SELECT account_name, connected_at FROM calendar_connections WHERE agency_id=$1", [req.agencyId])).rows[0];
-  res.json({ serverConfigured: gcal.isConfigured(), connected: !!row, accountName: row?.account_name || null });
-});
-
-app.get("/api/calendar/google/connect", requireAdmin, async (req, res) => {
-  if (!gcal.isConfigured()) return res.status(503).send("Calendar import isn't configured on the server yet.");
-  const me = (await pool.query("SELECT is_owner FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId])).rows[0];
-  if (!me || !me.is_owner) return res.status(403).send("Only the agency head can connect a calendar.");
-  const payload = `${req.agencyId}.${Date.now()}`;
-  const sig = crypto.createHmac("sha256", _encKey).update(payload).digest("hex").slice(0, 32);
-  res.redirect(gcal.authUrl(`${payload}.${sig}`));
-});
-
-app.get("/api/calendar/google/callback", async (req, res) => {
-  try {
-    const { code, state, error } = req.query;
-    if (error) return res.send(`<p>Connection cancelled. You can close this window.</p>`);
-    if (!code || !state) return res.status(400).send("Missing code/state.");
-    const [agencyId, ts, sig] = String(state).split(".");
-    const expect = crypto.createHmac("sha256", _encKey).update(`${agencyId}.${ts}`).digest("hex").slice(0, 32);
-    if (sig !== expect) return res.status(400).send("Invalid state.");
-    const tokens = await gcal.exchangeCode(code);
-    if (!tokens.refresh_token) return res.status(400).send("No refresh token returned — please try again.");
-    const info = await gcal.getAccountInfo(tokens.access_token);
-    await pool.query(
-      `INSERT INTO calendar_connections (agency_id, provider, account_name, refresh_token, connected_at)
-       VALUES ($1,'google',$2,$3,now())
-       ON CONFLICT (agency_id) DO UPDATE SET account_name=EXCLUDED.account_name, refresh_token=EXCLUDED.refresh_token, connected_at=now()`,
-      [agencyId, info.accountName, encryptToken(tokens.refresh_token)]
-    );
-    res.send(`<!doctype html><meta charset=utf-8><body style="font-family:sans-serif;text-align:center;padding:40px">
-      <h2>✓ Google Calendar connected</h2><p>Connected as <b>${esc(info.accountName)}</b>. You can now import gigs from your calendars. Close this window to return to GigConfirm.</p>
-      <script>setTimeout(()=>{window.close&&window.close();},2200)</script></body>`);
-  } catch (e) {
-    console.error("calendar callback failed", e);
-    res.status(500).send("Couldn't complete the connection. Please try again.");
-  }
-});
-
-app.post("/api/calendar/disconnect", requireAdmin, async (req, res) => {
-  const me = (await pool.query("SELECT is_owner FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId])).rows[0];
-  if (!me || !me.is_owner) return res.status(403).json({ error: "Only the agency head can disconnect." });
-  await pool.query("DELETE FROM calendar_connections WHERE agency_id=$1", [req.agencyId]);
-  res.json({ ok: true });
-});
-
-// List the connected account's calendars (for choosing which to import from).
-app.get("/api/calendar/list", requireAdmin, async (req, res) => {
-  try {
-    const cal = await agencyCalendar(req.agencyId);
-    if (!cal) return res.status(400).json({ error: "No calendar connected." });
-    const cals = await gcal.listCalendars(cal.accessToken);
-    res.json({ calendars: cals });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Parse an event into { act, venue } using the "Act @ Venue" title convention. For a
-// per-act calendar, the calendar name is the act if the title has no "@".
-// Clean a venue string taken from a calendar title. Booking titles often tack on extra
-// info after the venue — fee, set length, notes — e.g. "The Crown - £150 - 2x45".
-// That must not pollute the venue name (matching) or be shown to the act. We keep only
-// the venue portion: the text up to the first separator (dash/pipe/bullet) or fee marker.
-function cleanCalVenue(raw) {
-  let v = (raw || "").trim();
-  if (!v) return "";
-
-  // Booking-system titles append lots of admin after the venue name. Cut at the FIRST
-  // strong "the venue name has ended" marker. These are far more reliable than guessing
-  // at dashes — many real venue names contain " - " (e.g. "Mercure Hotel - Northampton").
-  const markers = [
-    /\(\s*[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\s*\)/,   // UK postcode in brackets, e.g. (NN1 2TA)
-    /\b[A-Z]{1,2}\d[A-Z\d]?\s+\d[A-Z]{2}\b/,          // bare UK postcode, e.g. NN1 2TA
-    /\(\s*form(erly|ally)\b/i,                        // "(formerly ..." / "(formally ..."
-    /\(\s*(was|aka|previously|old)\b/i,               // other bracketed asides
-    /\bfee\b\s*[:£$€]?/i,                             // "Fee £" / "Fee:"
-    /[£$€]\s?\d/,                                     // a currency amount anywhere
-    /\bbooking\s*type\b/i,
-    /\btimes?\s*:/i,
-    /\barrival\b\s*\d/i,
-    /\b(setup|set up|bandcall|soundcheck|get[- ]?in|load[- ]?in|finish)\b\s*[:\d]/i,
-    /\bspot\b\s*:/i,
-    /\bnotes?\s*:/i,
-    /\(\s*NPU\s*\)/i,                                 // booking-system code seen in titles
+  const now = Date.now();
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Spinlist//DJ Diary//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:Spinlist Gigs',
+    'X-WR-CALDESC:Your Spinlist events and weddings',
   ];
-  let cut = v.length;
-  for (const re of markers) {
-    const m = v.match(re);
-    if (m && m.index < cut) cut = m.index;
-  }
-  v = v.slice(0, cut).trim();
 
-  // tidy any trailing punctuation / dangling bracket left behind
-  v = v.replace(/[\s,;:\-–—(]+$/, "").trim();
-  return v;
+  const pushEvent = (uid, dateMs, title, desc) => {
+    lines.push('BEGIN:VEVENT');
+    lines.push(`UID:${uid}@spinlist.co.uk`);
+    lines.push(`DTSTAMP:${icsStamp(now)}`);
+    // All-day event: DTSTART date-only, DTEND next day.
+    lines.push(`DTSTART;VALUE=DATE:${icsDate(dateMs)}`);
+    lines.push(`DTEND;VALUE=DATE:${icsDate(dateMs + 86400000)}`);
+    lines.push(icsFold(`SUMMARY:${icsEscape(title)}`));
+    if (desc) lines.push(icsFold(`DESCRIPTION:${icsEscape(desc)}`));
+    lines.push('END:VEVENT');
+  };
+
+  for (const e of events) {
+    const label = e.assigned_dj === user.id && e.host_id !== user.id ? ' (assigned)' : '';
+    pushEvent(`event-${e.id}`, e.event_date,
+      `${e.name || 'Event'}${label}`,
+      `${e.type || 'Event'} · Spinlist\nhttps://www.spinlist.co.uk/`);
+  }
+  for (const w of weddings) {
+    const label = w.assigned_dj === user.id && w.host_id !== user.id ? ' (assigned)' : '';
+    const who = w.couple_names ? ` — ${w.couple_names}` : '';
+    pushEvent(`wedding-${w.id}`, w.wedding_date,
+      `${w.name || 'Wedding'}${who}${label}`,
+      `Wedding · Spinlist\nhttps://www.spinlist.co.uk/`);
+  }
+
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n') + '\r\n';
 }
 
-function parseCalEvent(title, calendarName, isPrimaryOrMaster) {
-  let act = "", venue = "";
-  const at = title.indexOf("@");
-  if (at >= 0) {
-    act = title.slice(0, at).trim();
-    venue = title.slice(at + 1).trim();
-  } else {
-    // no "@": treat the whole title as the venue, act = calendar name
-    venue = title.trim();
-    act = "";
-  }
-  // per-act calendar: prefer the calendar name as the act if the title didn't give one
-  if (!act && calendarName) act = calendarName.trim();
-  venue = cleanCalVenue(venue);
-  // Pull the "Spot:" value from the title — the performance/set detail (e.g. "AS REQD").
-  // Take everything after "Spot:" up to the next "; Field:" style marker or the end.
-  let performance = "";
-  const spotMatch = title.match(/\bspot\s*:\s*(.+)$/i);
-  if (spotMatch) {
-    performance = spotMatch[1]
-      .split(/;\s*[A-Za-z][\w ]*:/)[0]   // stop at a following "Something:" field
-      .replace(/[\s;,-]+$/, "")
-      .trim();
-  }
-  return { act, venue, performance };
-}
-
-// Convert an event start (ISO dateTime or date) into GigConfirm's "Fri 18 Jul 2026" + time.
-function calDateParts(start, allDay) {
-  const d = new Date(start);
-  if (isNaN(d)) return { date: "", time: "" };
-  const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-  const mons = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const date = `${days[d.getUTCDay()]} ${d.getUTCDate()} ${mons[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-  let time = "";
-  if (!allDay) {
-    let h = d.getHours(), m = d.getMinutes();
-    const ap = h >= 12 ? "pm" : "am"; const h12 = ((h + 11) % 12) + 1;
-    time = m ? `${h12}:${String(m).padStart(2,"0")}${ap}` : `${h12}${ap}`;
-  }
-  return { date, time };
-}
-
-// Preview: fetch events in the range from the chosen calendars, parse, and match acts.
-app.post("/api/calendar/preview", requireAdmin, async (req, res) => {
-  try {
-    const cal = await agencyCalendar(req.agencyId);
-    if (!cal) return res.status(400).json({ error: "No calendar connected." });
-    const calendarIds = Array.isArray(req.body?.calendarIds) ? req.body.calendarIds : [];
-    const from = (req.body?.from || "").toString();
-    const to = (req.body?.to || "").toString();
-    if (!calendarIds.length) return res.status(400).json({ error: "Pick at least one calendar." });
-    if (!from || !to) return res.status(400).json({ error: "Pick a date range." });
-    const timeMin = new Date(from + "T00:00:00Z").toISOString();
-    const timeMax = new Date(to + "T23:59:59Z").toISOString();
-
-    // map calendar id -> name (for per-act calendars)
-    const allCals = await gcal.listCalendars(cal.accessToken);
-    const nameById = new Map(allCals.map((c) => [c.id, c.name]));
-
-    // Load acts for matching. An act can perform under several names (its main name, its
-    // stored stage names, its real/contact name, and names seen in past bookings). Index
-    // ALL of them → the act's reachable email, so a calendar event using any of an act's
-    // names still finds the right address. For agent-booked acts with no direct email, use
-    // the agent email (that's how they're reached).
-    const acts = (await pool.query(
-      `SELECT a.name, a.email, a.contact_name, a.stage_names, a.via_agent, a.agent_email,
-              (SELECT array_agg(DISTINCT b.performer_name) FROM bookings b
-                WHERE b.act_id=a.id AND b.performer_name IS NOT NULL AND b.performer_name<>'') AS performed_as
-       FROM acts a WHERE a.agency_id=$1`, [req.agencyId]
-    )).rows;
-    const validEmail = (e) => e && /\S+@\S+\.\S+/.test(e);
-    const actByName = new Map();
-    for (const a of acts) {
-      const reach = validEmail(a.email) ? a.email : (a.via_agent && validEmail(a.agent_email) ? a.agent_email : "");
-      if (!reach) continue;                       // no way to reach this act — skip indexing
-      const names = [a.name, a.contact_name, ...String(a.stage_names || "").split(","), ...(Array.isArray(a.performed_as) ? a.performed_as : [])];
-      for (const nm of names) {
-        const key = (nm || "").trim().toLowerCase();
-        if (key && !actByName.has(key)) actByName.set(key, reach);   // first act to claim a name wins
-      }
-    }
-
-    const items = [];
-    for (const cid of calendarIds) {
-      const events = await gcal.listEvents(cal.accessToken, cid, timeMin, timeMax);
-      for (const e of events) {
-        const { act, venue, performance } = parseCalEvent(e.title, nameById.get(cid), false);
-        const { date, time } = calDateParts(e.start, e.allDay);
-        const matchedEmail = act ? (actByName.get(act.toLowerCase()) || "") : "";
-        items.push({
-          act, venue, date, time, performance,
-          rawTitle: e.title,
-          matched: !!matchedEmail,
-          email: matchedEmail,
-          issue: !act ? "No act name" : (!venue ? "No venue" : (!date ? "No date" : "")),
-        });
-      }
-    }
-    res.json({ ok: true, items });
-  } catch (e) {
-    console.error("calendar preview failed", e);
-    res.status(500).json({ error: e.message });
-  }
+// Public iCal feed. Uses a private token in the URL (calendar apps aren't
+// logged in), so the token must be unguessable and can be reset by the DJ.
+app.get('/calendar/:token.ics', (req, res) => {
+  const user = db.getUserByCalToken(req.params.token);
+  if (!user) return res.status(404).type('text/plain').send('Calendar not found.');
+  const ics = buildCalendarForUser(user);
+  res.set('Content-Type', 'text/calendar; charset=utf-8');
+  res.set('Content-Disposition', 'inline; filename="spinlist.ics"');
+  res.set('Cache-Control', 'public, max-age=3600');   // calendar apps re-poll
+  res.send(ics);
 });
 
-// Apply: create the gigs from a reviewed list. Each item: {act,email,venue,date,time}.
-// mode: "new" starts a fresh week, "current" adds to the active week.
-app.post("/api/calendar/apply", requireAdmin, async (req, res) => {
-  try {
-    const items = Array.isArray(req.body?.items) ? req.body.items : [];
-    const mode = (req.body?.mode || "current").toString();
-    if (!items.length) return res.status(400).json({ error: "Nothing to import." });
-
-    // resolve target batch
-    const typedLabel = (req.body?.label || "").toString().trim();
-    let batch;
-    if (mode === "new") {
-      const label = typedLabel || ("Week of " + new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short" }));
-      batch = (await pool.query("INSERT INTO batches (id, agency_id, label) VALUES ($1,$2,$3) RETURNING id",
-        [nanoid(16), req.agencyId, label])).rows[0];
-    } else {
-      batch = (await pool.query("SELECT id FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1", [req.agencyId])).rows[0];
-      if (!batch) {
-        batch = (await pool.query("INSERT INTO batches (id, agency_id, label) VALUES ($1,$2,$3) RETURNING id",
-          [nanoid(16), req.agencyId, typedLabel || "Imported gigs"])).rows[0];
-      } else if (typedLabel) {
-        // if adding to the current week and a name was typed, update the label to match
-        await pool.query("UPDATE batches SET label=$1 WHERE id=$2", [typedLabel, batch.id]);
-      }
-    }
-    const weekTag = new Date().toISOString().slice(0, 10);
-    const storedVenues = (await pool.query("SELECT name, display_name, share_contact FROM venues WHERE agency_id=$1", [req.agencyId])).rows;
-
-    let created = 0, skipped = 0;
-    for (const it of items) {
-      const email = (it.email || "").trim().toLowerCase();
-      const actName = (it.act || "").trim();
-      const venueText = (it.venue || "").trim();
-      const date = (it.date || "").trim();
-      if (!email || !/\S+@\S+\.\S+/.test(email) || !actName || !venueText || !date) { skipped++; continue; }
-
-      // upsert act by email
-      let a = (await pool.query("SELECT id FROM acts WHERE email=$1 AND agency_id=$2", [email, req.agencyId])).rows[0];
-      if (!a) a = (await pool.query("INSERT INTO acts (id,agency_id,name,email) VALUES ($1,$2,$3,$4) RETURNING id",
-        [nanoid(16), req.agencyId, actName, email])).rows[0];
-
-      const matchedKey = await resolveVenueKey(venueText, storedVenues);
-      const venueKey = matchedKey || normKey(venueText);
-      const mv = storedVenues.find((v) => v.name === venueKey);
-      const shareVenue = mv ? mv.share_contact !== false : true;
-      // store the matched venue's proper name if we linked one; else the cleaned text
-      const venueToStore = mv ? mv.display_name : venueText;
-      const perf = (it.performance || "").trim() || null;   // the "Spot:" performance detail
-
-      await pool.query(
-        `INSERT INTO bookings (id,agency_id,act_id,performer_name,venue_key,venue_text,gig_date,gig_time,notes,week_tag,batch_id,share_venue,status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')`,
-        [nanoid(16), req.agencyId, a.id, actName, venueKey, venueToStore, date, (it.time || "").trim() || null, perf, weekTag, batch.id, shareVenue]
-      );
-      created++;
-    }
-    res.json({ ok: true, created, skipped, batchId: batch.id });
-  } catch (e) {
-    console.error("calendar apply failed", e);
-    res.status(500).json({ error: e.message });
-  }
+// Authenticated: get (creating if needed) this DJ's calendar feed URL.
+app.get('/api/calendar/url', auth.requireAuth, (req, res) => {
+  const token = db.getOrCreateCalToken(req.user.id);
+  if (!token) return res.status(500).json({ error: 'Could not create calendar link.' });
+  res.json({ url: `${BASE_URL}/calendar/${token}.ics` });
 });
 
-// Does THIS act's agency have uploads available? (used by the act page)
-app.get("/api/upload-enabled", async (req, res) => {
-  try {
-    const actId = (req.query.act || "").toString();
-    if (!actId) return res.json({ enabled: false });
-    const act = (await pool.query("SELECT agency_id FROM acts WHERE id=$1", [actId])).rows[0];
-    if (!act) return res.json({ enabled: false });
-    const conn = (await pool.query("SELECT 1 FROM storage_connections WHERE agency_id=$1", [act.agency_id])).rows[0];
-    res.json({ enabled: !!conn });
-  } catch (_) {
-    res.json({ enabled: false });
-  }
+// Authenticated: reset the token (invalidates the old feed URL everywhere).
+app.post('/api/calendar/reset', auth.requireAuth, (req, res) => {
+  const token = db.resetCalToken(req.user.id);
+  if (!token) return res.status(500).json({ error: 'Could not reset calendar link.' });
+  res.json({ url: `${BASE_URL}/calendar/${token}.ics` });
 });
 
-// Act media upload → the act's agency's connected OneDrive, into a per-act folder.
-const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
-app.post("/api/act-media", mediaUpload.array("files", 12), async (req, res) => {
-  try {
-    const actId = (req.query.act || req.body?.act || "").toString();
-    if (!actId) return res.status(400).json({ error: "Missing act." });
-    const act = (await pool.query("SELECT id, name, agency_id FROM acts WHERE id=$1", [actId])).rows[0];
-    if (!act) return res.status(404).json({ error: "Act not found." });
+// --- get one event (PUBLIC — guests load this by id) ---
+app.get('/api/events/:id', (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  // include host branding if their plan allows it
+  let branding = null;
+  const host = db.getUserById(e.host_id);
+  if (host && planHasBranding(host)) branding = db.getBranding(host.id);
+  // The host (or assigned sub-DJ) sees requester names; guests do not.
+  const isHost = req.user && canAccessEvent(req.user, e);
+  res.json({ event: publicEvent(e, isHost), branding });
+});
 
-    const store = await agencyStorage(act.agency_id);
-    if (!store) return res.status(503).json({ error: "Uploads aren't available for this agency." });
+// --- lock / unlock voting (host only, own event) ---
+app.post('/api/events/:id/lock', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  const updated = db.setEventLocked(e.id, !!(req.body || {}).locked);
+  res.json({ event: publicEvent(updated) });
+});
 
-    const files = req.files || [];
-    if (!files.length) return res.status(400).json({ error: "No files received." });
-    const okType = (m) => /^image\//.test(m) || /^video\//.test(m);
-    if (files.find((f) => !okType(f.mimetype))) return res.status(400).json({ error: "Only photos and videos can be uploaded." });
+// --- archive / unarchive an event (host only) ---
+app.post('/api/events/:id/archive', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  db.setArchived(e.id, !!(req.body || {}).archived);
+  res.json({ ok: true });
+});
 
-    let uploaded = 0;
-    for (const f of files) {
-      await store.mod.uploadFile(store, act.name, f.originalname, f.buffer, f.mimetype);
-      uploaded++;
+app.post('/api/weddings/:id/archive', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (w.host_id !== req.user.id) return res.status(403).json({ error: 'Not your wedding.' });
+  const archived = !!(req.body || {}).archived;
+  db.setWeddingArchived(w.id, archived);
+  // Keep the linked live-requests event in sync so it doesn't linger on My Events.
+  if (w.live_event_id && db.getEvent(w.live_event_id)) {
+    db.setArchived(w.live_event_id, archived);
+  }
+  res.json({ ok: true });
+});
+
+// --- edit an event's details (host only). Share link/id never change. ---
+app.post('/api/events/:id/update', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  const fields = {};
+  if (b.name !== undefined) fields.name = (b.name || 'Untitled Event').toString().slice(0, 120);
+  if (b.type !== undefined) fields.type = (b.type || 'Event').toString().slice(0, 40);
+  if (b.host !== undefined) fields.host = (b.host || 'Your host').toString().slice(0, 80);
+  if (b.votesPer !== undefined) fields.votes_per = Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999));
+  if (b.deadline !== undefined) fields.deadline = b.deadline ? Number(b.deadline) : null;
+  if (b.eventDate !== undefined) fields.event_date = b.eventDate ? Number(b.eventDate) : null;
+  if (b.askName !== undefined) fields.ask_name = !!b.askName;
+  if (b.askNationality !== undefined) fields.ask_nationality = !!b.askNationality;
+  const updated = db.updateEvent(e.id, fields);
+  res.json({ event: publicEvent(updated, true) });
+});
+
+// --- delete an event (host only) ---
+app.delete('/api/events/:id', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  db.deleteEvent(e.id);
+  res.json({ ok: true });
+});
+
+// --- mark a song played / unplayed (host or assigned sub-DJ) ---
+app.post('/api/events/:id/played', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (!canAccessEvent(req.user, e)) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  if (!b.trackId) return res.status(400).json({ error: 'trackId required.' });
+  const updated = db.setPlayed(e.id, b.trackId, !!b.played);
+  res.json({ event: publicEvent(updated) });
+});
+
+// --- host adjusts a song's votes (e.g. knock one off) — host/sub-DJ only ---
+app.post('/api/events/:id/adjust-votes', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (!canAccessEvent(req.user, e)) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  if (!b.trackId) return res.status(400).json({ error: 'trackId required.' });
+  // Only allow small nudges; default -1. Positive allowed too (undo a knock-off).
+  let delta = parseInt(b.delta, 10);
+  if (!Number.isFinite(delta)) delta = -1;
+  delta = Math.max(-100, Math.min(100, delta));
+  const updated = db.adjustVotes(e.id, b.trackId, delta);
+  res.json({ event: publicEvent(updated, true) });
+});
+
+// --- host adds a song directly (guest asked at the booth) — host/sub-DJ only ---
+app.post('/api/events/:id/add-song', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (!canAccessEvent(req.user, e)) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  const t = b.track;
+  if (!t || !t.id || !t.title) return res.status(400).json({ error: 'A song is required.' });
+  // How many votes to seed it with (default 1 — as if one person asked).
+  let votes = parseInt(b.votes, 10);
+  if (!Number.isFinite(votes) || votes < 1) votes = 1;
+  votes = Math.min(votes, 999);
+  const updated = db.hostAddSong(e.id, {
+    id: t.id, uri: t.uri || null, isrc: t.isrc || '', title: t.title, artist: t.artist || '', art: t.art || '',
+  }, votes);
+  res.json({ event: publicEvent(updated, true) });
+});
+
+// --- host removes a song from the leaderboard entirely — host/sub-DJ only ---
+app.post('/api/events/:id/remove-track', auth.requireAuth, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (!canAccessEvent(req.user, e)) return res.status(403).json({ error: 'Not your event.' });
+  const b = req.body || {};
+  if (!b.trackId) return res.status(400).json({ error: 'trackId required.' });
+  const updated = db.removeTrack(e.id, b.trackId);
+  res.json({ event: publicEvent(updated, true) });
+});
+
+// --- cast votes (PUBLIC — guests). body: { add:[track], remove:[trackId] } ---
+app.post('/api/events/:id/vote', (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  const closed = e.locked || (e.deadline && Date.now() > e.deadline);
+  if (closed) return res.status(403).json({ error: 'Voting is closed for this event.' });
+  const b = req.body || {};
+
+  // Enforce the host's per-event guest cap (Pro = 75, Studio = unlimited).
+  // The public demo event is always uncapped so anyone can try it.
+  const host = db.getUserById(e.host_id);
+  const plan = (host && PLANS[host.plan]) || PLANS.none;
+  const cap = e.demo ? null : plan.maxGuestsPerEvent;   // null = unlimited
+  const guestId = (b.guestId || '').toString().slice(0, 64);
+  // Only gate when this guest is ADDING a vote (joining in); removals are fine.
+  const wantsToAdd = Array.isArray(b.add) && b.add.length > 0;
+  if (guestId && wantsToAdd) {
+    const reg = db.registerGuest(e.id, guestId, cap);
+    if (!reg.allowed) {
+      return res.status(403).json({ error: 'This event has reached its guest limit.', full: true });
     }
-    res.json({ ok: true, uploaded });
-  } catch (e) {
-    console.error("act-media upload failed", e);
-    res.status(500).json({ error: "Upload failed. Please try again." });
   }
-});
 
-app.get("/api/my-gigs", async (req, res) => {
-  const { act, b } = req.query;
-  let rows;
-  if (b) {
-    rows = (await pool.query(
-      `SELECT bk.*, 
-              COALESCE(NULLIF(bk.venue_text,''), v.display_name) AS display_name,
-              CASE WHEN bk.share_venue THEN v.contact_name ELSE NULL END AS contact_name,
-              CASE WHEN bk.share_venue THEN v.contact_role ELSE NULL END AS contact_role,
-              CASE WHEN bk.share_venue THEN v.contact2_name ELSE NULL END AS contact2_name,
-              CASE WHEN bk.share_venue THEN v.contact2_role ELSE NULL END AS contact2_role,
-              CASE WHEN bk.share_venue THEN v.contact2_phone ELSE NULL END AS contact2_phone,
-              CASE WHEN bk.share_venue THEN v.contact3_name ELSE NULL END AS contact3_name,
-              CASE WHEN bk.share_venue THEN v.contact3_role ELSE NULL END AS contact3_role,
-              CASE WHEN bk.share_venue THEN v.contact3_phone ELSE NULL END AS contact3_phone,
-              CASE WHEN bk.share_venue THEN v.contact2_email ELSE NULL END AS contact2_email,
-              CASE WHEN bk.share_venue THEN v.contact3_email ELSE NULL END AS contact3_email,
-              CASE WHEN bk.share_venue THEN v.notes ELSE NULL END AS venue_notes,
-              CASE WHEN bk.share_venue THEN v.phone ELSE NULL END AS phone,
-              CASE WHEN bk.share_venue THEN v.email ELSE NULL END AS venue_email,
-              v.address AS address
-       FROM bookings bk LEFT JOIN venues v ON v.name = bk.venue_key AND v.agency_id = bk.agency_id WHERE bk.id=$1`, [b])).rows;
-  } else if (act) {
-    rows = (await pool.query(
-      `SELECT bk.*, a.name AS act_name,
-              COALESCE(NULLIF(bk.venue_text,''), v.display_name) AS display_name,
-              CASE WHEN bk.share_venue THEN v.contact_name ELSE NULL END AS contact_name,
-              CASE WHEN bk.share_venue THEN v.contact_role ELSE NULL END AS contact_role,
-              CASE WHEN bk.share_venue THEN v.contact2_name ELSE NULL END AS contact2_name,
-              CASE WHEN bk.share_venue THEN v.contact2_role ELSE NULL END AS contact2_role,
-              CASE WHEN bk.share_venue THEN v.contact2_phone ELSE NULL END AS contact2_phone,
-              CASE WHEN bk.share_venue THEN v.contact3_name ELSE NULL END AS contact3_name,
-              CASE WHEN bk.share_venue THEN v.contact3_role ELSE NULL END AS contact3_role,
-              CASE WHEN bk.share_venue THEN v.contact3_phone ELSE NULL END AS contact3_phone,
-              CASE WHEN bk.share_venue THEN v.contact2_email ELSE NULL END AS contact2_email,
-              CASE WHEN bk.share_venue THEN v.contact3_email ELSE NULL END AS contact3_email,
-              CASE WHEN bk.share_venue THEN v.notes ELSE NULL END AS venue_notes,
-              CASE WHEN bk.share_venue THEN v.phone ELSE NULL END AS phone,
-              CASE WHEN bk.share_venue THEN v.email ELSE NULL END AS venue_email,
-              v.address AS address
-       FROM bookings bk
-       JOIN acts a ON a.id = bk.act_id
-       LEFT JOIN venues v ON v.name = bk.venue_key AND v.agency_id = bk.agency_id
-       LEFT JOIN batches ba ON ba.id = bk.batch_id
-       WHERE bk.act_id=$1 AND COALESCE(ba.archived, false) = false
-       ORDER BY bk.gig_date, bk.created_at DESC`, [act])).rows;
-
-    // Previous check-offs: gigs this act CONFIRMED in the last 14 days, even if the
-    // week is now archived. Read-only, shown separately for reference.
-    const previous = (await pool.query(
-      `SELECT bk.id, bk.performer_name, bk.gig_date, bk.gig_time, bk.status, bk.responded_at,
-              COALESCE(NULLIF(bk.venue_text,''), v.display_name) AS display_name,
-              CASE WHEN bk.share_venue THEN v.contact_name ELSE NULL END AS contact_name,
-              CASE WHEN bk.share_venue THEN v.contact_role ELSE NULL END AS contact_role,
-              CASE WHEN bk.share_venue THEN v.contact2_name ELSE NULL END AS contact2_name,
-              CASE WHEN bk.share_venue THEN v.contact2_role ELSE NULL END AS contact2_role,
-              CASE WHEN bk.share_venue THEN v.contact2_phone ELSE NULL END AS contact2_phone,
-              CASE WHEN bk.share_venue THEN v.contact3_name ELSE NULL END AS contact3_name,
-              CASE WHEN bk.share_venue THEN v.contact3_role ELSE NULL END AS contact3_role,
-              CASE WHEN bk.share_venue THEN v.contact3_phone ELSE NULL END AS contact3_phone,
-              CASE WHEN bk.share_venue THEN v.contact2_email ELSE NULL END AS contact2_email,
-              CASE WHEN bk.share_venue THEN v.contact3_email ELSE NULL END AS contact3_email,
-              CASE WHEN bk.share_venue THEN v.notes ELSE NULL END AS venue_notes,
-              CASE WHEN bk.share_venue THEN v.phone ELSE NULL END AS phone,
-              CASE WHEN bk.share_venue THEN v.email ELSE NULL END AS venue_email,
-              v.address AS address
-       FROM bookings bk
-       LEFT JOIN venues v ON v.name = bk.venue_key AND v.agency_id = bk.agency_id
-       LEFT JOIN batches ba ON ba.id = bk.batch_id
-       WHERE bk.act_id=$1
-         AND COALESCE(ba.archived, false) = true
-         AND bk.status = 'confirmed'
-         AND bk.responded_at IS NOT NULL
-         AND bk.responded_at >= now() - interval '14 days'
-       ORDER BY bk.responded_at DESC`, [act])).rows;
-    res.locals.previous = previous;
-  } else {
-    return res.status(400).json({ error: "Need an act or booking reference." });
-  }
-  // gig_date is free text ("Wed 3 Jun 2026"), so sort by the actual parsed date;
-  // anything unparseable falls to the end but keeps a stable order.
-  rows.sort((a, b) => {
-    const da = parseGigDate(a.gig_date), db = parseGigDate(b.gig_date);
-    if (da && db) return da - db;
-    if (da && !db) return -1;
-    if (!da && db) return 1;
-    return 0;
+  // Don't allow new votes on a song that's already been played.
+  const add = Array.isArray(b.add) ? b.add.filter(t => t && t.id && t.title && !(e.tracks[t.id] && e.tracks[t.id].played)).slice(0, 50) : [];
+  const remove = Array.isArray(b.remove) ? b.remove.filter(x => typeof x === 'string').slice(0, 50) : [];
+  const guest = (b.guest && typeof b.guest === 'object') ? { name: b.guest.name, nationality: b.guest.nationality } : null;
+  // Enforce the per-guest vote cap HERE, on the server. The browser also tracks
+  // it for a snappy UI, but a refresh used to reset that and hand out fresh
+  // votes — so the server is the only place it can actually be trusted.
+  const updated = db.applyVotes(e.id, {
+    add, remove, guest,
+    guestId,
+    votesPer: e.votes_per || 5,
   });
-  // Attach the agency's branding (name, logo, phone) so the act's page can show who
-  // the booking is from and how to reach them.
-  let agency = null;
-  const agencyId = rows[0]?.agency_id || res.locals.previous?.[0]?.agency_id;
-  if (agencyId) {
-    const s = await senderForAgency(agencyId);
-    agency = { name: s.agencyName, logoUrl: s.logoUrl, website: s.website, phone: s.phone };
+  const rejected = updated._rejected || 0;
+  const payload = { event: publicEvent(updated), myVotes: updated._myVotes || [] };
+  if (rejected) {
+    payload.rejected = rejected;
+    payload.message = 'You have used all your votes — remove one to vote for something else.';
   }
-  // The act's saved car registration (per-act), so their page can show/edit it.
-  let actId = act || rows[0]?.act_id || null;
-  let carReg = "";
-  if (actId) {
-    const ar = (await pool.query("SELECT car_reg FROM acts WHERE id=$1", [actId])).rows[0];
-    carReg = ar?.car_reg || "";
-  }
-  // Current week's news bulletin (only if switched on), shown at the top of the page.
-  let bulletin = "";
-  if (agencyId) {
-    const bt = (await pool.query(
-      "SELECT bulletin, bulletin_on FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1",
-      [agencyId]
-    )).rows[0];
-    if (bt && bt.bulletin_on && bt.bulletin) bulletin = bt.bulletin;
-  }
-  res.json({ gigs: rows, previous: res.locals.previous || [], agency, actId, carReg, bulletin });
+  res.json(payload);
 });
 
-// act confirms / flags a gig
-// Resolve a flagged gig: record what was done (notes) and mark it completed.
-// Manually confirm a gig when the act contacted us directly (call/text). Records who
-// did it and when, in the booking's message, so there's a clear audit trail.
-// Add a one-off gig by hand (last-minute bookings / swaps) to the current week.
-// Optionally email the act their check straight away.
-app.post("/api/add-gig", requireAdmin, async (req, res) => {
+// What has this guest already voted for? Called on load so a returning or
+// refreshing guest sees their real remaining votes rather than a fresh
+// (and wrong) full allocation.
+app.get('/api/events/:id/my-votes', (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  const guestId = (req.query.guestId || '').toString().slice(0, 64);
+  res.json({ myVotes: db.guestVotesFor(e.id, guestId), votesPer: e.votes_per || 5 });
+});
+
+// Shape an event for public/guest consumption (full track list).
+function publicEvent(e, hostView) {
+  if (!e) return null;
+  // The guest search catalogue follows the host's CURRENT preference (a live
+  // master switch), not a value frozen when the event was created. Falls back
+  // to the event's stamp, then Spotify. Only 'apple' when Apple is configured.
+  const host = db.getUserById(e.host_id);
+  const livePref = (host && host.search_source) || e.search_source || 'spotify';
+  const effectiveSource = (APPLE_MUSIC_ENABLED && livePref === 'apple') ? 'apple' : 'spotify';
+  return {
+    id: e.id, name: e.name, type: e.type, host: e.host,
+    votesPer: e.votes_per, deadline: e.deadline, eventDate: e.event_date || null,
+    locked: !!e.locked, hostId: e.host_id,
+    searchSource: effectiveSource,
+    dj: e.assigned_dj ? db.djProfileFor(e.host_id, e.assigned_dj) : null,
+    askName: !!e.ask_name, askNationality: !!e.ask_nationality,
+    tracks: Object.values(e.tracks || {})
+      .map(t => {
+        const base = { id: t.id, uri: t.uri, title: t.title, artist: t.artist, art: t.art, votes: t.votes, played: !!t.played, addedAt: t.addedAt || 0 };
+        // Requester names are private to the host — only attach in host view.
+        if (hostView) base.requesters = (t.requesters || []).map(r => ({ name: r.name, nationality: r.nationality }));
+        return base;
+      })
+      .sort((a, b) => b.votes - a.votes),
+  };
+}
+// Compact shape for the host's event list.
+function summaryEvent(e) {
+  const closed = e.locked || (e.deadline && Date.now() > e.deadline);
+  const tracks = Object.values(e.tracks || {});
+  return {
+    id: e.id, name: e.name, type: e.type, host: e.host,
+    locked: !!e.locked, closed: !!closed, archived: !!e.archived,
+    songCount: tracks.length,
+    voteCount: tracks.reduce((s, t) => s + t.votes, 0),
+    eventDate: e.event_date || null,
+    assignedDj: e.assigned_dj || null,
+    createdAt: e.created_at,
+  };
+}
+
+/* =========================================================
+   WEDDING PLANNER (DJ tier) — song blocks the couple fills in
+   ========================================================= */
+// Default blocks a DJ starts from (they can customise per wedding).
+const DEFAULT_WEDDING_BLOCKS = [
+  { name: 'First Dance', capacity: 1 },
+  { name: 'Cake Cutting', capacity: 1 },
+  { name: "Couple's Top 15", capacity: 15 },
+  { name: 'Play If Possible', capacity: 30 },
+  { name: 'Last Dance', capacity: 1 },
+  { name: 'Do Not Play', capacity: 5 },
+];
+
+// Which plans can create wedding plans. (Available to PRO for now.)
+function planHasWeddingPlanner(user) {
+  const p = PLANS[user.plan];
+  return !!(p && p.weddingPlanner);   // PRO WEDDING tier (and free trial)
+}
+function planIsMultiOp(user) {
+  const p = PLANS[user.plan];
+  return !!(p && p.multiOp);          // PRO WEDDING MULTI-OP
+}
+// True if the user owns this event, or it's assigned to them (sub-DJ or linked DJ).
+function canAccessEvent(user, e) {
+  if (!e) return false;
+  if (e.host_id === user.id) return true;
+  if (e.assigned_dj === user.id) return true;
+  // If this is a wedding's live-requests event, inherit access from that wedding
+  // (so whoever can run the wedding can also manage its live requests).
+  const w = db.getWeddingByLiveEvent && db.getWeddingByLiveEvent(e.id);
+  if (w && canAccessWedding(user, w)) return true;
+  return false;
+}
+// True if the user owns this wedding, the linked couple, or it's assigned to them.
+function canAccessWedding(user, w) {
+  if (!w) return false;
+  if (w.host_id === user.id || db.isCoupleMember(w, user.id)) return true;
+  if (w.assigned_dj === user.id) return true;
+  return false;
+}
+// Resolve the effective couple lock date for a wedding:
+//   - a positive timestamp  → explicit date the DJ set
+//   - 0                     → DJ explicitly cleared it (no lock)
+//   - null/undefined        → default to 14 days before the wedding date (if any)
+const LOCK_DEFAULT_DAYS = 14;
+function effectiveLockDate(w) {
+  if (!w) return null;
+  if (typeof w.lock_date === 'number') return w.lock_date === 0 ? null : w.lock_date;
+  if (w.wedding_date) return w.wedding_date - LOCK_DEFAULT_DAYS * 864e5;
+  return null;
+}
+// True if the couple's editing is locked (the effective lock date has passed). The
+// DJ/host is never locked out — they can still adjust after the couple's deadline.
+function coupleEditLocked(w, userId) {
+  const lock = effectiveLockDate(w);
+  if (!lock) return false;
+  if (userId === w.host_id || userId === w.assigned_dj) return false;  // DJ always edits
+  return Date.now() > lock;
+}
+// Fire a notification to the wedding's DJ when the COUPLE makes a change.
+/* Record who did what on a wedding, for the History view. Unlike
+   notifyCoupleActivity (which only fires for the couple), this logs EVERY
+   actor — DJ, sub-DJ and couple alike — because the whole point is being able
+   to see who changed something. */
+function logWedding(w, actor, action, detail) {
+  if (!w || !actor) return;
+  let role = 'dj';
+  if (db.isCoupleMember(w, actor.id)) role = 'couple';
+  else if (w.assigned_dj && actor.id === w.assigned_dj && actor.id !== w.host_id) role = 'subdj';
+  db.addWeddingHistory(w.id, {
+    actorId: actor.id,
+    actorName: actor.name || actor.email || 'Someone',
+    actorRole: role,
+    action,
+    detail,
+  });
+}
+
+// Describe a song-list change in words: what was actually added or removed.
+function describeSongChange(before, after, blockName) {
+  const b = (before || []).map(s => s.title + ' — ' + (s.artist || ''));
+  const a = (after || []).map(s => s.title + ' — ' + (s.artist || ''));
+  const added = a.filter(x => !b.includes(x));
+  const removed = b.filter(x => !a.includes(x));
+  const bits = [];
+  if (added.length) bits.push(`added ${added.slice(0, 3).join(', ')}${added.length > 3 ? ` +${added.length - 3} more` : ''}`);
+  if (removed.length) bits.push(`removed ${removed.slice(0, 3).join(', ')}${removed.length > 3 ? ` +${removed.length - 3} more` : ''}`);
+  const what = bits.length ? bits.join('; ') : 'reordered songs';
+  return blockName ? `${what} in “${blockName}”` : what;
+}
+
+// Describe a timeline change in words: what rows were actually added, removed
+// or retimed — not just "updated the timeline".
+function describeTimelineChange(before, after) {
+  const key = t => `${(t.time || '').trim()}|${(t.label || '').trim()}`;
+  const b = (before || []).map(key);
+  const a = (after || []).map(key);
+  const added = (after || []).filter(t => !b.includes(key(t)));
+  const removed = (before || []).filter(t => !a.includes(key(t)));
+
+  // A row whose label survives but whose time moved is a retime, not an add+remove.
+  const retimed = [];
+  const addedOnly = [];
+  for (const t of added) {
+    const was = (removed || []).find(r => (r.label || '').trim().toLowerCase() === (t.label || '').trim().toLowerCase());
+    if (was && (was.time || '') !== (t.time || '')) retimed.push(`${t.label}: ${was.time || '—'} → ${t.time || '—'}`);
+    else addedOnly.push(`${t.time ? t.time + ' ' : ''}${t.label || 'untitled'}`);
+  }
+  const retimedLabels = retimed.map(r => r.split(':')[0].trim().toLowerCase());
+  const removedOnly = removed
+    .filter(r => !retimedLabels.includes((r.label || '').trim().toLowerCase()))
+    .map(r => `${r.time ? r.time + ' ' : ''}${r.label || 'untitled'}`);
+
+  const bits = [];
+  const cap = (arr, verb) => {
+    if (!arr.length) return;
+    bits.push(`${verb} ${arr.slice(0, 3).join(', ')}${arr.length > 3 ? ` +${arr.length - 3} more` : ''}`);
+  };
+  cap(addedOnly, 'added');
+  cap(removedOnly, 'removed');
+  cap(retimed, 'moved');
+  return bits.length ? bits.join('; ') : 'reordered the timeline';
+}
+
+// Describe questionnaire answers: which questions were actually answered or
+// changed, and to what.
+function describeAnswerChange(before, after, questions) {
+  const labelFor = id => {
+    const q = (questions || []).find(x => x.id === id);
+    return (q && q.label) ? q.label : id;
+  };
+  const short = v => {
+    if (v === true || v === 'yes') return 'Yes';
+    if (v === false || v === 'no') return 'No';
+    const s = (v == null ? '' : String(v)).trim();
+    if (!s) return '(blank)';
+    return s.length > 40 ? s.slice(0, 40) + '…' : s;
+  };
+  const changes = [];
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const k of keys) {
+    const b = (before || {})[k];
+    const a = (after || {})[k];
+    if (JSON.stringify(b) === JSON.stringify(a)) continue;
+    const blank = b === undefined || b === null || b === '';
+    changes.push(blank
+      ? `${labelFor(k)}: ${short(a)}`
+      : `${labelFor(k)}: ${short(b)} → ${short(a)}`);
+  }
+  if (!changes.length) return 'saved the questionnaire (no changes)';
+  return `${changes.slice(0, 3).join('; ')}${changes.length > 3 ? ` +${changes.length - 3} more` : ''}`;
+}
+
+function notifyCoupleActivity(w, actor, type, text) {
+  if (!w || !actor) return;
+  if (!db.isCoupleMember(w, actor.id)) return;    // only couple actions notify
+  const label = w.couple_names || w.name || 'A couple';
+  const msg = `${label}: ${text}`;
+  // Notify the owner, and also the assigned sub-DJ (if any and different), so
+  // whoever is actually running the wedding hears about the couple's changes.
+  db.addNotification(w.host_id, { type, weddingId: w.id, weddingName: w.name || '', text: msg });
+  if (w.assigned_dj && w.assigned_dj !== w.host_id) {
+    db.addNotification(w.assigned_dj, { type, weddingId: w.id, weddingName: w.name || '', text: msg });
+  }
+}
+
+// Notify a DJ that they've been assigned an event or wedding.
+function notifyAssignment(djId, kind, id, name, dateMs) {
+  if (!djId) return;
+  const when = dateMs ? ` (${new Date(dateMs).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })})` : '';
+  const text = kind === 'wedding'
+    ? `You've been assigned a wedding: ${name}${when}`
+    : `You've been assigned an event: ${name}${when}`;
+  // weddingId carries the record id (event or wedding) for de-dupe + linking.
+  db.addNotification(djId, { type: 'assignment', weddingId: id, weddingName: name, text });
+}
+// Sub-DJ inherits planner access from their parent owner (so they can open weddings).
+function userHasPlannerAccess(user) {
+  if (user.role === 'subdj' && user.parent_id) {
+    const parent = db.getUserById(user.parent_id);
+    return !!(parent && planHasWeddingPlanner(parent));
+  }
+  return planHasWeddingPlanner(user);
+}
+
+// Prep (music library + playlist export) is available to every logged-in DJ EXCEPT
+// Basic (internal id 'pro'), since Basic can't export playlists. Sub-DJs inherit from
+// their parent's plan. 'couple' role never gets Prep.
+function userHasPrepAccess(user) {
+  if (!user) return false;
+  if (user.role === 'couple') return false;
+  let planId = user.plan;
+  if (user.role === 'subdj' && user.parent_id) {
+    const parent = db.getUserById(user.parent_id);
+    planId = parent ? parent.plan : user.plan;
+  }
+  return planId !== 'pro';   // everyone except Basic
+}
+
+// Return the wedding's questionnaire with gig-window flags resolved LIVE from
+// templates (matched per-question by label). We consider BOTH the wedding owner's
+// templates AND the current viewer's templates, so a sub-DJ or co-DJ who ticked
+// their own copy still gets the flags. Any template flagging a label wins.
+function questionnaireWithGigFlags(w, viewerId) {
+  const q = w.questionnaire;
+  if (!q || !Array.isArray(q.questions)) return q || null;
+  const owners = [w.host_id];
+  if (viewerId && viewerId !== w.host_id) owners.push(viewerId);
+  // Also include the viewer's parent owner if they're a sub-DJ.
+  const viewer = viewerId ? db.getUserById(viewerId) : null;
+  if (viewer && viewer.role === 'subdj' && viewer.parent_id) owners.push(viewer.parent_id);
+  const flagByLabel = {};
+  owners.forEach(oid => (db.listTemplates(oid) || []).forEach(t => (t.questions || []).forEach(tq => {
+    if (tq.label) { const k = tq.label.trim().toLowerCase(); if (tq.gigShow) flagByLabel[k] = true; else if (!(k in flagByLabel)) flagByLabel[k] = false; }
+  })));
+  return {
+    name: q.name,
+    questions: q.questions.map(qq => {
+      const k = (qq.label || '').trim().toLowerCase();
+      const live = flagByLabel[k] === true ? true : (k in flagByLabel ? false : !!qq.gigShow);
+      return Object.assign({}, qq, { gigShow: live });
+    }),
+  };
+}
+
+function publicWedding(w, viewerId) {
+  if (!w) return null;
+  const isHost = viewerId && viewerId === w.host_id;
+  // The assigned sub-DJ is also running this wedding, so they get the same
+  // DJ-facing details (invite code + who's joined) as the owner.
+  const isDjSide = isHost || (viewerId && w.assigned_dj === viewerId);
+  const isCouple = viewerId && db.isCoupleMember(w, viewerId);
+  const liveEv = w.live_event_id ? db.getEvent(w.live_event_id) : null;
+  return {
+    id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
+    inviteCode: (isDjSide ? w.invite_code : undefined),   // the DJ (or sub-DJ) sees the code
+    coupleJoined: !!w.couple_id,
+    coupleMembers: isDjSide ? db.weddingCoupleMembers(w) : undefined,   // DJ/sub-DJ sees who's joined
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
+    timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
+    questionnaire: questionnaireWithGigFlags(w, viewerId),
+    answers: w.answers || {},
+    liveBlockId: w.live_block_id || null,
+    liveEventId: w.live_event_id || null,
+    liveEventCode: w.live_event_id || null,   // event id doubles as the join code
+    liveVotesPer: liveEv ? liveEv.votes_per : 5,
+    liveAskName: liveEv ? !!liveEv.ask_name : false,
+    assignedDj: w.assigned_dj || null,
+    dj: db.djProfileFor(w.host_id, w.assigned_dj),
+    branding: (() => {
+      // The wedding owner's branding (logo/colour/tagline) — for the run-sheet PDF.
+      const owner = db.getUserById(w.host_id);
+      return (owner && planHasBranding(owner)) ? db.getBranding(owner.id) : null;
+    })(),
+    canExportSpotify: (() => {
+      // DJ (host or assigned) can export if they — or the wedding owner — have
+      // the Spotify export comp code. Comp-code-only, not plan-based.
+      const viewer = db.getUserById(viewerId);
+      if (!viewer) return false;
+      if (viewer.id !== w.host_id && w.assigned_dj !== viewer.id) return false;
+      if (viewer.spotify_export) return true;
+      const owner = db.getUserById(w.host_id);
+      return !!(owner && owner.spotify_export);
+    })(),
+    // The wedding's guest-search catalogue follows the owner's live preference
+    // (master switch), so block export matches what guests actually searched.
+    searchSource: (() => {
+      const owner = db.getUserById(w.host_id);
+      const pref = (owner && owner.search_source) || 'spotify';
+      return (APPLE_MUSIC_ENABLED && pref === 'apple') ? 'apple' : 'spotify';
+    })(),
+    // Apple export needs a paid plan with export access, NOT the Spotify comp
+    // code — Apple export is available to plan holders (Pro and above).
+    canExportApple: (() => {
+      if (!APPLE_MUSIC_ENABLED) return false;
+      const viewer = db.getUserById(viewerId);
+      if (!viewer) return false;
+      if (viewer.id !== w.host_id && w.assigned_dj !== viewer.id) return false;
+      // Plan-based export access — the viewer's, or the wedding owner's (so an
+      // assigned DJ inherits the owner's entitlement).
+      const vp = PLANS[viewer.plan];
+      if (vp && vp.spotifyExport) return true;
+      const owner = db.getUserById(w.host_id);
+      const op = owner && PLANS[owner.plan];
+      return !!(op && op.spotifyExport);
+    })(),
+    lockDate: effectiveLockDate(w),
+    lockIsDefault: (typeof w.lock_date !== 'number') && !!w.wedding_date,  // showing the 14-day default
+    coupleLocked: coupleEditLocked(w, viewerId),   // true only for a locked-out couple
+    canEdit: !!((isHost || isCouple) && !coupleEditLocked(w, viewerId)),
+    createdAt: w.created_at,
+  };
+}
+
+// DJ: create a wedding plan
+app.post('/api/weddings', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) {
+    return res.status(403).json({ error: 'The Wedding Planner is a PRO feature.', upgrade: true });
+  }
+  const b = req.body || {};
+  const blocksIn = Array.isArray(b.blocks) && b.blocks.length ? b.blocks : DEFAULT_WEDDING_BLOCKS;
+  const blocks = blocksIn.slice(0, 30).map((blk, i) => ({
+    id: 'b' + (i + 1) + '_' + auth.newId().slice(0, 4),
+    name: (blk.name || 'Block').toString().slice(0, 60),
+    capacity: Math.max(1, Math.min(parseInt(blk.capacity, 10) || 1, 100)),
+    songs: [],
+  }));
+  const wedding = db.createWedding({
+    id: auth.newId().slice(0, 8),
+    host_id: req.user.id,
+    invite_code: auth.newId().slice(0, 6).toUpperCase(),
+    name: (b.name || 'Wedding').toString().slice(0, 120),
+    couple_names: (b.coupleNames || '').toString().slice(0, 120),
+    wedding_date: b.weddingDate ? Number(b.weddingDate) : null,
+    blocks,
+    created_at: Date.now(),
+  });
+  // Optionally attach a questionnaire template chosen at creation.
+  if (b.templateId) {
+    const tpl = db.listTemplates(req.user.id).find(t => t.id === b.templateId);
+    if (tpl) db.setWeddingQuestionnaire(wedding.id, { name: tpl.name, questions: tpl.questions });
+  }
+  res.json({ wedding: publicWedding(db.getWedding(wedding.id), req.user.id) });
+});
+
+// DJ: list my weddings
+app.get('/api/weddings', auth.requireAuth, (req, res) => {
+  let source;
+  if (req.user.role === 'subdj') {
+    source = db.listWeddingsAssignedTo(req.user.id);
+  } else {
+    // Own weddings + any assigned to me by a multi-op owner.
+    const own = db.listWeddingsByHost(req.user.id);
+    const assigned = db.listWeddingsAssignedTo(req.user.id).filter(w => w.host_id !== req.user.id);
+    source = [...own, ...assigned];
+  }
+  const list = source.map(w => ({
+    id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
+    inviteCode: w.invite_code, coupleJoined: !!w.couple_id,
+    coupleMembers: db.weddingCoupleMembers(w),
+    blockCount: (w.blocks || []).length,
+    filledCount: (w.blocks || []).reduce((s, b) => s + ((b.songs || []).length), 0),
+    archived: !!w.archived,
+    assignedDj: w.assigned_dj || null,
+    assignedToMe: w.assigned_dj === req.user.id && w.host_id !== req.user.id,
+    createdAt: w.created_at,
+  }));
+  res.json({ weddings: list });
+});
+
+// Couple: list weddings I'm linked to
+app.get('/api/my-weddings', auth.requireAuth, (req, res) => {
+  const list = db.listWeddingsByCouple(req.user.id).map(w => publicWedding(w, req.user.id));
+  res.json({ weddings: list });
+});
+
+// Get one wedding (DJ, its couple, or the assigned sub-DJ)
+app.get('/api/weddings/:id', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (!canAccessWedding(req.user, w)) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  res.json({ wedding: publicWedding(w, req.user.id) });
+});
+
+// Save the songs for a block (DJ or couple)
+app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id)) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  if (coupleEditLocked(w, req.user.id)) {
+    return res.status(423).json({ error: 'Song choices are locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
+  }
+  const songs = Array.isArray((req.body || {}).songs) ? req.body.songs : [];
+  // Enforce the block's capacity HERE, not just in the browser. The UI blocks a
+  // full block, but a stale page, a double-submit or a second device could
+  // otherwise push a "First Dance" block (capacity 1) well past its limit.
+  const target = (w.blocks || []).find(b => b.id === req.params.blockId);
+  if (!target) return res.status(404).json({ error: 'Block not found.' });
+  const cap = Math.max(1, parseInt(target.capacity, 10) || 1);
+  if (songs.length > cap) {
+    return res.status(400).json({
+      error: `That block holds ${cap} song${cap === 1 ? '' : 's'} — you sent ${songs.length}.`,
+      capacity: cap,
+    });
+  }
+  // Snapshot the songs BEFORE the change, so history can say what actually
+  // changed rather than a vague "updated songs".
+  const before = (target.songs || []).map(s => ({ title: s.title, artist: s.artist }));
+  const updated = db.setWeddingBlockSongs(w.id, req.params.blockId, songs);
+  const blk = (updated.blocks || []).find(b => b.id === req.params.blockId);
+  logWedding(w, req.user, 'songs', describeSongChange(before, songs, blk ? blk.name : ''));
+  notifyCoupleActivity(w, req.user, 'songs', `updated songs${blk ? ' in “' + blk.name + '”' : ''}`);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Mark a song played/unplayed (DJ or assigned sub-DJ — used on the day)
+app.post('/api/weddings/:id/played', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can mark songs played.' });
+  }
+  const b = req.body || {};
+  const updated = db.setWeddingSongPlayed(w.id, b.blockId, b.songId, !!b.played);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Wedding history — who changed what, and when. DJ / assigned sub-DJ only:
+// this is the DJ's audit trail, not something the couple needs to see.
+app.get('/api/weddings/:id/history', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can see the history.' });
+  }
+  res.json({ history: db.getWeddingHistory(w.id) });
+});
+
+// DJ (or assigned sub-DJ): create (or return existing) a live-requests event linked to this wedding.
+app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can do this.' });
+  }
+  // If one already exists and is still valid, just return it.
+  if (w.live_event_id && db.getEvent(w.live_event_id)) {
+    return res.json({ wedding: publicWedding(w, req.user.id), eventId: w.live_event_id });
+  }
+  const id = auth.newId().slice(0, 6).toUpperCase();
+  // The live event is always owned by the wedding's host (the account owner),
+  // so it stays linked correctly even when a sub-DJ opens it.
+  db.recordEvent(id, w.host_id);
+  // Keep requests open through the wedding day: deadline = end of the wedding date
+  // (23:59). If no date is set, leave it open indefinitely (null).
+  let liveDeadline = null;
+  if (w.wedding_date) {
+    const d = new Date(w.wedding_date);
+    d.setHours(23, 59, 59, 999);
+    liveDeadline = d.getTime();
+  }
+  const bb = req.body || {};
+  db.createEvent({
+    id,
+    host_id: w.host_id,
+    name: (w.name || 'Wedding') + ' — Live Requests',
+    type: 'Wedding',
+    host: req.user.name || 'Your DJ',
+    votes_per: Math.max(1, Math.min(parseInt(bb.votesPer, 10) || 5, 999)),
+    deadline: liveDeadline,
+    event_date: w.wedding_date || null,
+    locked: false,
+    ask_name: !!bb.askName,
+    ask_nationality: false,
+    created_at: Date.now(),
+  });
+  // Assign the live event to whoever is running the wedding, so it shows for them too.
+  if (w.assigned_dj) db.assignEventDj(id, w.assigned_dj);
+  db.setWeddingLiveEvent(w.id, id);
+  res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id), eventId: id });
+});
+
+// Couple or DJ: set which block is in live guest-requests mode (or clear it).
+app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id)) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  const blockId = (req.body || {}).blockId || null;
+  if (blockId) {
+    const block = (w.blocks || []).find(b => b.id === blockId);
+    if (!block || !/play if possible/i.test(block.name || '')) {
+      return res.status(400).json({ error: 'Only the "Play If Possible" block can be set to live requests.' });
+    }
+  }
+  const updated = db.setWeddingLiveBlock(w.id, blockId);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Anyone viewing the plan: live leaderboard from the linked event (auto-refresh source).
+app.get('/api/weddings/:id/live-leaderboard', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (!canAccessWedding(req.user, w)) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  if (!w.live_event_id) return res.json({ songs: [], eventId: null });
+  const ev = db.getEvent(w.live_event_id);
+  if (!ev) return res.json({ songs: [], eventId: null });
+  // The DJ (host) and the assigned sub-DJ see who requested; the couple does not.
+  const seesNames = req.user.id === w.host_id || w.assigned_dj === req.user.id;
+  const songs = Object.values(ev.tracks || {})
+    .sort((a, b) => b.votes - a.votes)
+    .slice(0, 50)
+    .map(t => {
+      const s = { id: t.id, title: t.title, artist: t.artist, art: t.art || '', votes: t.votes, played: t.played ? 1 : 0 };
+      if (seesNames) {
+        s.requesters = (t.requesters || []).map(r => r.name).filter(Boolean);
+      }
+      return s;
+    });
+  res.json({ songs, eventId: w.live_event_id });
+});
+
+// DJ: edit wedding details / blocks structure
+app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Only the DJ can edit the structure.' });
+  const b = req.body || {};
+  const fields = {};
+  if (b.name !== undefined) fields.name = (b.name || 'Wedding').toString().slice(0, 120);
+  if (b.coupleNames !== undefined) fields.couple_names = (b.coupleNames || '').toString().slice(0, 120);
+  if (b.weddingDate !== undefined) fields.wedding_date = b.weddingDate ? Number(b.weddingDate) : null;
+  if (Array.isArray(b.blocks)) {
+    // preserve existing songs when a block id is kept
+    fields.blocks = b.blocks.slice(0, 30).map((blk, i) => {
+      const existing = (w.blocks || []).find(x => x.id === blk.id);
+      return {
+        id: blk.id || ('b' + (i + 1) + '_' + auth.newId().slice(0, 4)),
+        name: (blk.name || 'Block').toString().slice(0, 60),
+        capacity: Math.max(1, Math.min(parseInt(blk.capacity, 10) || 1, 100)),
+        songs: existing ? (existing.songs || []).slice(0, Math.max(1, parseInt(blk.capacity, 10) || 1)) : [],
+      };
+    });
+  }
+  const updated = db.updateWedding(w.id, fields);
+  // If the wedding date changed and a live-requests event is linked, keep its
+  // deadline (end of the wedding day) in sync so requests stay open through the day.
+  if (b.weddingDate !== undefined && updated.live_event_id) {
+    const ev = db.getEvent(updated.live_event_id);
+    if (ev) {
+      let dl = null;
+      if (updated.wedding_date) { const d = new Date(updated.wedding_date); d.setHours(23, 59, 59, 999); dl = d.getTime(); }
+      db.updateEvent(ev.id, { deadline: dl });
+    }
+  }
+  // Optionally switch (or remove) the questionnaire template.
+  if (b.templateId !== undefined) {
+    if (b.templateId) {
+      const tpl = db.listTemplates(req.user.id).find(t => t.id === b.templateId);
+      if (tpl) db.setWeddingQuestionnaire(w.id, { name: tpl.name, questions: tpl.questions });
+    } else {
+      db.setWeddingQuestionnaire(w.id, null);
+    }
+  }
+  res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id) });
+});
+
+// Save the timeline (DJ or couple — both can edit)
+app.post('/api/weddings/:id/timeline', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id)) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  if (coupleEditLocked(w, req.user.id)) {
+    return res.status(423).json({ error: 'Editing is locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
+  }
+  const timeline = Array.isArray((req.body || {}).timeline) ? req.body.timeline : [];
+  // Snapshot before, so history can say what actually changed on the timeline.
+  const tlBefore = (w.timeline || []).map(t => ({ time: t.time, label: t.label }));
+  const updated = db.setWeddingTimeline(w.id, timeline);
+  logWedding(w, req.user, 'timeline', describeTimelineChange(tlBefore, timeline));
+  notifyCoupleActivity(w, req.user, 'timeline', 'updated the timeline');
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// ----- Music block templates (DJ) -----
+app.get('/api/block-templates', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) return res.status(403).json({ error: 'PRO feature.' });
+  res.json({ templates: db.listBlockTemplates(req.user.id) });
+});
+app.post('/api/block-templates', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) return res.status(403).json({ error: 'PRO feature.' });
+  const saved = db.saveBlockTemplate(req.user.id, req.body || {});
+  if (saved && saved.error === 'limit') {
+    return res.status(400).json({ error: 'You can have up to 5 block templates. Delete one to add another.' });
+  }
+  res.json({ template: saved });
+});
+app.delete('/api/block-templates/:id', auth.requireAuth, (req, res) => {
+  db.deleteBlockTemplate(req.user.id, req.params.id);
+  res.json({ ok: true });
+});
+
+// ----- Questionnaire templates (DJ) -----
+// List my templates
+app.get('/api/q-templates', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) return res.status(403).json({ error: 'PRO feature.' });
+  res.json({ templates: db.listTemplates(req.user.id) });
+});
+// Create / update a template (max 5)
+app.post('/api/q-templates', auth.requireAuth, (req, res) => {
+  if (!planHasWeddingPlanner(req.user)) return res.status(403).json({ error: 'PRO feature.' });
+  const saved = db.saveTemplate(req.user.id, req.body || {});
+  if (saved && saved.error === 'limit') {
+    return res.status(400).json({ error: 'You can have up to 5 templates. Delete one to add another.' });
+  }
+  res.json({ template: saved });
+});
+// Delete a template
+app.delete('/api/q-templates/:id', auth.requireAuth, (req, res) => {
+  db.deleteTemplate(req.user.id, req.params.id);
+  res.json({ ok: true });
+});
+
+// Attach a questionnaire to a wedding (DJ) — snapshots the chosen template
+app.post('/api/weddings/:id/questionnaire', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Only the DJ can set the questionnaire.' });
+  const b = req.body || {};
+  let questionnaire = null;
+  if (b.templateId) {
+    const tpl = db.listTemplates(req.user.id).find(t => t.id === b.templateId);
+    if (!tpl) return res.status(404).json({ error: 'Template not found.' });
+    questionnaire = { name: tpl.name, questions: tpl.questions };   // snapshot
+  } else if (b.questionnaire === null) {
+    questionnaire = null;   // remove
+  }
+  const updated = db.setWeddingQuestionnaire(w.id, questionnaire);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// Save questionnaire answers (couple or DJ)
+app.post('/api/weddings/:id/answers', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id) && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  if (coupleEditLocked(w, req.user.id)) {
+    return res.status(423).json({ error: 'Editing is locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
+  }
+  const answers = (req.body || {}).answers || {};
+  // Snapshot before + the question labels, so history reads "Confetti allowed?:
+  // Yes" rather than a bare id.
+  const ansBefore = Object.assign({}, w.answers || {});
+  const questions = (w.questionnaire && w.questionnaire.questions) || [];
+  const updated = db.setWeddingAnswers(w.id, answers);
+  logWedding(w, req.user, 'answers', describeAnswerChange(ansBefore, answers, questions));
+  notifyCoupleActivity(w, req.user, 'answers', 'answered questionnaire questions');
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+// DJ: delete a wedding
+app.delete('/api/weddings/:id', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Not your wedding plan.' });
+  db.deleteWedding(w.id);
+  res.json({ ok: true });
+});
+
+
+/* =========================================================
+   COMPLIMENTARY & DISCOUNT CODES
+   ---------------------------------------------------------
+   - Comp codes grant a free plan (pro/studio) for N months or forever.
+   - Discount codes are backed by a Stripe coupon + promotion code, so the
+     discount is applied automatically at checkout and Stripe tracks it.
+   Admins (ADMIN_EMAILS) create/list/disable; any signed-in user redeems.
+   ========================================================= */
+function genCode(len = 8) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars
+  let s = '';
+  for (let i = 0; i < len; i++) s += alphabet[crypto.randomInt(alphabet.length)];
+  return s;
+}
+
+// --- admin: create a code ---
+app.post('/api/admin/codes', requireAdmin, async (req, res) => {
+  const body = req.body || {};
+  const kind = ['discount', 'addon'].includes(body.kind) ? body.kind : 'comp';
+  const code = (body.code && String(body.code).toUpperCase().replace(/[^A-Z0-9]/g, '')) || genCode();
+  if (db.getCode(code)) return res.status(409).json({ error: 'That code already exists. Try another.' });
+
+  const max_uses = body.maxUses ? parseInt(body.maxUses, 10) : null;
+  const expires_at = body.expiresInDays ? Date.now() + parseInt(body.expiresInDays, 10) * 864e5 : null;
+  const note = (body.note || '').slice(0, 120);
+  const base = { code, kind, plan: null, months: null, discount_kind: null, discount_val: null,
+                 stripe_promo: null, max_uses, expires_at, note, created_at: Date.now(),
+                 grants_spotify: !!body.grantsSpotify };
+
   try {
-    const actName = (req.body?.actName || "").trim();
-    const actEmail = (req.body?.actEmail || "").trim().toLowerCase();
-    const venueText = (req.body?.venue || "").trim();
-    let gigDate = (req.body?.date || "").trim();
-    // The date picker sends YYYY-MM-DD; store it in the same style as CSV gigs
-    // ("Fri 18 Jul 2026") so it displays and sorts consistently everywhere.
-    const iso = gigDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (iso) {
-      const d = new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3]));
-      const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-      const mons = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      gigDate = `${days[d.getUTCDay()]} ${d.getUTCDate()} ${mons[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+    if (kind === 'comp') {
+      const plan = ['pro', 'studio', 'prowedding', 'proweddingmulti'].includes(body.plan) ? body.plan : null;
+      if (!plan) return res.status(400).json({ error: 'Choose a plan for a comp code.' });
+      base.plan = plan;
+      base.months = body.months ? parseInt(body.months, 10) : null; // null = forever
+    } else if (kind === 'addon') {
+      // Spotify add-on only — no plan change. The subscriber keeps their paid plan.
+      base.grants_spotify = true;
+    } else {
+      // discount: build a Stripe coupon + promotion code
+      if (!stripe) return res.status(503).json({ error: 'Discount codes need Stripe configured.' });
+      const dkind = body.discountKind === 'amount' ? 'amount' : 'percent';
+      const dval = parseInt(body.discountVal, 10);
+      if (!dval || dval <= 0) return res.status(400).json({ error: 'Enter a discount value.' });
+      const coupon = await stripe.coupons.create(
+        dkind === 'percent'
+          ? { percent_off: Math.min(dval, 100), duration: 'once', name: note || `Spinlist ${dval}% off` }
+          : { amount_off: dval, currency: (process.env.CURRENCY || 'gbp'), duration: 'once', name: note || `Spinlist discount` }
+      );
+      const promo = await stripe.promotionCodes.create({
+        coupon: coupon.id, code,
+        max_redemptions: max_uses || undefined,
+        expires_at: expires_at ? Math.floor(expires_at / 1000) : undefined,
+      });
+      base.discount_kind = dkind;
+      base.discount_val = dval;
+      base.stripe_promo = promo.id;
     }
-    const gigTime = (req.body?.time || "").trim();
-    const notes = (req.body?.notes || "").trim();
-    const emailNow = req.body?.emailNow === true || req.body?.emailNow === "true";
-    if (!actName || !actEmail) return res.status(400).json({ error: "Act name and email are required." });
-    if (!/\S+@\S+\.\S+/.test(actEmail)) return res.status(400).json({ error: "That act email doesn't look valid." });
-    if (!venueText) return res.status(400).json({ error: "Venue is required." });
-    if (!gigDate) return res.status(400).json({ error: "Date is required." });
+    res.json({ code: db.createCode(base) });
+  } catch (err) {
+    console.error('create code error:', err.message);
+    res.status(500).json({ error: 'Could not create code: ' + err.message });
+  }
+});
 
-    // current active week
-    const active = (await pool.query(
-      "SELECT id FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1",
-      [req.agencyId]
-    )).rows[0];
-    if (!active) return res.status(400).json({ error: "No active week — upload or start a week first." });
-    const weekTag = new Date().toISOString().slice(0, 10);
+// --- admin: list codes ---
+app.get('/api/admin/codes', requireAdmin, (_req, res) => {
+  res.json({ codes: db.listCodes() });
+});
 
-    // upsert the act by email (scoped to this agency)
-    let act = (await pool.query("SELECT * FROM acts WHERE email=$1 AND agency_id=$2", [actEmail, req.agencyId])).rows[0];
-    if (!act) {
-      const id = nanoid(16);
-      act = (await pool.query(
-        "INSERT INTO acts (id,agency_id,name,email) VALUES ($1,$2,$3,$4) RETURNING *",
-        [id, req.agencyId, actName, actEmail]
-      )).rows[0];
-    }
-
-    // match the venue to a saved one if possible (so contacts/address flow through)
-    const storedVenues = (await pool.query("SELECT name, share_contact FROM venues WHERE agency_id=$1", [req.agencyId])).rows;
-    const matchedKey = await resolveVenueKey(venueText, storedVenues);
-    const venueKey = matchedKey || normKey(venueText);
-    const matchedVenue = storedVenues.find((v) => v.name === venueKey);
-    const shareVenue = matchedVenue ? matchedVenue.share_contact !== false : true;
-
-    const bookingId = nanoid(16);
-    await pool.query(
-      `INSERT INTO bookings (id,agency_id,act_id,performer_name,venue_key,venue_text,gig_date,gig_time,notes,week_tag,batch_id,share_venue,status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')`,
-      [bookingId, req.agencyId, act.id, actName, venueKey, venueText, gigDate, gigTime, notes || null, weekTag, active.id, shareVenue]
-    );
-
-    let emailed = false;
-    if (emailNow) {
-      try {
-        const sender = await senderForAgency(req.agencyId, await userEmail(req.userId));
-        await sendConfirmEmail({ id: act.id, name: act.name, email: act.email, agency_id: req.agencyId, greetNames: [actName] }, 1, sender, []);
-        await pool.query("UPDATE bookings SET invited_at=now() WHERE id=$1", [bookingId]);
-        emailed = true;
-      } catch (e) {
-        // gig is still added; report the email failure
-        return res.json({ ok: true, added: true, emailed: false, emailError: e.message });
+// --- admin: list all registered hosts + their subscription status ---
+app.get('/api/admin/users', requireAdmin, (_req, res) => {
+  const now = Date.now();
+  const users = db.listAllUsers().map(u => {
+    // Classify the account's billing status.
+    let status = 'free';            // signed up, no plan
+    if (u.plan === 'trial') {
+      // Trial is active until the lifetime event cap is reached.
+      const cap = (PLANS.trial && PLANS.trial.maxEventsLifetime) || 2;
+      status = db.countEventsLifetime(u.id) >= cap ? 'trial-ended' : 'trial';
+    } else if (u.plan && u.plan !== 'none') {
+      if (u.sub_status === 'comp') {
+        status = (u.comp_until && now > u.comp_until) ? 'free' : 'comp';
+      } else if (u.sub_status === 'active' || u.stripe_sub) {
+        status = 'paying';
+      } else {
+        status = 'active';          // has a plan, non-Stripe (e.g. legacy/manual)
       }
     }
-    res.json({ ok: true, added: true, emailed });
-  } catch (e) {
-    console.error("add-gig failed", e);
-    res.status(500).json({ error: e.message });
-  }
+    const planName = (PLANS[u.plan] && PLANS[u.plan].name) || 'None';
+    return {
+      id: u.id,
+      email: u.email,
+      name: u.name || '',
+      plan: u.plan || 'none',
+      planName,
+      role: u.role || 'host',
+      status,                       // 'paying' | 'comp' | 'active' | 'free'
+      compUntil: u.comp_until || null,
+      compCode: u.comp_code || null,
+      // Activity. lastLogin = last actual sign-in; lastSeen = last time they used
+      // the app at all (a session cookie keeps people signed in for weeks, so a
+      // stale lastLogin doesn't mean they've gone away).
+      lastLogin: u.last_login || null,
+      lastSeen: u.last_seen || null,
+      loginCount: u.login_count || 0,
+      // Total events on the account: hosted + assigned (de-duped), plus
+      // weddings hosted + assigned. Previously only counted hosted events.
+      eventsCreated: (() => {
+        const hostedEv = db.listEventsByHost(u.id);
+        const assignedEv = db.listEventsAssignedTo(u.id).filter(e => e.host_id !== u.id);
+        const hostedWed = db.listWeddingsByHost(u.id);
+        const assignedWed = db.listWeddingsAssignedTo(u.id).filter(w => w.host_id !== u.id);
+        return hostedEv.length + assignedEv.length + hostedWed.length + assignedWed.length;
+      })(),
+      isAdmin: ADMIN_EMAILS.includes(u.email.toLowerCase()),
+      createdAt: u.created_at || null,
+      // For couple accounts: their wedding date + the host DJ who owns the plan.
+      couple: (u.role === 'couple') ? (() => {
+        const w = db.getWeddingByCouple(u.id);
+        if (!w) return null;
+        const host = db.getUserById(w.host_id);
+        const assigned = w.assigned_dj ? db.getUserById(w.assigned_dj) : null;
+        return {
+          weddingName: w.name || '',
+          weddingDate: w.wedding_date || null,
+          coupleNames: w.couple_names || '',
+          hostName: (host && host.name) || '',
+          hostEmail: (host && host.email) || '',
+          assignedName: assigned ? (assigned.name || assigned.email) : '',
+          assignedEmail: assigned ? assigned.email : '',
+        };
+      })() : null,
+    };
+  });
+  const summary = {
+    total: users.length,
+    paying: users.filter(u => u.status === 'paying').length,
+    trial: users.filter(u => u.status === 'trial').length,
+    comp: users.filter(u => u.status === 'comp').length,
+    free: users.filter(u => u.status === 'free' || u.status === 'active' || u.status === 'trial-ended').length,
+  };
+  res.json({ users, summary });
 });
 
-// Set (or clear) the greeting name used for an act across their current-week bookings —
-// stored as the act contact name (the top-priority greeting override).
-app.post("/api/set-agent-contact", requireAdmin, async (req, res) => {
-  try {
-    const actId = (req.body?.actId || "").toString();
-    const name = (req.body?.name || "").toString().trim().slice(0, 120);
-    const active = (await pool.query(
-      "SELECT id FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1",
-      [req.agencyId]
-    )).rows[0];
-    if (!active) return res.status(400).json({ error: "No active week." });
-    await pool.query(
-      "UPDATE bookings SET act_contact_name=$1 WHERE act_id=$2 AND batch_id=$3 AND agency_id=$4",
-      [name || null, actId, active.id, req.agencyId]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post("/api/manual-check", requireAdmin, async (req, res) => {
-  try {
-    const bookingId = (req.body?.bookingId || "").toString();
-    const who = (await userEmail(req.userId)) || "a team member";
-    const bk = (await pool.query("SELECT id, status FROM bookings WHERE id=$1 AND agency_id=$2", [bookingId, req.agencyId])).rows[0];
-    if (!bk) return res.status(404).json({ error: "No such gig." });
-    const stamp = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-    const note = `Manually checked off by ${who.split("@")[0]} on ${stamp} (act contacted us directly)`;
-    await pool.query(
-      "UPDATE bookings SET status='confirmed', message=$1, responded_at=now() WHERE id=$2 AND agency_id=$3",
-      [note, bookingId, req.agencyId]
-    );
-    // if this was the last pending gig, the completion summary can now fire
-    const full = (await pool.query("SELECT batch_id, agency_id FROM bookings WHERE id=$1", [bookingId])).rows[0];
-    if (full) { try { await maybeSendCompletion(full.batch_id, full.agency_id); } catch (_) {} }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post("/api/resolve-gig", requireAdmin, async (req, res) => {
-  try {
-    const bookingId = (req.body?.bookingId || "").toString();
-    const note = (req.body?.note || "").trim();
-    const who = (await userEmail(req.userId)) || "";
-    const bk = (await pool.query("SELECT id FROM bookings WHERE id=$1 AND agency_id=$2", [bookingId, req.agencyId])).rows[0];
-    if (!bk) return res.status(404).json({ error: "No such gig." });
-    await pool.query(
-      "UPDATE bookings SET status='resolved', resolution_note=$1, resolved_by=$2, resolved_at=now() WHERE id=$3 AND agency_id=$4",
-      [note || null, who, bookingId, req.agencyId]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// The act can set their own car registration from their check-off page (no login;
-// identified by their act id, same as the respond/my-gigs flow).
-app.post("/api/set-car-reg", async (req, res) => {
-  try {
-    const actId = (req.body?.actId || "").toString();
-    const reg = (req.body?.carReg || "").toString().trim().slice(0, 20).toUpperCase();
-    if (!actId) return res.status(400).json({ error: "Missing act." });
-    const ok = (await pool.query("SELECT id FROM acts WHERE id=$1", [actId])).rows[0];
-    if (!ok) return res.status(404).json({ error: "No such act." });
-    await pool.query("UPDATE acts SET car_reg=$1 WHERE id=$2", [reg || null, actId]);
-    res.json({ ok: true, carReg: reg });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post("/api/respond", async (req, res) => {
-  const { bookingId, status, message } = req.body || {};
-  if (!["confirmed", "issue"].includes(status)) return res.status(400).json({ error: "Bad status." });
-  await pool.query(
-    "UPDATE bookings SET status=$1, message=$2, responded_at=now() WHERE id=$3",
-    [status, message || null, bookingId]
-  );
+// --- admin: reset a user's password ---
+app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
+  const u = db.getUserById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  const pw = (req.body || {}).password || '';
+  if (pw.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  db.setUserPassword(u.id, auth.hashPassword(pw));
   res.json({ ok: true });
+});
 
-  // After responding, check whether this was the last pending gig in the batch and,
-  // if so, email the team the completion CSV (best-effort, after the response is sent).
+// --- admin: delete a user ---
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const u = db.getUserById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  if (ADMIN_EMAILS.includes(u.email.toLowerCase())) {
+    return res.status(400).json({ error: 'Admin accounts cannot be deleted here.' });
+  }
+  db.deleteUser(u.id);
+  res.json({ ok: true });
+});
+
+// --- admin: make a managed sub-DJ an independent DJ (keeps them linked to the team) ---
+app.post('/api/admin/users/:id/make-independent', requireAdmin, (req, res) => {
+  const u = db.getUserById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  if (u.role !== 'subdj') return res.status(400).json({ error: 'That account is not a managed sub-DJ.' });
+  db.convertSubToIndependent(u.id);
+  res.json({ ok: true });
+});
+
+// --- admin: enable/disable a code ---
+app.post('/api/admin/codes/:code/toggle', requireAdmin, (req, res) => {
+  const c = db.getCode(req.params.code);
+  if (!c) return res.status(404).json({ error: 'No such code.' });
+  db.setCodeActive(c.code, !c.active);
+  res.json({ code: db.getCode(c.code) });
+});
+
+// Admin: permanently delete a code (only when it's disabled, to avoid accidents).
+app.delete('/api/admin/codes/:code', requireAdmin, (req, res) => {
+  const c = db.getCode(req.params.code);
+  if (!c) return res.status(404).json({ error: 'No such code.' });
+  if (c.active) return res.status(400).json({ error: 'Disable the code before deleting it.' });
+  db.deleteCode(c.code);
+  res.json({ ok: true });
+});
+
+// =========================================================
+//   MULTI-OP: sub-DJ accounts (owner manages their team)
+// =========================================================
+function requireMultiOp(req, res, next) {
+  if (!planIsMultiOp(req.user)) return res.status(403).json({ error: 'This is a PRO WEDDING MULTI-OP feature.' });
+  next();
+}
+function publicSubDj(u, ownerId) {
+  const linked = u.role !== 'subdj' && u.id !== ownerId;
+  // For linked DJs, the owner may set a team-specific display name/bio that
+  // overrides the DJ's own account values (without changing their account).
+  const ov = linked ? db.getTeamOverride(ownerId, u.id) : null;
+  return {
+    id: u.id, email: u.email,
+    name: (ov && ov.name) || u.name || '',
+    profile: (ov && ov.profile) || u.profile || '',
+    photo: (ov && ov.dj_photo) || u.dj_photo || null,
+    website: (ov && ov.dj_website) || u.dj_website || '',
+    website2: (ov && ov.dj_website2) || u.dj_website2 || '',
+    youtube: (ov && ov.dj_youtube) || u.dj_youtube || '',
+    ownName: u.name || '',                    // their account's own name (for reference)
+    hasOverride: !!ov,
+    linked,
+    isMe: u.id === ownerId,                    // the owner themselves
+    createdAt: u.created_at,
+  };
+}
+
+// Owner: list my team — the owner's own DJ profile first, then created sub-DJs + linked accounts.
+app.get('/api/team', auth.requireAuth, requireMultiOp, (req, res) => {
+  const me = publicSubDj(req.user, req.user.id);
+  const others = db.listTeam(req.user.id).map(u => publicSubDj(u, req.user.id));
+  res.json({ djs: [me, ...others] });
+});
+
+// Owner: add a DJ — links an existing account by email, or creates a new sub-account.
+app.post('/api/team', auth.requireAuth, requireMultiOp, (req, res) => {
+  const b = req.body || {};
+  const email = (b.email || '').trim().toLowerCase();
+  if (!email || !/.+@.+\..+/.test(email)) return res.status(400).json({ error: 'Enter a valid email.' });
+
+  const existing = db.getUserByEmail(email);
+  if (existing) {
+    // Linking an existing account into the team.
+    if (existing.id === req.user.id) return res.status(400).json({ error: "That's your own account." });
+    if (existing.role === 'couple') return res.status(400).json({ error: 'That email belongs to a wedding-couple login.' });
+    if (existing.role === 'subdj') return res.status(409).json({ error: 'That DJ is already a managed sub-account.' });
+    if (db.isOnTeam(req.user.id, existing.id)) return res.status(409).json({ error: 'That DJ is already on your team.' });
+    db.linkTeamMember(req.user.id, existing.id);
+    return res.json({ dj: publicSubDj(existing, req.user.id), linked: true });
+  }
+
+  // No existing account → create a managed sub-account (needs a temp password).
+  const password = (b.password || '').toString();
+  if (password.length < 6) return res.status(400).json({ error: 'No account exists for that email — set a temporary password (min 6 characters) to create one.' });
+  const dj = db.createUser({
+    id: auth.newId(),
+    email,
+    password_hash: auth.hashPassword(password),
+    name: (b.name || '').slice(0, 80),
+    role: 'subdj',
+    parent_id: req.user.id,
+    profile: (b.profile || '').slice(0, 2000),
+    created_at: Date.now(),
+  });
+  res.json({ dj: publicSubDj(dj, req.user.id), linked: false });
+});
+
+// Owner: update a DJ profile (sub-account, own profile, or linked-DJ team override).
+// Accepts an optional photo upload + website link.
+app.post('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
+  upload.single('photo')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    const b = req.body || {};
+    const website = (b.website || '').trim().slice(0, 200);
+    const website2 = (b.website2 || '').trim().slice(0, 200);
+    const youtube = (b.youtube || '').trim().slice(0, 200);
+    const photoPath = req.file ? '/uploads/' + req.file.filename : undefined;
+
+    // Owner editing their own profile.
+    if (req.params.id === req.user.id) {
+      const fields = {};
+      if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
+      if (b.website !== undefined) fields.dj_website = website;
+      if (b.website2 !== undefined) fields.dj_website2 = website2;
+      if (b.youtube !== undefined) fields.dj_youtube = youtube;
+      if (photoPath) { if (req.user.dj_photo) safeUnlink(req.user.dj_photo); fields.dj_photo = photoPath; }
+      db.updateUserProfile(req.user.id, fields);
+      return res.json({ dj: publicSubDj(db.getUserById(req.user.id), req.user.id) });
+    }
+    const dj = db.getUserById(req.params.id);
+    if (!dj) return res.status(404).json({ error: 'DJ not found.' });
+
+    // Managed sub-account created by this owner: edit their account directly.
+    if (dj.role === 'subdj' && dj.parent_id === req.user.id) {
+      const fields = {};
+      if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
+      if (b.website !== undefined) fields.dj_website = website;
+      if (b.website2 !== undefined) fields.dj_website2 = website2;
+      if (b.youtube !== undefined) fields.dj_youtube = youtube;
+      if (photoPath) { if (dj.dj_photo) safeUnlink(dj.dj_photo); fields.dj_photo = photoPath; }
+      if (b.password) {
+        if (b.password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+        fields.password_hash = auth.hashPassword(b.password);
+      }
+      db.updateSubDj(dj.id, fields);
+      return res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
+    }
+
+    // Linked independent account: store a team-specific display override only.
+    if (db.isOnTeam(req.user.id, dj.id)) {
+      const fields = {};
+      if (b.name !== undefined) fields.name = (b.name || '').slice(0, 80);
+      if (b.profile !== undefined) fields.profile = (b.profile || '').slice(0, 2000);
+      if (b.website !== undefined) fields.dj_website = website;
+      if (b.website2 !== undefined) fields.dj_website2 = website2;
+      if (b.youtube !== undefined) fields.dj_youtube = youtube;
+      if (photoPath) {
+        const prev = db.getTeamOverride(req.user.id, dj.id);
+        if (prev && prev.dj_photo) safeUnlink(prev.dj_photo);
+        fields.dj_photo = photoPath;
+      }
+      db.setTeamOverride(req.user.id, dj.id, fields);
+      return res.json({ dj: publicSubDj(db.getUserById(dj.id), req.user.id) });
+    }
+
+    return res.status(404).json({ error: 'DJ not found.' });
+  });
+});
+
+// Owner: delete a sub-DJ
+// Owner: remove a DJ — deletes a managed sub-account, or unlinks a linked account.
+app.delete('/api/team/:id', auth.requireAuth, requireMultiOp, (req, res) => {
+  const dj = db.getUserById(req.params.id);
+  if (!dj) return res.status(404).json({ error: 'DJ not found.' });
+  if (dj.role === 'subdj' && dj.parent_id === req.user.id) {
+    db.deleteSubDj(dj.id);   // also unassigns their jobs
+    return res.json({ ok: true, removed: 'deleted' });
+  }
+  if (db.isOnTeam(req.user.id, dj.id)) {
+    // Linked account: unlink and unassign their jobs (but keep their account).
+    db.unlinkTeamMember(req.user.id, dj.id);
+    db.unassignAllFrom(dj.id, req.user.id);
+    return res.json({ ok: true, removed: 'unlinked' });
+  }
+  return res.status(404).json({ error: 'DJ not found.' });
+});
+
+// Owner: assign (or unassign) an event to one of my team DJs
+app.post('/api/events/:id/assign', auth.requireAuth, requireMultiOp, (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e || e.host_id !== req.user.id) return res.status(404).json({ error: 'Event not found.' });
+  const djId = (req.body || {}).djId || null;
+  // Owner can assign to a team DJ, or to themselves.
+  if (djId && djId !== req.user.id && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
+  const prev = e.assigned_dj || null;
+  db.assignEventDj(e.id, djId);
+  // Notify the newly-assigned DJ (not the owner assigning to themselves, and
+  // only when it actually changed to a different DJ).
+  if (djId && djId !== req.user.id && djId !== prev) {
+    notifyAssignment(djId, 'event', e.id, e.name || 'an event', e.event_date);
+  }
+  res.json({ ok: true, assignedDj: djId });
+});
+
+// Owner: assign (or unassign) a wedding to one of my team DJs
+app.post('/api/weddings/:id/assign', auth.requireAuth, requireMultiOp, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w || w.host_id !== req.user.id) return res.status(404).json({ error: 'Wedding not found.' });
+  const djId = (req.body || {}).djId || null;
+  if (djId && djId !== req.user.id && !db.isOnTeam(req.user.id, djId)) return res.status(400).json({ error: 'Pick one of your DJs.' });
+  const prev = w.assigned_dj || null;
+  db.assignWeddingDj(w.id, djId);
+  // Keep the linked live-requests event assigned to the same DJ, so they can run it.
+  if (w.live_event_id && db.getEvent(w.live_event_id)) db.assignEventDj(w.live_event_id, djId);
+  if (djId && djId !== req.user.id && djId !== prev) {
+    notifyAssignment(djId, 'wedding', w.id, w.couple_names || w.name || 'a wedding', w.wedding_date);
+  }
+  res.json({ ok: true, assignedDj: djId });
+});
+
+// DJ/host or assigned DJ: set (or clear) the couple's edit lock date.
+app.post('/api/weddings/:id/lock-date', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can set the lock date.' });
+  }
+  const raw = (req.body || {}).lockDate;
+  let lock;
+  if (raw === null || raw === '' || raw === undefined) {
+    lock = 0;                 // explicitly cleared — overrides the 14-day default
+  } else {
+    const ts = new Date(raw).getTime();
+    if (isNaN(ts)) return res.status(400).json({ error: 'Invalid date.' });
+    lock = ts;
+  }
+  db.setWeddingLockDate(w.id, lock);
+  res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id) });
+});
+
+
+/* =========================================================
+   NOTIFICATIONS (DJ sees couple activity)
+   ========================================================= */
+
+app.get('/api/notifications', auth.requireAuth, (req, res) => {
+  res.json({
+    notifications: db.listNotifications(req.user.id).map(n => ({
+      id: n.id, type: n.type, weddingId: n.wedding_id, weddingName: n.wedding_name,
+      text: n.text, read: !!n.read, createdAt: n.created_at,
+    })),
+    unread: db.countUnread(req.user.id),
+  });
+});
+app.post('/api/notifications/read', auth.requireAuth, (req, res) => {
+  db.markNotificationsRead(req.user.id);
+  res.json({ ok: true });
+});
+
+// Toggle the daily digest email (opt-in, off by default).
+app.post('/api/notifications/digest', auth.requireAuth, (req, res) => {
+  const on = !!(req.body || {}).on;
+  db.setDailyDigest(req.user.id, on);
+  res.json({ ok: true, dailyDigest: on });
+});
+
+// Set the host's preferred guest-search source for NEW events.
+// Only 'apple' when Apple Music is configured; otherwise always 'spotify'.
+app.post('/api/search-source', auth.requireAuth, (req, res) => {
+  let source = ((req.body || {}).source || 'spotify').toString();
+  if (source === 'apple' && !APPLE_MUSIC_ENABLED) source = 'spotify';
+  db.setSearchSource(req.user.id, source);
+  res.json({ ok: true, searchSource: source, appleAvailable: APPLE_MUSIC_ENABLED });
+});
+
+// Apple Music developer token for MusicKit JS (browser-side "Add to Apple
+// Music"). This is the DEVELOPER token only (signed from our .p8) — it does
+// NOT grant library access. The host still authorises in Apple's own popup,
+// and needs an Apple Music subscription to actually save a playlist.
+app.get('/api/apple/dev-token', auth.requireAuth, (req, res) => {
+  if (!APPLE_MUSIC_ENABLED) return res.status(404).json({ error: 'Apple Music not configured' });
   try {
-    const bk = (await pool.query("SELECT batch_id, agency_id FROM bookings WHERE id=$1", [bookingId])).rows[0];
-    if (bk) await maybeSendCompletion(bk.batch_id, bk.agency_id);
-  } catch (e) { console.error("completion check failed", e.message); }
+    res.json({ token: getAppleDevToken(), storefront: APPLE_MUSIC_STOREFRONT });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not create Apple token' });
+  }
+});
 
-  // If the act flagged a problem, notify the agency's team (best-effort, after
-  // responding so the act's page never waits on it).
-  if (status === "issue") {
+// Guard: Prep endpoints require prep access (everyone except Basic).
+function requirePrep(req, res, next) {
+  if (!userHasPrepAccess(req.user)) return res.status(403).json({ error: 'Your plan doesn\u2019t include the music library. Upgrade to use Prep.' });
+  next();
+}
+
+// Prep tool: the DJ's remembered "go-to version" per song (across all weddings).
+app.get('/api/prep/picks', auth.requireAuth, requirePrep, (req, res) => {
+  res.json({ picks: db.getPrepPicks(req.user.id) });
+});
+app.post('/api/prep/picks', auth.requireAuth, requirePrep, (req, res) => {
+  const { key, chosen } = req.body || {};
+  if (!key || typeof key !== 'string') return res.status(400).json({ error: 'key required' });
+  const picks = db.setPrepPick(req.user.id, key, chosen || null);
+  res.json({ ok: true, picks });
+});
+
+// Prep tool: saved music-library snapshot (auto-loads across devices).
+app.get('/api/prep/library', auth.requireAuth, requirePrep, (req, res) => {
+  res.json({ library: db.getPrepLibrary(req.user.id) });
+});
+app.post('/api/prep/library', auth.requireAuth, requirePrep, (req, res) => {
+  const lib = (req.body || {}).library;
+  if (!lib || !Array.isArray(lib.tracks)) return res.status(400).json({ error: 'library.tracks required' });
+  const saved = db.setPrepLibrary(req.user.id, lib);
+  res.json({ ok: true, count: saved ? saved.tracks.length : 0 });
+});
+app.delete('/api/prep/library', auth.requireAuth, requirePrep, (req, res) => {
+  db.setPrepLibrary(req.user.id, null);
+  res.json({ ok: true });
+});
+
+/* =========================================================
+   RESEND EMAIL (subscriber connects their own Resend key)
+   ========================================================= */
+// Send an email through a user's own Resend account. Returns {ok} or {error}.
+async function sendViaResend(cfg, { to, subject, html, replyTo, attachments }) {
+  const from = cfg.fromName ? `${cfg.fromName} <${cfg.from}>` : cfg.from;
+  const body = { from, to: [to], subject, html };
+  if (replyTo) body.reply_to = replyTo;
+  // attachments: [{ filename, content }] where content is base64.
+  if (Array.isArray(attachments) && attachments.length) body.attachments = attachments;
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    let msg = 'Resend rejected the email.';
+    try { const e = await r.json(); if (e && e.message) msg = e.message; } catch (_) {}
+    if (r.status === 401 || r.status === 403) msg = 'Resend key rejected — check the key and that your domain is verified.';
+    return { ok: false, error: msg };
+  }
+  return { ok: true };
+}
+// Only wedding-tier subscribers (and their sub-DJs) can use email invites.
+function requireEmailTier(req, res, next) {
+  if (!userHasPlannerAccess(req.user)) {
+    return res.status(403).json({ error: 'Email invites are available on the PRO WEDDING tiers.' });
+  }
+  next();
+}
+
+// Status of the caller's Resend connection (never returns the key itself).
+app.get('/api/resend/status', auth.requireAuth, (req, res) => {
+  const u = req.user;
+  const key = u.resend_api_key || '';
+  res.json({
+    connected: !!(u.resend_api_key && u.resend_from),
+    from: u.resend_from || '',
+    fromName: u.resend_from_name || '',
+    hint: key ? ('re_••••' + key.slice(-4)) : '',
+    inherited: !u.resend_api_key && !!db.resendConfigFor(u.id),   // using parent's setup
+  });
+});
+
+// Save/update the caller's Resend config.
+app.post('/api/resend/config', auth.requireAuth, requireEmailTier, (req, res) => {
+  const b = req.body || {};
+  const from = (b.from || '').trim().slice(0, 160);
+  const fromName = (b.fromName || '').trim().slice(0, 80);
+  const apiKey = (b.apiKey || '').trim();
+  if (from && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(from)) {
+    return res.status(400).json({ error: 'Enter a valid from-address (e.g. invites@yourdomain.com).' });
+  }
+  // Only overwrite the key if a new one was supplied (so they can edit from-name without re-pasting).
+  const patch = { from, fromName };
+  if (apiKey) {
+    if (!/^re_/.test(apiKey)) return res.status(400).json({ error: 'That does not look like a Resend key (should start with re_).' });
+    patch.apiKey = apiKey;
+  }
+  db.setResendConfig(req.user.id, patch);
+  res.json({ ok: true });
+});
+
+// Disconnect Resend.
+app.delete('/api/resend/config', auth.requireAuth, (req, res) => {
+  db.clearResendConfig(req.user.id);
+  res.json({ ok: true });
+});
+
+// Send a test email to the caller's own login email.
+app.post('/api/resend/test', auth.requireAuth, requireEmailTier, async (req, res) => {
+  const cfg = db.resendConfigFor(req.user.id);
+  if (!cfg) return res.status(400).json({ error: 'Connect Resend first (key + verified from-address).' });
+  const out = await sendViaResend(cfg, {
+    to: req.user.email,
+    subject: 'Spinlist test email ✓',
+    html: '<p>This is a test from Spinlist. Your Resend email is set up correctly.</p>',
+  });
+  if (!out.ok) return res.status(502).json({ error: out.error });
+  res.json({ ok: true });
+});
+
+// Email a wedding invite to the couple, via the DJ's Resend account.
+app.post('/api/weddings/:id/email-invite', auth.requireAuth, requireEmailTier, async (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can send this invite.' });
+  }
+  const to = (req.body || {}).to && String(req.body.to).trim();
+  if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'Enter the couple’s email address.' });
+  const cfg = db.resendConfigFor(req.user.id);
+  if (!cfg) return res.status(400).json({ error: 'Connect Resend first.', needsSetup: true });
+
+  const link = `${BASE_URL}/wedding.html?code=${encodeURIComponent(w.invite_code)}`;
+  const djName = escapeHtml(req.user.name || cfg.fromName || 'Your DJ');
+  const lockLine = w.lock_date === 0 ? '' : (() => {
+    const lock = (typeof w.lock_date === 'number') ? w.lock_date : (w.wedding_date ? w.wedding_date - 14 * 864e5 : null);
+    return lock ? `<p>Please finish your choices by <b>${new Date(lock).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</b> so we can prepare your music.</p>` : '';
+  })();
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">
+      <h2>You're invited to plan your wedding music 🎵</h2>
+      <p>${djName} has invited you to choose your songs on Spinlist.</p>
+      <p><a href="${link}" style="display:inline-block;background:#1b2440;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Open your wedding planner →</a></p>
+      <p style="color:#555;font-size:14px">Or go to spinlist.co.uk/wedding.html and enter code <b>${escapeHtml(w.invite_code)}</b>.</p>
+      <p style="color:#555;font-size:14px;background:#f5f7fb;border-radius:8px;padding:10px 14px;margin-top:4px">💍 <b>Both of you can join.</b> Each partner can sign up with the same code for their own login — no need to share one account.</p>
+      ${lockLine}
+    </div>`;
+  const out = await sendViaResend(cfg, { to, subject: 'Plan your wedding music with ' + (req.user.name || 'your DJ'), html, replyTo: req.user.email });
+  if (!out.ok) return res.status(502).json({ error: out.error });
+  res.json({ ok: true });
+});
+
+// Email a sub-DJ their login invite, via the owner's Resend account.
+app.post('/api/team/:id/email-invite', auth.requireAuth, requireEmailTier, async (req, res) => {
+  const dj = db.getUserById(req.params.id);
+  if (!dj || dj.role !== 'subdj' || dj.parent_id !== req.user.id) {
+    return res.status(404).json({ error: 'DJ not found.' });
+  }
+  const cfg = db.resendConfigFor(req.user.id);
+  if (!cfg) return res.status(400).json({ error: 'Connect Resend first.', needsSetup: true });
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">
+      <h2>You've been added as a DJ on Spinlist</h2>
+      <p>Sign in to see the events and weddings assigned to you.</p>
+      <p><b>Login page:</b> <a href="${BASE_URL}">${BASE_URL}</a><br><b>Email:</b> ${escapeHtml(dj.email)}</p>
+      <p style="color:#555;font-size:14px">Use the password you were given when your account was set up. If you don't have it, ask ${escapeHtml(req.user.name || 'your organiser')} for a reset.</p>
+    </div>`;
+  const out = await sendViaResend(cfg, { to: dj.email, subject: 'Your Spinlist DJ login', html, replyTo: req.user.email });
+  if (!out.ok) return res.status(502).json({ error: out.error });
+  res.json({ ok: true });
+});
+
+/* =========================================================
+   DAILY DIGEST — one round-up email per opted-in DJ per day
+   ========================================================= */
+// Send window (server local time). Configurable later via env DIGEST_HOUR (0-23).
+const DIGEST_HOUR = Number.isFinite(+process.env.DIGEST_HOUR) ? Math.max(0, Math.min(23, +process.env.DIGEST_HOUR)) : 8;
+
+function dayKey(d = new Date()) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function digestHtml(name, items) {
+  const rows = items.map(n => `<tr>
+      <td style="padding:8px 0;border-bottom:1px solid #eee;font-size:14px;color:#1a1f2e">${escapeHtml(n.text)}</td>
+      <td style="padding:8px 0;border-bottom:1px solid #eee;font-size:12px;color:#8b93a7;white-space:nowrap;text-align:right">${new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+    </tr>`).join('');
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:0 auto">
+      <div style="background:#0d1220;padding:20px 24px;border-radius:12px 12px 0 0">
+        <span style="color:#c1ff2f;font-weight:800;font-size:18px">Spinlist</span>
+        <span style="color:#fff;font-weight:600;font-size:15px"> · Daily round-up</span>
+      </div>
+      <div style="border:1px solid #eee;border-top:none;border-radius:0 0 12px 12px;padding:22px 24px">
+        <p style="font-size:15px;color:#1a1f2e;margin:0 0 4px">Hi ${escapeHtml(name || 'there')},</p>
+        <p style="font-size:14px;color:#555;margin:0 0 16px">Here's what your couples got up to yesterday — ${items.length} update${items.length === 1 ? '' : 's'}.</p>
+        <table style="width:100%;border-collapse:collapse">${rows}</table>
+        <p style="margin:20px 0 0"><a href="${BASE_URL}/wedding.html" style="display:inline-block;background:#c1ff2f;color:#0a1228;font-weight:700;text-decoration:none;padding:10px 18px;border-radius:8px;font-size:14px">Open your planner</a></p>
+        <p style="font-size:12px;color:#8b93a7;margin:18px 0 0">You're getting this because you turned on the daily round-up in your account. You can switch it off any time under Account.</p>
+      </div>
+    </div>`;
+}
+
+async function sendDailyDigests() {
+  const today = dayKey();
+  const now = new Date();
+  const until = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(); // midnight today
+  const since = until - 864e5;                                                        // midnight yesterday
+  const due = db.usersDueDigest(today);
+  for (const u of due) {
     try {
-      if (!resend) return;
-      const b = (await pool.query(
-        `SELECT bk.agency_id, bk.performer_name, bk.gig_date, bk.gig_time, bk.message,
-                a.name AS act_name, a.email AS act_email,
-                COALESCE(NULLIF(bk.venue_text,''), v.display_name) AS venue
-         FROM bookings bk
-         JOIN acts a ON a.id=bk.act_id
-         LEFT JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-         WHERE bk.id=$1`, [bookingId]
-      )).rows[0];
-      if (!b) return;
-      const team = (await pool.query("SELECT email FROM users WHERE agency_id=$1", [b.agency_id])).rows
-        .map((u) => u.email).filter(Boolean);
-      if (!team.length) return;
-      const sender = await senderForAgency(b.agency_id);
-      const when = [b.gig_date, b.gig_time].filter(Boolean).join(" · ");
-      await sendMail({
-        from: sender.from,
-        replyTo: b.act_email || sender.replyTo,
-        to: team,
-        subject: `⚠ ${b.performer_name || b.act_name} flagged an issue`,
-        html: `
-          <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#222">
-            <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-            <p><strong>${esc(b.performer_name || b.act_name)}</strong> has flagged a problem with a gig:</p>
-            <div style="background:#fdf3f1;border-left:4px solid #e2614b;border-radius:8px;padding:12px 14px;margin:12px 0">
-              <div><strong>Venue:</strong> ${esc(b.venue || "—")}</div>
-              <div><strong>When:</strong> ${esc(when || "—")}</div>
-              ${b.message ? `<div style="margin-top:8px"><strong>Their message:</strong><br>“${esc(b.message)}”</div>` : `<div style="margin-top:8px;color:#888">No message was left.</div>`}
-            </div>
-            <p style="font-size:13px">You can reply directly to this email to reach ${esc(b.act_name)}${b.act_email ? ` (${esc(b.act_email)})` : ""}, or check the dashboard.</p>
-            ${emailFooter(sender)}
-          </div>`,
+      const items = db.notificationsBetween(u.id, since, until);
+      // Mark as processed for today regardless, so we never double-send.
+      db.markDigestSent(u.id, today);
+      if (!items.length) continue;                 // nothing happened yesterday — skip the email
+      const cfg = db.resendConfigFor(u.id);
+      if (!cfg) continue;                          // no email set up — silently skip
+      await sendViaResend(cfg, {
+        to: u.email,
+        subject: `Spinlist round-up · ${items.length} update${items.length === 1 ? '' : 's'} from your couples`,
+        html: digestHtml(u.name, items),
+        replyTo: u.email,
       });
+    } catch (e) { /* keep going through the rest */ }
+  }
+}
+
+// Check every 15 minutes; fire the batch once we're at/after the send hour for a new day.
+let _lastDigestDay = null;
+setInterval(() => {
+  const now = new Date();
+  const today = dayKey(now);
+  if (now.getHours() >= DIGEST_HOUR && _lastDigestDay !== today) {
+    _lastDigestDay = today;
+    sendDailyDigests();
+  }
+}, 15 * 60 * 1000);
+
+
+/* ================================================================
+   BACKUPS
+
+   All of Spinlist's data lives in one JSON file on Render's persistent disk.
+   Without backups, a corrupted file or a bad write means losing every account,
+   event and wedding — with no way back. So:
+
+     1) A nightly rolling backup on disk (keeps the last BACKUP_KEEP days).
+     2) A "Download backup" button in admin, so you can keep copies off Render.
+     3) A nightly email of the backup to the admin, so a copy exists even if
+        Render itself disappears.
+
+   Env:
+     BACKUP_EMAIL_TO   — where to email the nightly backup (defaults to the
+                         first ADMIN_EMAILS entry). Leave unset to disable email.
+     BACKUP_HOUR       — hour (0-23, UK time) to run. Default 4 (quiet time).
+     BACKUP_KEEP       — how many daily backups to retain on disk. Default 14.
+   ================================================================ */
+const BACKUP_DIR = path.join(path.dirname(DATA_FILE_PATH()), 'backups');
+const BACKUP_HOUR = Math.min(Math.max(parseInt(process.env.BACKUP_HOUR, 10) || 4, 0), 23);
+const BACKUP_KEEP = Math.min(Math.max(parseInt(process.env.BACKUP_KEEP, 10) || 14, 1), 90);
+const BACKUP_EMAIL_TO = (process.env.BACKUP_EMAIL_TO || ADMIN_EMAILS[0] || '').trim();
+
+// Where the live data file actually is (mirrors lib/db.js).
+function DATA_FILE_PATH() {
+  return process.env.DATA_FILE || path.join(__dirname, 'spinlist-data.json');
+}
+
+// Write a dated copy of the data file, prune old ones, return {file, bytes}.
+function makeBackup() {
+  const src = DATA_FILE_PATH();
+  if (!fs.existsSync(src)) throw new Error('No data file to back up yet.');
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+
+  const stamp = new Date().toISOString().slice(0, 10);          // 2026-07-12
+  const dest = path.join(BACKUP_DIR, `spinlist-${stamp}.json`);
+  fs.copyFileSync(src, dest);
+
+  // Prune: keep only the newest BACKUP_KEEP files.
+  const files = fs.readdirSync(BACKUP_DIR)
+    .filter(f => f.startsWith('spinlist-') && f.endsWith('.json'))
+    .sort();                                                     // dated names sort chronologically
+  for (const f of files.slice(0, Math.max(0, files.length - BACKUP_KEEP))) {
+    try { fs.unlinkSync(path.join(BACKUP_DIR, f)); } catch (_) {}
+  }
+  return { file: dest, bytes: fs.statSync(dest).size };
+}
+
+// A quick, human-readable summary so the email says what's actually in there.
+function backupSummary() {
+  try {
+    const d = JSON.parse(fs.readFileSync(DATA_FILE_PATH(), 'utf8'));
+    return {
+      users: (d.users || []).length,
+      events: (d.events || []).length,
+      weddings: (d.weddings || []).length,
+      codes: (d.codes || []).length,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+// Email the backup to the admin, so a copy lives off Render.
+async function emailBackup() {
+  if (!BACKUP_EMAIL_TO) return { ok: false, error: 'No BACKUP_EMAIL_TO set.' };
+  if (!CONTACT_RESEND_KEY || !CONTACT_FROM) return { ok: false, error: 'Site Resend not configured (CONTACT_RESEND_KEY / CONTACT_FROM).' };
+
+  const { file, bytes } = makeBackup();
+  // Resend caps attachments around 40MB; well clear for a JSON file, but guard
+  // anyway so a huge file fails loudly rather than silently.
+  const MAX = 20 * 1024 * 1024;
+  if (bytes > MAX) {
+    return { ok: false, error: `Backup is ${(bytes / 1048576).toFixed(1)}MB — too large to email. Download it from the admin page instead.` };
+  }
+  const content = fs.readFileSync(file).toString('base64');
+  const s = backupSummary();
+  const stamp = new Date().toISOString().slice(0, 10);
+  const rows = s
+    ? `<tr><td>Hosts</td><td><b>${s.users}</b></td></tr>
+       <tr><td>Events</td><td><b>${s.events}</b></td></tr>
+       <tr><td>Weddings</td><td><b>${s.weddings}</b></td></tr>
+       <tr><td>Codes</td><td><b>${s.codes}</b></td></tr>`
+    : '<tr><td colspan="2">Could not read a summary.</td></tr>';
+
+  const html = `
+    <div style="font-family:system-ui,sans-serif;color:#0a1228">
+      <h2 style="margin:0 0 4px">Spinlist backup — ${stamp}</h2>
+      <p style="color:#555;margin:0 0 14px">Attached is a full copy of your Spinlist data. Keep it somewhere safe.</p>
+      <table style="border-collapse:collapse;font-size:14px">${rows}
+        <tr><td>File size</td><td><b>${(bytes / 1024).toFixed(0)} KB</b></td></tr>
+      </table>
+      <p style="color:#777;font-size:12px;margin-top:16px">To restore, replace the data file on the server with this one and restart. Automated by Spinlist.</p>
+    </div>`;
+
+  return sendViaResend({ apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME }, {
+    to: BACKUP_EMAIL_TO,
+    subject: `Spinlist backup — ${stamp}`,
+    html,
+    attachments: [{ filename: `spinlist-${stamp}.json`, content }],
+  });
+}
+
+// Nightly: back up to disk, and email a copy. Same pattern as the daily digest.
+let _lastBackupDay = null;
+setInterval(async () => {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  if (now.getHours() >= BACKUP_HOUR && _lastBackupDay !== today) {
+    _lastBackupDay = today;
+    try {
+      const r = await emailBackup();          // this also writes the disk backup
+      if (r.ok) console.log('[backup] wrote + emailed', today);
+      else {
+        // Email failed — still make sure the on-disk backup exists.
+        try { makeBackup(); console.log('[backup] wrote to disk; email failed:', r.error); }
+        catch (e) { console.error('[backup] FAILED:', e.message); }
+      }
     } catch (e) {
-      console.error("issue-notify email failed", e.message);
+      console.error('[backup] FAILED:', e.message);
     }
   }
-});
+}, 15 * 60 * 1000);
 
-// ---------- admin dashboard data ----------
-// Get / set the current week's news bulletin (shown on every act's page).
-app.get("/api/bulletin", requireAdmin, async (req, res) => {
-  const b = (await pool.query(
-    "SELECT bulletin, bulletin_on FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1",
-    [req.agencyId]
-  )).rows[0];
-  res.json({ bulletin: b?.bulletin || "", bulletin_on: !!b?.bulletin_on });
-});
-
-app.post("/api/bulletin", requireAdmin, async (req, res) => {
-  const text = (req.body?.bulletin || "").toString().slice(0, 1000);
-  const on = req.body?.bulletin_on === true || req.body?.bulletin_on === "true";
-  const active = (await pool.query(
-    "SELECT id FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1",
-    [req.agencyId]
-  )).rows[0];
-  if (!active) return res.status(400).json({ error: "No active week to post a bulletin to." });
-  await pool.query("UPDATE batches SET bulletin=$1, bulletin_on=$2 WHERE id=$3 AND agency_id=$4",
-    [text.trim() || null, on, active.id, req.agencyId]);
-  res.json({ ok: true });
-});
-
-app.get("/api/dashboard", requireAdmin, async (req, res) => {
-  const active = (await pool.query("SELECT id,label FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1", [req.agencyId])).rows[0];
-  const rows = active ? (await pool.query(
-    `SELECT bk.*, a.name AS act_name, a.email AS act_email, a.email_status,
-            v.display_name, v.contact_name, v.phone, v.email AS venue_email, v.address
-     FROM bookings bk
-     JOIN acts a ON a.id = bk.act_id
-     LEFT JOIN venues v ON v.name = bk.venue_key AND v.agency_id = bk.agency_id
-     WHERE bk.batch_id = $1 AND bk.agency_id = $2
-     ORDER BY bk.gig_date, bk.created_at DESC`, [active.id, req.agencyId]
-  )).rows : [];
-  res.json({ bookings: rows, activeLabel: active?.label || null });
-});
-
-// ---------- venue lineups (FYI emails to venues) ----------
-// Group the active week's bookings by venue, listing the acts at each.
-app.get("/api/venue-lineups", requireAdmin, async (req, res) => {
-  const active = (await pool.query("SELECT id,label FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1", [req.agencyId])).rows[0];
-  if (!active) return res.json({ venues: [], activeLabel: null });
-  const rows = (await pool.query(
-    `SELECT bk.performer_name, a.name AS act_name, a.car_reg, bk.gig_date, bk.gig_time, bk.notes,
-            COALESCE(v.display_name, bk.venue_text) AS venue,
-            v.email AS venue_email, v.contact2_email, v.contact3_email,
-            v.name AS venue_key, bk.venue_text, v.brand_id,
-            br.name AS brand_name, br.office_email AS brand_office_email
-     FROM bookings bk JOIN acts a ON a.id = bk.act_id
-     LEFT JOIN venues v ON v.name = bk.venue_key AND v.agency_id = bk.agency_id
-     LEFT JOIN brands br ON br.id = v.brand_id AND br.agency_id = bk.agency_id
-     WHERE bk.batch_id = $1 AND bk.agency_id = $2
-     ORDER BY venue, bk.gig_date`, [active.id, req.agencyId]
-  )).rows;
-
-  // group by venue display name
-  const map = new Map();
-  const brandMap = new Map();  // brand_id -> {id,name,office_email,venueCount}
-  for (const r of rows) {
-    const name = r.venue || "(no venue)";
-    if (!map.has(name)) {
-      // combine all three contact emails into one recipient list for this venue
-      const emails = [r.venue_email, r.contact2_email, r.contact3_email]
-        .filter((e) => e && e.trim()).join(", ");
-      map.set(name, { venue: name, venue_key: r.venue_key, email: emails, brand_id: r.brand_id || null, brand_name: r.brand_name || null, acts: [] });
-    }
-    map.get(name).acts.push({
-      act: r.performer_name || r.act_name,
-      date: r.gig_date, time: r.gig_time, notes: r.notes, car_reg: r.car_reg || "",
-    });
-    if (r.brand_id && !brandMap.has(r.brand_id)) {
-      brandMap.set(r.brand_id, { id: r.brand_id, name: r.brand_name, office_email: r.brand_office_email || "", venues: new Set() });
-    }
-    if (r.brand_id) brandMap.get(r.brand_id).venues.add(name);
-  }
-  const venues = [...map.values()];
-  const brands = [...brandMap.values()].map((b) => ({ id: b.id, name: b.name, office_email: b.office_email, venue_count: b.venues.size }));
-
-  // flag deliverability for each venue's email (may hold several addresses)
-  const allAddrs = [];
-  for (const v of venues) (v.email || "").split(/[,;]+/).forEach((e) => { const t = e.trim().toLowerCase(); if (t) allAddrs.push(t); });
-  const statusMap = await latestEmailStatus(allAddrs);
-  for (const v of venues) {
-    const addrs = (v.email || "").split(/[,;]+/).map((e) => e.trim().toLowerCase()).filter(Boolean);
-    v.email_status = addrs.map((a) => statusMap[a]).find((s) => s === "bounced" || s === "complained") ||
-                     (addrs.some((a) => statusMap[a] === "delivered") ? "delivered" : null);
-  }
-
-  res.json({ venues, brands, activeLabel: active.label });
-});
-
-// Send one venue their lineup (FYI only — no confirm link). Emails every address in
-// the venue's email field (comma/semicolon separated), plus any extra typed in.
-app.post("/api/send-venue-lineup", requireAdmin, async (req, res) => {
+// Admin: download a fresh backup right now.
+app.get('/api/admin/backup', requireAdmin, (req, res) => {
   try {
-    if (!resend) return res.status(500).json({ error: "Email not configured." });
-    const { venue, acts, emails, weekLabel, brandName } = req.body || {};
-    const recipients = (emails || "")
-      .split(/[,;]+/).map((e) => e.trim()).filter((e) => /\S+@\S+\.\S+/.test(e));
-    if (!recipients.length) return res.status(400).json({ error: "No valid email address for this venue." });
-    if (!Array.isArray(acts) || !acts.length) return res.status(400).json({ error: "No acts to list." });
-    const venueLabel = brandName ? `${venue} (${brandName})` : venue;
-
-    const rowsHtml = acts.map((a) => `
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee">${esc(a.date || "")}${a.time ? " · " + esc(a.time) : ""}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>${esc(a.act || "")}</strong></td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#555">${a.car_reg ? `<span style="font-family:monospace;background:#f0f0f0;padding:1px 6px;border-radius:4px">${esc(a.car_reg)}</span>` : ""}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#555">${esc(a.notes || "")}</td>
-      </tr>`).join("");
-
-    const sender = await senderForAgency(req.agencyId, await userEmail(req.userId));
-    await sendMail({
-      from: sender.from,
-      replyTo: sender.replyTo,
-      to: recipients,
-      subject: `Your entertainment lineup${weekLabel ? " — " + weekLabel : ""}: ${venue}`,
-      html: `
-        <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:600px;margin:0 auto;color:#222">
-          <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-          <p>Hi,</p>
-          <p>Here's the entertainment booked for <strong>${esc(venueLabel)}</strong>${weekLabel ? " (" + esc(weekLabel) + ")" : ""}. This is for your information — no action needed.</p>
-          <table style="border-collapse:collapse;width:100%;font-size:14px;margin:16px 0">
-            <thead><tr>
-              <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #333">Date</th>
-              <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #333">Act</th>
-              <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #333">Car reg</th>
-              <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #333">Details</th>
-            </tr></thead>
-            <tbody>${rowsHtml}</tbody>
-          </table>
-          <p style="color:#999;font-size:12px">Sent for your information only.</p>
-          ${emailFooter(sender)}
-        </div>`,
-    });
-    res.json({ ok: true, sentTo: recipients.length });
+    const { file } = makeBackup();
+    res.download(file, path.basename(file));
   } catch (e) {
-    console.error("venue lineup failed", e);
     res.status(500).json({ error: e.message });
   }
 });
 
-// Send a whole brand's lineup to its head office: one email listing every venue of that
-// brand in the current active week, grouped by venue, to the brand's office_email(s).
-app.post("/api/send-brand-lineup", requireAdmin, async (req, res) => {
+// Admin: what backups exist, and email one on demand.
+app.get('/api/admin/backups', requireAdmin, (req, res) => {
+  let files = [];
   try {
-    if (!resend) return res.status(500).json({ error: "Email not configured." });
-    const brandId = (req.body?.brandId || "").toString();
-    const brand = (await pool.query("SELECT id, name, office_email FROM brands WHERE id=$1 AND agency_id=$2", [brandId, req.agencyId])).rows[0];
-    if (!brand) return res.status(404).json({ error: "No such brand." });
-    const recipients = (brand.office_email || "")
-      .split(/[,;]+/).map((e) => e.trim()).filter((e) => /\S+@\S+\.\S+/.test(e));
-    if (!recipients.length) return res.status(400).json({ error: "This brand has no head-office email set. Add one in Team & account → Brands." });
+    files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith('spinlist-') && f.endsWith('.json'))
+      .sort().reverse()
+      .map(f => {
+        const st = fs.statSync(path.join(BACKUP_DIR, f));
+        return { name: f, bytes: st.size, at: st.mtimeMs };
+      });
+  } catch (_) { /* no backups yet */ }
+  res.json({
+    files,
+    emailTo: BACKUP_EMAIL_TO || null,
+    emailConfigured: !!(BACKUP_EMAIL_TO && CONTACT_RESEND_KEY && CONTACT_FROM),
+    hour: BACKUP_HOUR,
+    keep: BACKUP_KEEP,
+    summary: backupSummary(),
+  });
+});
 
-    const active = (await pool.query("SELECT id,label FROM batches WHERE archived=false AND agency_id=$1 ORDER BY created_at DESC LIMIT 1", [req.agencyId])).rows[0];
-    if (!active) return res.status(400).json({ error: "No active week to send." });
+app.post('/api/admin/backup/email', requireAdmin, async (req, res) => {
+  const r = await emailBackup();
+  if (!r.ok) return res.status(400).json({ error: r.error || 'Could not send the backup.' });
+  res.json({ ok: true, to: BACKUP_EMAIL_TO });
+});
 
-    const rows = (await pool.query(
-      `SELECT COALESCE(v.display_name, bk.venue_text) AS venue,
-              bk.performer_name, a.name AS act_name, a.car_reg, bk.gig_date, bk.gig_time, bk.notes
-       FROM bookings bk JOIN acts a ON a.id=bk.act_id
-       JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-       WHERE bk.batch_id=$1 AND bk.agency_id=$2 AND v.brand_id=$3
-       ORDER BY venue, bk.gig_date`, [active.id, req.agencyId, brandId]
-    )).rows;
-    if (!rows.length) return res.status(400).json({ error: "No gigs for this brand in the current week." });
+app.post('/api/redeem', auth.requireAuth, (req, res) => {
+  const c = db.getCode((req.body || {}).code);
+  if (!c || !c.active) return res.status(404).json({ error: 'That code is not valid.' });
+  if (c.expires_at && Date.now() > c.expires_at) return res.status(410).json({ error: 'That code has expired.' });
+  if (c.max_uses !== null && c.uses >= c.max_uses) return res.status(409).json({ error: 'That code has been fully used.' });
+  if (db.hasRedeemed(c.code, req.user.id)) return res.status(409).json({ error: 'You have already redeemed this code.' });
 
-    // group by venue
-    const byVenue = new Map();
-    for (const r of rows) {
-      const vn = r.venue || "(no venue)";
-      if (!byVenue.has(vn)) byVenue.set(vn, []);
-      byVenue.get(vn).push(r);
-    }
-    const sections = [...byVenue.entries()].map(([vn, acts]) => {
-      const rowsHtml = acts.map((a) => `
-        <tr>
-          <td style="padding:7px 12px;border-bottom:1px solid #eee">${esc(a.gig_date || "")}${a.gig_time ? " · " + esc(a.gig_time) : ""}</td>
-          <td style="padding:7px 12px;border-bottom:1px solid #eee"><strong>${esc(a.performer_name || a.act_name || "")}</strong></td>
-          <td style="padding:7px 12px;border-bottom:1px solid #eee;color:#555">${a.car_reg ? `<span style="font-family:monospace;background:#f0f0f0;padding:1px 6px;border-radius:4px">${esc(a.car_reg)}</span>` : ""}</td>
-          <td style="padding:7px 12px;border-bottom:1px solid #eee;color:#555">${esc(a.notes || "")}</td>
-        </tr>`).join("");
-      return `<h3 style="margin:20px 0 6px">${esc(vn)}</h3>
-        <table style="border-collapse:collapse;width:100%;font-size:14px">
-          <thead><tr>
-            <th style="text-align:left;padding:7px 12px;border-bottom:2px solid #333">Date</th>
-            <th style="text-align:left;padding:7px 12px;border-bottom:2px solid #333">Act</th>
-            <th style="text-align:left;padding:7px 12px;border-bottom:2px solid #333">Car reg</th>
-            <th style="text-align:left;padding:7px 12px;border-bottom:2px solid #333">Details</th>
-          </tr></thead><tbody>${rowsHtml}</tbody></table>`;
-    }).join("");
-
-    const sender = await senderForAgency(req.agencyId, await userEmail(req.userId));
-    await sendMail({
-      from: sender.from,
-      replyTo: sender.replyTo,
-      to: recipients,
-      subject: `Entertainment lineup — ${brand.name}${active.label ? " — " + active.label : ""}`,
-      html: `
-        <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:640px;margin:0 auto;color:#222">
-          <div style="text-align:center;margin-bottom:12px"><img src="${sender.logoUrl}" alt="${esc(sender.agencyName)}" style="max-width:200px;max-height:64px;height:auto;width:auto"></div>
-          <p>Hi,</p>
-          <p>Here's the entertainment booked across your <strong>${esc(brand.name)}</strong> venues${active.label ? " for " + esc(active.label) : ""}. This is for your information — no action needed.</p>
-          ${sections}
-          <p style="color:#999;font-size:12px;margin-top:20px">Sent for your information only.</p>
-          ${emailFooter(sender)}
-        </div>`,
+  if (c.kind === 'comp') {
+    const compUntil = c.months ? Date.now() + c.months * 30 * 864e5 : null; // null = forever
+    db.grantComp(req.user.id, { plan: c.plan, comp_until: compUntil, comp_code: c.code });
+    if (c.grants_spotify) db.grantSpotifyExport(req.user.id);   // permanent perk
+    db.incrementCodeUses(c.code);
+    db.recordRedemption({ id: auth.newId(), code: c.code, user_id: req.user.id, redeemed_at: Date.now() });
+    const planLabel = (PLANS[c.plan] && PLANS[c.plan].name) || c.plan.toUpperCase();
+    return res.json({
+      type: 'comp',
+      plan: c.plan,
+      until: compUntil,
+      message: `Complimentary ${planLabel} access unlocked${c.months ? ` for ${c.months} month(s)` : ' — no expiry'}${c.grants_spotify ? ' · Spotify export enabled' : ''}.`,
     });
-    res.json({ ok: true, sentTo: recipients.length, venues: byVenue.size });
+  }
+
+  // Spotify add-on only — grant the perk, no plan change.
+  if (c.kind === 'addon') {
+    db.grantSpotifyExport(req.user.id);
+    db.incrementCodeUses(c.code);
+    db.recordRedemption({ id: auth.newId(), code: c.code, user_id: req.user.id, redeemed_at: Date.now() });
+    return res.json({
+      type: 'addon',
+      message: 'Spotify export has been added to your account.',
+    });
+  }
+
+  // discount: don't consume here — Stripe records the redemption at checkout.
+  // We just tell the front-end the code is valid and to use it at checkout.
+  return res.json({
+    type: 'discount',
+    code: c.code,
+    discountKind: c.discount_kind,
+    discountVal: c.discount_val,
+    message: 'Discount code accepted — it will be applied at checkout.',
+  });
+});
+/* =========================================================
+   HOST BRANDING (Pro & Studio) — logo, accent colour, tagline
+   ========================================================= */
+function planHasBranding(user) {
+  return !!(PLANS[user.plan] && PLANS[user.plan].branding);
+}
+const HEX = /^#[0-9a-fA-F]{6}$/;
+
+// Save branding. Logo is optional on each save (colour/tagline can change alone).
+app.post('/api/branding', auth.requireAuth, (req, res) => {
+  if (!planHasBranding(req.user)) {
+    return res.status(403).json({ error: 'Custom branding is available on the BASIC and PRO plans.', upgrade: true });
+  }
+  // Run multer only for this request so non-Pro hosts never write files.
+  upload.single('logo')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+
+    const color = (req.body.color || '').trim();
+    const tagline = (req.body.tagline || '').trim().slice(0, 80);
+    if (color && !HEX.test(color)) return res.status(400).json({ error: 'Colour must be a hex value like #1d4ed8.' });
+
+    const current = db.getBranding(req.user.id) || {};
+    let logoPath = current.logo || null;
+
+    if (req.file) {
+      // delete the previous logo file if we're replacing it
+      if (current.logo) safeUnlink(current.logo);
+      logoPath = '/uploads/' + req.file.filename;
+    }
+
+    db.setBranding(req.user.id, { logo: logoPath, color: color || null, tagline: tagline || null });
+    res.json({ branding: db.getBranding(req.user.id) });
+  });
+});
+
+// Clear branding (and remove the logo file).
+app.delete('/api/branding', auth.requireAuth, (req, res) => {
+  const current = db.getBranding(req.user.id);
+  if (current?.logo) safeUnlink(current.logo);
+  db.setBranding(req.user.id, { logo: null, color: null, tagline: null });
+  res.json({ branding: { logo: null, color: null, tagline: null } });
+});
+
+// Public: the guest voting page fetches the host's branding by event host id.
+// Only returns branding if that host's plan still includes it.
+app.get('/api/branding/:userId', (req, res) => {
+  const u = db.getUserById(req.params.userId);
+  if (!u || !planHasBranding(u)) return res.json({ branding: null });
+  res.json({ branding: db.getBranding(u.id) });
+});
+
+function safeUnlink(publicPath) {
+  try {
+    // stored paths look like "/uploads/<filename>" — resolve to the real dir
+    const filename = path.basename(publicPath || '');
+    if (!filename) return;
+    const f = path.join(UPLOAD_DIR, filename);
+    if (f.startsWith(UPLOAD_DIR) && fs.existsSync(f)) fs.unlinkSync(f);
+  } catch (_) { /* ignore */ }
+}
+
+/* =========================================================
+   SPOTIFY PLAYLIST EXPORT (OAuth Authorization Code flow)
+   ---------------------------------------------------------
+   The DJ logs into THEIR Spotify, we store their tokens, then
+   create a playlist in their account from the event's voted
+   tracks. Studio plan only.
+   ========================================================= */
+const SPOTIFY_REDIRECT = `${BASE_URL}/api/spotify/callback`;
+const SPOTIFY_SCOPE = 'playlist-modify-public playlist-modify-private';
+// short-lived state -> userId, to tie the callback back to the signed-in host
+const spotifyStates = new Map();
+
+// Step 1: start the OAuth handshake (host must be signed in + have the
+// Spotify export comp code — this feature is comp-code-only, not plan-based).
+app.get('/api/spotify/connect', auth.requireAuth, (req, res) => {
+  if (!req.user.spotify_export) {
+    return res.status(403).json({ error: 'Spotify export is not enabled on your account.' });
+  }
+  const state = crypto.randomBytes(16).toString('hex');
+  spotifyStates.set(state, { userId: req.user.id, at: Date.now() });
+  // clean up old states (10 min)
+  for (const [k, v] of spotifyStates) if (Date.now() - v.at > 600000) spotifyStates.delete(k);
+  const url = new URL('https://accounts.spotify.com/authorize');
+  url.searchParams.set('client_id', CLIENT_ID);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('redirect_uri', SPOTIFY_REDIRECT);
+  url.searchParams.set('scope', SPOTIFY_SCOPE);
+  url.searchParams.set('state', state);
+  res.json({ url: url.toString() });
+});
+
+// Step 2: Spotify redirects back here with a code.
+app.get('/api/spotify/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error) return res.redirect('/account.html?spotify=denied');
+  const entry = state && spotifyStates.get(state);
+  if (!entry) return res.redirect('/account.html?spotify=invalid');
+  spotifyStates.delete(state);
+  try {
+    const creds = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+    const r = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: code.toString(),
+        redirect_uri: SPOTIFY_REDIRECT,
+      }),
+    });
+    if (!r.ok) return res.redirect('/account.html?spotify=failed');
+    const t = await r.json();
+    // fetch the user's Spotify id (needed for some calls / display)
+    let spotifyUserId = null;
+    try {
+      const me = await fetch('https://api.spotify.com/v1/me', { headers: { Authorization: `Bearer ${t.access_token}` } });
+      if (me.ok) spotifyUserId = (await me.json()).id;
+    } catch (_) {}
+    db.setSpotifyAuth(entry.userId, {
+      accessToken: t.access_token,
+      refreshToken: t.refresh_token,
+      expiresAt: Date.now() + t.expires_in * 1000,
+      spotifyUserId,
+    });
+    res.redirect('/account.html?spotify=connected');
   } catch (e) {
-    console.error("brand lineup failed", e);
-    res.status(500).json({ error: e.message });
+    res.redirect('/account.html?spotify=failed');
   }
 });
 
-// ---------- history / archive (admin) ----------
-// List all batches with their status tallies.
-app.get("/api/batches", requireAdmin, async (req, res) => {
-  const rows = (await pool.query(
-    `SELECT b.id, b.label, b.archived, b.created_at,
-            count(bk.*)::int AS total,
-            count(bk.*) FILTER (WHERE bk.status='confirmed')::int AS confirmed,
-            count(bk.*) FILTER (WHERE bk.status='pending')::int AS pending,
-            count(bk.*) FILTER (WHERE bk.status='issue')::int AS issue,
-            count(bk.*) FILTER (WHERE bk.status='resolved')::int AS resolved
-     FROM batches b LEFT JOIN bookings bk ON bk.batch_id = b.id
-     WHERE b.agency_id=$1
-     GROUP BY b.id ORDER BY b.created_at DESC`, [req.agencyId]
-  )).rows;
-  res.json({ batches: rows });
+// Disconnect Spotify.
+app.post('/api/spotify/disconnect', auth.requireAuth, (req, res) => {
+  db.clearSpotifyAuth(req.user.id);
+  res.json({ ok: true });
 });
 
-// One batch's bookings + a response timeline.
-app.get("/api/batch", requireAdmin, async (req, res) => {
-  const id = (req.query.id || "").toString();
-  const batch = (await pool.query("SELECT * FROM batches WHERE id=$1 AND agency_id=$2", [id, req.agencyId])).rows[0];
-  if (!batch) return res.status(404).json({ error: "No such week." });
-  const bookings = (await pool.query(
-    `SELECT bk.*, a.name AS act_name, a.email AS act_email, v.display_name
-     FROM bookings bk JOIN acts a ON a.id=bk.act_id
-     LEFT JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-     WHERE bk.batch_id=$1 AND bk.agency_id=$2 ORDER BY bk.gig_date, bk.created_at`, [id, req.agencyId])).rows;
-  const timeline = (await pool.query(
-    `SELECT bk.performer_name, COALESCE(v.display_name,bk.venue_text) AS venue,
-            bk.status, bk.responded_at, bk.message
-     FROM bookings bk LEFT JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-     WHERE bk.batch_id=$1 AND bk.agency_id=$2 AND bk.responded_at IS NOT NULL
-     ORDER BY bk.responded_at DESC`, [id, req.agencyId])).rows;
-  res.json({ batch, bookings, timeline });
+// Whether the current host has Spotify connected.
+app.get('/api/spotify/status', auth.requireAuth, (req, res) => {
+  const u = db.getUserById(req.user.id);
+  res.json({ connected: !!(u && u.spotify_refresh), spotifyUserId: u && u.spotify_user_id });
 });
 
-// Delete one archived week. Restricted to the agency head (owner), who must re-enter
-// their password to confirm this destructive action.
-app.post("/api/delete-batch", requireAdmin, async (req, res) => {
-  const id = (req.body?.id || "").toString();
-  const password = (req.body?.password || "").toString();
+// Get a valid access token for a user, refreshing if needed.
+async function getUserSpotifyToken(userId) {
+  const u = db.getUserById(userId);
+  if (!u || !u.spotify_refresh) return null;
+  if (u.spotify_access && Date.now() < (u.spotify_expires || 0) - 30000) return u.spotify_access;
+  // refresh
+  const creds = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+  const r = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: u.spotify_refresh }),
+  });
+  if (!r.ok) return null;
+  const t = await r.json();
+  db.setSpotifyAuth(userId, {
+    accessToken: t.access_token,
+    refreshToken: t.refresh_token,   // may be undefined; db keeps the old one
+    expiresAt: Date.now() + t.expires_in * 1000,
+  });
+  return t.access_token;
+}
 
-  // Must be the agency owner (the person who created the agency).
-  const me = (await pool.query(
-    "SELECT is_owner, pass_hash FROM users WHERE id=$1 AND agency_id=$2", [req.userId, req.agencyId]
-  )).rows[0];
-  if (!me || !me.is_owner) {
-    return res.status(403).json({ error: "Only the agency's head can delete archived weeks." });
+// Step 3: create a playlist in the DJ's account from an event's tracks.
+app.post('/api/events/:id/export-spotify', auth.requireAuth, async (req, res) => {
+  const e = db.getEvent(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Event not found.' });
+  if (e.host_id !== req.user.id) return res.status(403).json({ error: 'Not your event.' });
+  // Spotify export is comp-code-only (req.user.spotify_export), not plan-based.
+  const hasSpotify = req.user.spotify_export;
+  if (!hasSpotify) return res.status(403).json({ error: 'Spotify export is not enabled on your account.' });
+
+  const token = await getUserSpotifyToken(req.user.id);
+  if (!token) return res.status(401).json({ error: 'Connect your Spotify account first.', needsAuth: true });
+
+  // Collect track URIs (top voted first), skipping any without a Spotify URI.
+  const uris = Object.values(e.tracks || {})
+    .sort((a, b) => b.votes - a.votes)
+    .map(t => t.uri)
+    .filter(u => typeof u === 'string' && u.startsWith('spotify:track:'));
+  if (!uris.length) return res.status(400).json({ error: 'No Spotify tracks to export yet.' });
+
+  try {
+    // Create the playlist on the current user (POST /me/playlists — the
+    // per-user endpoint was removed in Feb 2026).
+    const makeP = await fetch('https://api.spotify.com/v1/me/playlists', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `${e.name} — Spinlist`,
+        description: `Crowd-voted setlist from ${e.name}, built with Spinlist.`,
+        public: true,
+      }),
+    });
+    if (!makeP.ok) {
+      const errTxt = await makeP.text();
+      console.error('Spotify create playlist failed:', makeP.status, errTxt);
+      if (makeP.status === 401) return res.status(401).json({ error: 'Spotify session expired — reconnect.', needsAuth: true });
+      return res.status(502).json({ error: 'Could not create the playlist on Spotify.' });
+    }
+    const playlist = await makeP.json();
+
+    // Add tracks in batches of 100 (API max per request).
+    for (let i = 0; i < uris.length; i += 100) {
+      const batch = uris.slice(i, i + 100);
+      const add = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uris: batch }),
+      });
+      if (!add.ok) {
+        const errTxt = await add.text();
+        console.error('Spotify add tracks failed:', add.status, errTxt);
+        return res.status(502).json({ error: 'Playlist created, but adding some tracks failed.', url: playlist.external_urls?.spotify });
+      }
+    }
+    res.json({ ok: true, url: playlist.external_urls?.spotify, count: uris.length });
+  } catch (err) {
+    console.error('export-spotify error:', err.message);
+    res.status(500).json({ error: 'Spotify export failed.' });
   }
-  if (!password || !verifyPassword(password, me.pass_hash)) {
-    return res.status(403).json({ error: "Password incorrect." });
+});
+
+// Export a single wedding block to its own Spotify playlist.
+app.post('/api/weddings/:id/blocks/:blockId/export-spotify', auth.requireAuth, async (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  // The DJ host or the assigned DJ can export (not the couple).
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can export to Spotify.' });
   }
-  // Only allow deleting weeks that are actually archived.
-  const batch = (await pool.query("SELECT archived FROM batches WHERE id=$1 AND agency_id=$2", [id, req.agencyId])).rows[0];
-  if (!batch) return res.status(404).json({ error: "No such week." });
-  if (!batch.archived) return res.status(400).json({ error: "Only archived weeks can be deleted." });
+  // Spotify export is comp-code-only. The exporter's own perk, OR the wedding
+  // owner's (so an assigned DJ inherits the owner's Spotify entitlement).
+  let hasSpotify = !!req.user.spotify_export;
+  if (!hasSpotify) {
+    const owner = db.getUserById(w.host_id);
+    hasSpotify = !!(owner && owner.spotify_export);
+  }
+  if (!hasSpotify) return res.status(403).json({ error: 'Spotify export is not enabled on your account.' });
 
-  await pool.query("DELETE FROM bookings WHERE batch_id=$1 AND agency_id=$2", [id, req.agencyId]);
-  await pool.query("DELETE FROM batches WHERE id=$1 AND agency_id=$2", [id, req.agencyId]);
-  res.json({ ok: true });
+  const block = (w.blocks || []).find(b => b.id === req.params.blockId);
+  if (!block) return res.status(404).json({ error: 'Block not found.' });
+
+  const uris = (block.songs || [])
+    .map(s => s.uri)
+    .filter(u => typeof u === 'string' && u.startsWith('spotify:track:'));
+  if (!uris.length) return res.status(400).json({ error: 'No Spotify tracks in this block yet.' });
+
+  const token = await getUserSpotifyToken(req.user.id);
+  if (!token) return res.status(401).json({ error: 'Connect your Spotify account first.', needsAuth: true });
+
+  try {
+    const makeP = await fetch('https://api.spotify.com/v1/me/playlists', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `${w.name || 'Wedding'} — ${block.name}`,
+        description: `${block.name} for ${w.name || 'the wedding'}, built with Spinlist.`,
+        public: false,
+      }),
+    });
+    if (!makeP.ok) {
+      const errTxt = await makeP.text();
+      console.error('Spotify create playlist failed:', makeP.status, errTxt);
+      if (makeP.status === 401) return res.status(401).json({ error: 'Spotify session expired — reconnect.', needsAuth: true });
+      return res.status(502).json({ error: 'Could not create the playlist on Spotify.' });
+    }
+    const playlist = await makeP.json();
+
+    for (let i = 0; i < uris.length; i += 100) {
+      const batch = uris.slice(i, i + 100);
+      const add = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uris: batch }),
+      });
+      if (!add.ok) {
+        const errTxt = await add.text();
+        console.error('Spotify add tracks failed:', add.status, errTxt);
+        return res.status(502).json({ error: 'Playlist created, but adding some tracks failed.', url: playlist.external_urls?.spotify });
+      }
+    }
+    res.json({ ok: true, url: playlist.external_urls?.spotify, count: uris.length, block: block.name });
+  } catch (err) {
+    console.error('wedding block export-spotify error:', err.message);
+    res.status(500).json({ error: 'Spotify export failed.' });
+  }
 });
 
-// Export one week's check status as CSV.
-app.get("/api/export-status", requireAdmin, async (req, res) => {
-  const id = (req.query.id || "").toString();
-  const batch = (await pool.query("SELECT * FROM batches WHERE id=$1 AND agency_id=$2", [id, req.agencyId])).rows[0];
-  if (!batch) return res.status(404).send("No such week.");
-  const rows = (await pool.query(
-    `SELECT bk.performer_name, a.name AS act_name, a.email AS act_email,
-            COALESCE(v.display_name,bk.venue_text) AS venue, br.name AS group_name,
-            bk.gig_date, bk.gig_time,
-            bk.status, bk.responded_at, bk.message
-     FROM bookings bk JOIN acts a ON a.id=bk.act_id
-     LEFT JOIN venues v ON v.name=bk.venue_key AND v.agency_id=bk.agency_id
-     LEFT JOIN brands br ON br.id=v.brand_id AND br.agency_id=bk.agency_id
-     WHERE bk.batch_id=$1 AND bk.agency_id=$2 ORDER BY bk.gig_date, performer_name`, [id, req.agencyId])).rows;
-  const esc = (v) => { const s = (v == null ? "" : String(v)); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  const header = "act,recipient_email,venue,group,date,time,status,responded_at,message";
-  const body = rows.map((r) => [
-    r.performer_name || r.act_name, r.act_email, r.venue, r.group_name, r.gig_date, r.gig_time,
-    r.status, r.responded_at ? new Date(r.responded_at).toISOString() : "", r.message,
-  ].map(esc).join(",")).join("\n");
-  const csv = "\uFEFF" + header + "\n" + body;
-  const safe = (batch.label || "week").replace(/[^a-z0-9]+/gi, "_");
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="status_${safe}.csv"`);
-  res.send(csv);
+/* =========================================================
+   SPOTIFY SEARCH PROXY (unchanged)
+   ========================================================= */
+let cachedToken = null;
+
+/* Short-lived in-memory cache of search results. At a busy event many guests
+   type the same songs; caching means Spotify sees one request per unique query
+   per window instead of hundreds, keeping us under its rate limit. */
+const searchCache = new Map();       // key -> { value, expiresAt }
+const SEARCH_CACHE_MS = 60_000;      // reuse identical searches for 60s
+const SEARCH_CACHE_MAX = 2000;       // cap entries so memory stays bounded
+
+async function getAppToken() {
+  if (cachedToken && Date.now() < cachedToken.expiresAt - 30_000) return cachedToken.value;
+  const creds = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+  const r = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'client_credentials' }),
+  });
+  if (!r.ok) throw new Error(`Token request failed (${r.status})`);
+  const data = await r.json();
+  cachedToken = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+  return cachedToken.value;
+}
+
+/* ---- Apple Music fallback ------------------------------------------------
+   A developer token is a JWT signed with your MusicKit private key (ES256).
+   We sign it ourselves with Node's crypto (no extra dependency) and cache it.
+   Apple lets tokens live up to 6 months; we use a shorter life and refresh. */
+function base64url(input) {
+  return Buffer.from(input).toString('base64')
+    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+let appleTokenCache = null;
+function getAppleDevToken() {
+  if (!APPLE_MUSIC_ENABLED) throw new Error('Apple Music not configured');
+  if (appleTokenCache && Date.now() < appleTokenCache.expiresAt - 60_000) return appleTokenCache.value;
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + 60 * 60 * 12;          // 12 hours
+  const header = { alg: 'ES256', kid: APPLE_MUSIC_KEY_ID };
+  const payload = { iss: APPLE_MUSIC_TEAM_ID, iat, exp };
+  const signingInput = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
+  // ES256 = ECDSA P-256 SHA-256; Node returns DER, JWT needs raw R||S (64 bytes).
+  const der = crypto.sign('SHA256', Buffer.from(signingInput),
+    { key: APPLE_MUSIC_KEY, dsaEncoding: 'ieee-p1363' });
+  const jwt = `${signingInput}.${base64url(der)}`;
+  appleTokenCache = { value: jwt, expiresAt: exp * 1000 };
+  return jwt;
+}
+
+// Shape Apple Music results to the same structure as Spotify results.
+function shapeAppleResults(json) {
+  const items = (json && json.results && json.results.songs && json.results.songs.data) || [];
+  return {
+    source: 'apple',
+    tracks: items.map(s => {
+      const a = s.attributes || {};
+      let art = '';
+      if (a.artwork && a.artwork.url) {
+        art = a.artwork.url.replace('{w}', '200').replace('{h}', '200');
+      }
+      return {
+        id: s.id,
+        uri: a.url || '',                 // Apple has no spotify: URI; use the web URL
+        title: a.name || '',
+        artist: a.artistName || '',
+        album: a.albumName || '',
+        art,
+        durationMs: a.durationInMillis || 0,
+        isrc: a.isrc || '',               // ISRC lets us cross-reference to Spotify later
+        appleUrl: a.url || '',
+      };
+    }),
+  };
+}
+
+async function searchAppleMusic(q, limit) {
+  const token = getAppleDevToken();
+  const url = new URL(`https://api.music.apple.com/v1/catalog/${APPLE_MUSIC_STOREFRONT}/search`);
+  url.searchParams.set('term', q);
+  url.searchParams.set('types', 'songs');
+  url.searchParams.set('limit', String(Math.min(limit || 10, 25)));
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`Apple search failed (${r.status})`);
+  return shapeAppleResults(await r.json());
+}
+
+/* Diagnostic: check whether Apple Music search is actually working, without
+   needing Spotify to be rate-limited first. Reports config state and does a
+   live test search. Handy for confirming the key is set up correctly. */
+app.get('/api/search/apple-test', requireAdmin, async (req, res) => {
+  // A healthy pkcs8 EC private key normalises to ~230-260 chars of PEM.
+  // Reporting length + a hash (not the key) tells us if Render has the full
+  // value and whether it changed, without ever exposing the secret.
+  const rawEnv = process.env.APPLE_MUSIC_KEY || '';
+  // Show the exact character codes of the first stretch of the raw value so we
+  // can see precisely how it's escaped (real newline=10, backslash=92, etc.)
+  // without ever revealing key material — the header text isn't secret.
+  const rawHead = rawEnv.slice(0, 45);
+  const rawHeadCodes = Array.from(rawHead).map(c => c.charCodeAt(0)).join(',');
+  const rawHeadShown = JSON.stringify(rawHead);
+  const bodyOnly = APPLE_MUSIC_KEY
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----/, '')
+    .replace(/-----END [A-Z ]*PRIVATE KEY-----/, '')
+    .replace(/\s/g, '');
+  const status = {
+    configured: APPLE_MUSIC_ENABLED,
+    hasKey: !!APPLE_MUSIC_KEY,
+    keyLooksValid: /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(APPLE_MUSIC_KEY),
+    hasKeyId: !!APPLE_MUSIC_KEY_ID,
+    keyIdLength: APPLE_MUSIC_KEY_ID.length,      // should be 10
+    teamId: APPLE_MUSIC_TEAM_ID ? APPLE_MUSIC_TEAM_ID.slice(0, 4) + '…' : '(none)',
+    storefront: APPLE_MUSIC_STOREFRONT,
+    rawEnvLength: rawEnv.length,                 // what Render stores, before normalise
+    normalisedLength: APPLE_MUSIC_KEY.length,    // after our cleanup
+    keyBodyLength: bodyOnly.length,              // just the base64 (healthy ~200+)
+    keyFingerprint: crypto.createHash('sha256').update(APPLE_MUSIC_KEY).digest('hex').slice(0, 12),
+    hasBackslashN: rawEnv.includes('\\n'),
+    hasRealNewlines: rawEnv.includes('\n'),
+    rawHeadShown,
+    rawHeadCodes,
+  };
+  if (!APPLE_MUSIC_ENABLED) {
+    return res.status(200).json({ ok: false, step: 'config', message: 'Apple Music is not configured — APPLE_MUSIC_KEY and APPLE_MUSIC_KEY_ID must both be set.', status });
+  }
+  // Step 1: can we sign a token?
+  let token;
+  try {
+    token = getAppleDevToken();
+  } catch (e) {
+    return res.status(200).json({ ok: false, step: 'sign-token', message: 'Could not sign a developer token from the key. This usually means the key text is wrong or incomplete.', error: e.message, status });
+  }
+  // Step 2: can we actually search?
+  try {
+    const result = await searchAppleMusic(req.query.q ? String(req.query.q) : 'test', 3);
+    return res.status(200).json({ ok: true, step: 'done', message: 'Apple Music is working.', sampleCount: result.tracks.length, sample: result.tracks.slice(0, 3).map(t => `${t.title} — ${t.artist}`), status });
+  } catch (e) {
+    // Common: 401 = bad key/keyId/teamId mismatch; 403 = key not enabled for MusicKit
+    let hint = '';
+    if (/\(401\)/.test(e.message)) hint = 'A 401 usually means the Key ID, Team ID, or the key itself don\'t match. Double-check the Key ID matches this exact .p8 file, and the Team ID is 3LVYMTC2X7.';
+    else if (/\(403\)/.test(e.message)) hint = 'A 403 usually means the key isn\'t enabled for MusicKit, or the MusicKit identifier wasn\'t set up. Check the key has MusicKit ticked in your Apple account.';
+    return res.status(200).json({ ok: false, step: 'search', message: 'Signed a token, but the Apple search request failed.', error: e.message, hint, status });
+  }
 });
 
-// resend an invite to one act (admin) — counts only this check-off's gigs
-app.post("/api/resend-invite", requireAdmin, async (req, res) => {
-  const act = (await pool.query("SELECT * FROM acts WHERE id=$1 AND agency_id=$2", [req.body?.actId, req.agencyId])).rows[0];
-  if (!act) return res.status(404).json({ error: "No such act." });
-  if (!resend) return res.status(500).json({ error: "Email not configured." });
-  // count only gigs in the current (non-archived) batch, so the email total matches
-  // this check-off and ignores archived weeks
-  const { rows } = await pool.query(
-    `SELECT count(*)::int AS n
-     FROM bookings bk
-     LEFT JOIN batches ba ON ba.id = bk.batch_id
-     WHERE bk.act_id=$1 AND bk.agency_id=$2 AND COALESCE(ba.archived,false)=false`,
-    [act.id, req.agencyId]
-  );
-  const sender = await senderForAgency(req.agencyId, await userEmail(req.userId));
-  await sendConfirmEmail(act, rows[0]?.n || 1, sender);
-  res.json({ ok: true });
+/* ----------------------------------------------------------------
+   HEALTH CHECK
+   /api/health reports the status of each subsystem so you can see at a
+   glance (via /status) whether search, the fallback and the database are
+   healthy — rather than finding out mid-gig. Safe to call publicly: it
+   exposes only up/down status and coarse counts, no secrets or user data.
+---------------------------------------------------------------- */
+let healthCache = { at: 0, body: null };
+app.get('/api/health', async (req, res) => {
+  // Cache for 20s so repeated polling doesn't hammer Spotify.
+  if (healthCache.body && Date.now() - healthCache.at < 20_000) {
+    return res.json({ ...healthCache.body, cached: true });
+  }
+  const checks = {};
+  let ok = true;
+
+  // 1) Server — if this responds at all, the process is up.
+  checks.server = { status: 'up' };
+
+  // 2) Database / data store — readable?
+  try {
+    const s = db.health();
+    checks.database = { status: 'up', users: s.users, events: s.events, weddings: s.weddings };
+  } catch (e) {
+    checks.database = { status: 'down', error: 'store unavailable' };
+    ok = false;
+  }
+
+  // 3) Spotify search — reflect REAL guest-search behaviour, not just the
+  //    token endpoint. If searches were throttled in the last 3 minutes, show
+  //    degraded even if a token still fetches fine.
+  const THROTTLE_WINDOW = 3 * 60 * 1000;
+  const recentlyThrottled = searchHealth.lastSpotifyThrottleAt &&
+    (Date.now() - searchHealth.lastSpotifyThrottleAt < THROTTLE_WINDOW);
+  try {
+    await getAppToken();
+    if (recentlyThrottled) {
+      checks.spotify = { status: 'degraded', note: 'searches being rate limited' };
+    } else {
+      checks.spotify = { status: 'up' };
+    }
+  } catch (e) {
+    const m = (e && e.message) || '';
+    checks.spotify = /429/.test(m) ? { status: 'degraded', note: 'rate limited' } : { status: 'down' };
+    if (checks.spotify.status === 'down') ok = false;
+  }
+
+  // 4) Apple Music — a primary search option (and also covers if Spotify throttles).
+  if (!APPLE_MUSIC_ENABLED) {
+    checks.appleFallback = { status: 'off' };
+  } else {
+    const activelyServing = searchHealth.lastAppleFallbackAt &&
+      (Date.now() - searchHealth.lastAppleFallbackAt < THROTTLE_WINDOW);
+    // 'up' shows as Operational; 'active' flags it's currently serving searches.
+    checks.appleFallback = activelyServing
+      ? { status: 'active', note: 'serving searches' }
+      : { status: 'up' };
+  }
+
+  // 5) Demo event — present?
+  checks.demo = { status: db.getEvent('DEMO') ? 'up' : 'missing' };
+
+  const body = {
+    ok,
+    status: ok ? 'healthy' : 'problem',
+    time: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+    checks,
+  };
+  healthCache = { at: Date.now(), body };
+  res.status(ok ? 200 : 503).json(body);
 });
 
-// Archive the current week (keeps it in History rather than deleting).
-app.post("/api/clear-week", requireAdmin, async (req, res) => {
-  await pool.query("UPDATE batches SET archived=true WHERE archived=false AND agency_id=$1", [req.agencyId]);
-  res.json({ ok: true });
+// Live search-health tracking, so the status page reflects what's ACTUALLY
+// happening on real guest searches — not just whether a token can be fetched.
+const searchHealth = {
+  lastSpotifyThrottleAt: 0,   // last time a real search got a 429
+  lastAppleFallbackAt: 0,     // last time Apple actually served a result
+  lastSpotifyOkAt: 0,         // last successful Spotify search
+};
+
+/* ----------------------------------------------------------------
+   ANALYTICS — simple, privacy-friendly page-view counting.
+   No cookies, no personal data. A visitor is identified by a salted hash of
+   IP + user-agent that ROTATES DAILY (the day is part of the hash input), so
+   it can't be used to track anyone across days or tied back to a person.
+---------------------------------------------------------------- */
+const ANALYTICS_SALT = process.env.ANALYTICS_SALT || crypto.randomBytes(16).toString('hex');
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);   // "2026-07-11"
+}
+// Hour of day in UK time (not UTC), so "peak at 8pm" means 8pm to you and
+// doesn't shift by an hour when the clocks change.
+function ukHourNow() {
+  try {
+    const h = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London', hour: 'numeric', hour12: false,
+    }).format(new Date());
+    const n = parseInt(h, 10);
+    return (n >= 0 && n <= 23) ? n : new Date().getUTCHours();
+  } catch (_) {
+    return new Date().getUTCHours();
+  }
+}
+function visitorHashFor(req, dayKey) {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const ua = req.headers['user-agent'] || '';
+  return crypto.createHash('sha256')
+    .update(`${dayKey}|${ANALYTICS_SALT}|${ip}|${ua}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+// Obvious bots/crawlers shouldn't inflate the numbers.
+const BOT_RE = /bot|crawl|spider|slurp|bingpreview|headless|monitor|uptime|curl|wget|python-requests|axios/i;
+
+// Beacon: called once per page load. Deliberately tiny and always 204.
+app.post('/api/track', (req, res) => {
+  try {
+    const ua = req.headers['user-agent'] || '';
+    if (BOT_RE.test(ua)) return res.status(204).end();      // don't count bots
+    let path = ((req.body || {}).path || '/').toString();
+    // Keep paths clean and bounded: strip query/hash, cap length.
+    path = path.split('?')[0].split('#')[0].slice(0, 80) || '/';
+    const day = todayKey();
+    db.recordView(day, path, visitorHashFor(req, day), ukHourNow());
+  } catch (_) { /* never let analytics break a page */ }
+  res.status(204).end();
 });
 
-// ---------- static files ----------
-app.use("/act", express.static(path.join(__dirname, "..", "public", "act")));
-app.get("/dashboard.html", requireAdmin, (req, res) =>
-  res.sendFile(path.join(__dirname, "..", "public", "dashboard.html")));
-app.use(express.static(path.join(__dirname, "..", "public")));
+// Stats: admin only.
+app.get('/api/analytics', requireAdmin, (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 90);
+  res.json(db.analyticsSummary(days));
+});
 
-// ---------- boot ----------
-initDb()
-  .then(() => app.listen(PORT, () => console.log(`GigConfirm running on ${PORT}`)))
-  .catch((e) => { console.error("DB init failed", e); process.exit(1); });
+app.get('/api/search', async (req, res) => {
+  const q = (req.query.q || '').toString().trim();
+  if (!q) return res.json({ tracks: [] });
+  const limit = Math.min(parseInt(req.query.limit, 10) || 10, 10); // Spotify caps at 10
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  const source = (req.query.source || '').toString() === 'apple' ? 'apple' : 'spotify';
+
+  // Serve identical searches from a short-lived cache so a busy event
+  // (many guests searching the same songs) doesn't hammer the source and
+  // trip its rate limit. Key on the normalised query + paging + source.
+  const cacheKey = `${source}|${q.toLowerCase()}|${limit}|${offset}`;
+  const now = Date.now();
+  const hit = searchCache.get(cacheKey);
+  if (hit && now < hit.expiresAt) {
+    return res.json(hit.value);
+  }
+
+  // If this event prefers Apple, search Apple first. Fall back to Spotify
+  // if Apple isn't configured or the search fails, so guests are never stuck.
+  if (source === 'apple' && APPLE_MUSIC_ENABLED) {
+    try {
+      const apple = await tryAppleFallback(q, limit, cacheKey, now);
+      if (apple) return res.json(apple);
+    } catch (_) { /* fall through to Spotify */ }
+  }
+
+  try {
+    const token = await getAppToken();
+    const url = new URL('https://api.spotify.com/v1/search');
+    url.searchParams.set('q', q);
+    url.searchParams.set('type', 'track');
+    url.searchParams.set('limit', String(limit));
+    url.searchParams.set('offset', String(offset));
+    url.searchParams.set('market', SPOTIFY_MARKET);
+    let r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (r.status === 401) { cachedToken = null; const t2 = await getAppToken(); r = await fetch(url, { headers: { Authorization: `Bearer ${t2}` } }); }
+    if (r.status === 429) {
+      // Spotify is rate-limiting us. First try to keep search alive:
+      //   1. serve a stale cached result for this query if we have one, else
+      //   2. fall back to Apple Music (if configured), else
+      //   3. ask the guest to wait a moment.
+      searchHealth.lastSpotifyThrottleAt = Date.now();   // real throttling, right now
+      const retryAfter = parseInt(r.headers.get('retry-after') || '2', 10);
+      if (hit) return res.json(hit.value);
+      const viaApple = await tryAppleFallback(q, limit, cacheKey, now);
+      if (viaApple) { searchHealth.lastAppleFallbackAt = Date.now(); return res.json(viaApple); }
+      res.set('Retry-After', String(retryAfter));
+      return res.status(429).json({ error: 'Busy right now — please wait a moment and try again.', retryAfter });
+    }
+    if (!r.ok) return res.status(r.status).json({ error: 'Spotify search failed' });
+    const shaped = shapeResults(await r.json());
+    searchHealth.lastSpotifyOkAt = Date.now();            // Spotify is serving searches
+    // Cache successful results for a short window.
+    cacheSearch(cacheKey, shaped, now);
+    res.json(shaped);
+  } catch (err) {
+    // Spotify unreachable (network/timeout). Try Apple Music before giving up.
+    console.error('search error:', err.message);
+    const viaApple = await tryAppleFallback(q, limit, cacheKey, Date.now());
+    if (viaApple) { searchHealth.lastAppleFallbackAt = Date.now(); return res.json(viaApple); }
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+// Store a result in the short-lived cache, trimming if it grows too large.
+function cacheSearch(cacheKey, shaped, now) {
+  searchCache.set(cacheKey, { value: shaped, expiresAt: now + SEARCH_CACHE_MS });
+  if (searchCache.size > SEARCH_CACHE_MAX) {
+    const drop = Math.ceil(SEARCH_CACHE_MAX * 0.1);
+    let i = 0;
+    for (const k of searchCache.keys()) { searchCache.delete(k); if (++i >= drop) break; }
+  }
+}
+
+// Attempt an Apple Music search as a fallback. Returns the shaped result
+// (also caching it) or null if Apple isn't configured or the search fails.
+async function tryAppleFallback(q, limit, cacheKey, now) {
+  if (!APPLE_MUSIC_ENABLED) return null;
+  try {
+    const shaped = await searchAppleMusic(q, limit);
+    cacheSearch(cacheKey, shaped, now);
+    console.log('search: served via Apple Music fallback');
+    return shaped;
+  } catch (e) {
+    console.error('apple fallback failed:', e.message);
+    return null;
+  }
+}
+function shapeResults(json) {
+  const items = json?.tracks?.items || [];
+  return {
+    source: 'spotify',
+    tracks: items.map(t => ({
+      id: t.id, uri: t.uri, title: t.name,
+      artist: (t.artists || []).map(a => a.name).join(', '),
+      album: t.album?.name || '',
+      art: t.album?.images?.slice(-1)[0]?.url || '',
+      durationMs: t.duration_ms, explicit: t.explicit,
+    })),
+    next: json?.tracks?.next || null,
+  };
+}
+
+/* ---------- helpers + static ---------- */
+function publicUser(u) {
+  const p = PLANS[u.plan];
+  // playlistExport = plan-based export eligibility (Pro and above). Apple Music
+  // export and the playlist tool use this. Spotify export is separate and
+  // comp-code-only (spotifyExport below).
+  const playlistExport = !!(p && p.spotifyExport);
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export, playlistExport, branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED };
+}
+// Shareable public demo — a clean URL for socials/marketing that drops
+// anyone straight into the live guest voting experience.
+app.get('/demo', (req, res) => res.redirect('/#vote/DEMO'));
+
+app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/healthz', (_req, res) => res.json({ ok: true, stripe: !!stripe }));
+
+/* ----------------------------------------------------------------
+   Startup mode.
+   - Normal server (VPS, Render, local): call app.listen().
+   - cPanel / Phusion Passenger: Passenger manages the port itself
+     and CRASHES if we call app.listen(), so we export the app and
+     let Passenger serve it. We detect Passenger via its env markers.
+---------------------------------------------------------------- */
+/* ----------------------------------------------------------------
+   PUBLIC DEMO EVENT
+   A permanent, shareable event at /#vote/DEMO so anyone (no login) can
+   try the guest experience: search Spotify for real, vote, and watch the
+   leaderboard move. It resets hourly back to a seeded state so it never
+   fills up with junk. Great for socials/marketing.
+---------------------------------------------------------------- */
+const DEMO_EVENT_ID = 'DEMO';
+const DEMO_SEED = [
+  { title: 'Dancing Queen', artist: 'ABBA', votes: 42 },
+  { title: 'Mr. Brightside', artist: 'The Killers', votes: 37 },
+  { title: 'Uptown Funk', artist: 'Mark Ronson ft. Bruno Mars', votes: 33 },
+  { title: 'Sweet Caroline', artist: 'Neil Diamond', votes: 29 },
+  { title: "Don't Stop Me Now", artist: 'Queen', votes: 24 },
+  { title: 'Blinding Lights', artist: 'The Weeknd', votes: 21 },
+  { title: 'September', artist: 'Earth, Wind & Fire', votes: 18 },
+  { title: 'I Wanna Dance with Somebody', artist: 'Whitney Houston', votes: 15 },
+];
+
+function buildDemoEvent() {
+  try {
+    const existing = db.getEvent(DEMO_EVENT_ID);
+    if (existing) db.deleteEvent && db.deleteEvent(DEMO_EVENT_ID);
+  } catch (_) {}
+  const ev = db.createEvent({
+    id: DEMO_EVENT_ID,
+    host_id: 'demo',
+    name: "Sam's 30th Birthday",
+    type: 'Birthday',
+    host: 'DJ Marco',
+    votes_per: 5,
+    deadline: null,        // never closes
+    event_date: null,
+    locked: false,
+    ask_name: false,
+    ask_nationality: false,
+    created_at: Date.now(),
+    demo: true,
+  });
+  // Seed the leaderboard (no Spotify URIs — guests add real ones by voting).
+  try {
+    const e = db.getEvent(DEMO_EVENT_ID);
+    if (e) {
+      e.tracks = {};
+      DEMO_SEED.forEach((s, i) => {
+        e.tracks['demoseed' + i] = {
+          id: 'demoseed' + i, uri: null, title: s.title, artist: s.artist,
+          art: '', votes: s.votes, played: 0, addedAt: Date.now() - (i * 1000), requesters: [],
+        };
+      });
+    }
+  } catch (_) {}
+}
+
+function ensureDemoEvent() {
+  if (!db.getEvent(DEMO_EVENT_ID)) buildDemoEvent();
+}
+
+// Reset hourly so the demo stays clean for the next visitor.
+ensureDemoEvent();
+setInterval(buildDemoEvent, 60 * 60 * 1000);
+
+const underPassenger = !!(process.env.PASSENGER_BASE_URI || process.env.PASSENGER_APP_ENV ||
+  (typeof PhusionPassenger !== 'undefined'));
+
+if (underPassenger) {
+  module.exports = app;
+} else {
+  app.listen(PORT, () => console.log(`\n  Spinlist running → ${BASE_URL}\n`));
+}
