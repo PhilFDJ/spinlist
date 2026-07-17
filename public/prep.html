@@ -811,6 +811,7 @@ function renderResults(){
         <span style="display:flex;gap:8px">
           ${missingCount?`<button class="btn ghost" title="Copy the ${missingCount} song${missingCount===1?'':'s'} you don't have, to search your music provider" onclick="event.stopPropagation();copyAllMissing('${b.id}',this)">📋 Copy ${missingCount} missing</button>`:''}
           ${libPathsAreRelative()?'':`<button class="btn ghost" onclick="event.stopPropagation();exportBlock('${b.id}')" ${found?'':'disabled'}>Export .m3u</button>`}
+          ${libPathsAreRelative()?'':`<button class="btn ghost" title="Download a Serato crate — drops straight into ~/Music/_Serato_/Subcrates, no Crate Converter needed" onclick="event.stopPropagation();exportCrate('${b.id}')" ${found?'':'disabled'}>⬇ Serato crate</button>`}
         </span>
       </div>
       <div class="body">${songHtml}</div>
@@ -898,6 +899,43 @@ function download(name,text){
   }
 }
 function safeName(s){ return (s||'block').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'-'); }
+
+// The matched, absolute file paths for a block — shared by the .m3u and the
+// Serato crate. Only absolute paths work in DJ software, so we require them.
+function pathsForBlock(b){
+  const paths=[];
+  (b.songs||[]).forEach(s=>{
+    if(isExcluded(s)) return;
+    const cf=chosenFor(s);
+    if(cf && cf.chosen.track.path && isAbsolutePath(cf.chosen.track.path)){
+      paths.push(cf.chosen.track.path);
+    }
+  });
+  return paths;
+}
+
+// Download a Serato crate for a block — built server-side, drops straight into
+// ~/Music/_Serato_/Subcrates (no Crate Converter step needed).
+async function exportCrate(id){
+  const b=(WED.blocks||[]).find(x=>x.id===id); if(!b)return;
+  const paths=pathsForBlock(b);
+  if(!paths.length){ showLibStatus('No matched files in this block to put in a crate.'); return; }
+  const crateName=safeName(WED.coupleNames||WED.name)+' - '+safeName(b.name);
+  try{
+    const r=await fetch('/api/prep/crate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:crateName,paths})});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||'Failed'); }
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=crateName+'.crate'; a.rel='noopener'; a.style.display='none';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ try{document.body.removeChild(a);}catch(_){} URL.revokeObjectURL(url); },4000);
+    showLibStatus('Crate downloaded. Quit Serato, move the .crate into ~/Music/_Serato_/Subcrates, then reopen Serato.');
+  }catch(e){
+    showLibStatus('Could not build the crate: '+e.message);
+  }
+}
+
 let PLAIN_M3U=false;   // toggled by the DJ if their software prefers paths-only
 function togglePlainM3U(cb){ PLAIN_M3U=!!cb.checked; }
 function exportBlock(id){

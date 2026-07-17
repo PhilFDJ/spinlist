@@ -2049,6 +2049,28 @@ app.delete('/api/prep/library', auth.requireAuth, requirePrep, (req, res) => {
   res.json({ ok: true });
 });
 
+/* Build a Serato .crate directly from the Prep-matched songs, so the DJ can drop
+   it into ~/Music/_Serato_/Subcrates without the Crate Converter step. The
+   browser has already matched each requested song to a library file (it holds
+   the library with real paths), so it sends the resolved paths and a crate name;
+   we return the binary. Only paths the DJ's own library actually contains are
+   included — a crate of missing files would just show red in Serato. */
+app.post('/api/prep/crate', auth.requireAuth, requirePrep, (req, res) => {
+  const b = req.body || {};
+  const name = (b.name || 'Spinlist').toString();
+  const paths = Array.isArray(b.paths)
+    ? b.paths.map(p => (p == null ? '' : String(p))).filter(p => p.trim()).slice(0, 5000)
+    : [];
+  if (!paths.length) return res.status(400).json({ error: 'No matched files to put in the crate.' });
+
+  const { buildCrate, crateFilename } = require('./lib/serato-crate');
+  const buf = buildCrate(paths);
+  const filename = crateFilename(name);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+  res.send(buf);
+});
+
 /* =========================================================
    RESEND EMAIL (subscriber connects their own Resend key)
    ========================================================= */
