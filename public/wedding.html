@@ -455,6 +455,7 @@ function renderSignup(code){
       <div class="field"><span>Email</span><input id="su-email" type="email" placeholder="you@example.com"></div>
       <div class="field"><span>Password (min 8 chars)</span><input id="su-pass" type="password" placeholder="••••••••"></div>
       <button class="btn btn-neon" style="width:100%;justify-content:center" onclick="doSignup()">Create account &amp; start ▸</button>
+      ${code?`<p class="muted" style="margin-top:12px;font-size:.82rem;text-align:center">💍 Both partners can sign up with this same code — you'll each get your own login.</p>`:''}
       <p class="muted" style="margin-top:12px;text-align:center">Already have an account? <a href="#" onclick="doShowLogin();return false">Log in</a></p>
       <div id="su-msg" class="muted" style="margin-top:10px;color:var(--coral)"></div>
     </div>`;

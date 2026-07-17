@@ -2137,6 +2137,7 @@ app.post('/api/weddings/:id/email-invite', auth.requireAuth, requireEmailTier, a
       <p>${djName} has invited you to choose your songs on Spinlist.</p>
       <p><a href="${link}" style="display:inline-block;background:#1b2440;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Open your wedding planner →</a></p>
       <p style="color:#555;font-size:14px">Or go to spinlist.co.uk/wedding.html and enter code <b>${escapeHtml(w.invite_code)}</b>.</p>
+      <p style="color:#555;font-size:14px;background:#f5f7fb;border-radius:8px;padding:10px 14px;margin-top:4px">💍 <b>Both of you can join.</b> Each partner can sign up with the same code for their own login — no need to share one account.</p>
       ${lockLine}
     </div>`;
   const out = await sendViaResend(cfg, { to, subject: 'Plan your wedding music with ' + (req.user.name || 'your DJ'), html, replyTo: req.user.email });
