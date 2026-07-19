@@ -275,13 +275,38 @@ function stopPreview(){
 // Walk the picked folder to the file at `path` and return a File.
 async function fileFromLibraryPath(path){
   if(!DIR_HANDLE||!path) return null;
+  // A handle restored from IndexedDB starts WITHOUT permission — the browser
+  // drops file access between sessions. Without asking, every read below throws
+  // and we'd silently fall back to streaming.
+  try{
+    if(DIR_HANDLE.queryPermission){
+      let perm=await DIR_HANDLE.queryPermission({mode:'read'});
+      if(perm!=='granted'&&DIR_HANDLE.requestPermission){
+        perm=await DIR_HANDLE.requestPermission({mode:'read'});
+      }
+      if(perm!=='granted') return null;
+    }
+  }catch(_){ /* older browsers: just try the read */ }
+
   const parts=path.split('/').filter(Boolean);
   let dir=DIR_HANDLE;
-  try{
-    for(let i=0;i<parts.length-1;i++) dir=await dir.getDirectoryHandle(parts[i]);
-    const fh=await dir.getFileHandle(parts[parts.length-1]);
-    return await fh.getFile();
-  }catch(_){ return null; }   // moved, renamed, or drive unplugged
+  // Try the path as-is (relative to the picked folder, which is how the browser
+  // scan stores it). If that fails, the library may have come from Music Manager
+  // with ABSOLUTE paths — retry from the picked folder's name onwards.
+  const attempts=[parts];
+  const rootIdx=parts.lastIndexOf(DIR_HANDLE.name);
+  if(rootIdx>=0 && rootIdx<parts.length-1) attempts.push(parts.slice(rootIdx+1));
+  else if(parts.length>1) attempts.push([parts[parts.length-1]]);   // last resort: just the filename
+
+  for(const segs of attempts){
+    try{
+      dir=DIR_HANDLE;
+      for(let i=0;i<segs.length-1;i++) dir=await dir.getDirectoryHandle(segs[i]);
+      const fh=await dir.getFileHandle(segs[segs.length-1]);
+      return await fh.getFile();
+    }catch(_){ /* try the next interpretation */ }
+  }
+  return null;   // moved, renamed, or drive unplugged
 }
 
 async function previewSong(key){
@@ -313,7 +338,13 @@ async function previewSong(key){
     }
     showLibStatus('That file could not be found — it may have moved, or the drive is disconnected.');
   }
-  // No local file (or no folder access) — fall back to the streaming version.
+  // No local file (or no folder access) — fall back to the streaming version,
+  // but say WHY, so it isn't a mystery when it doesn't play your file.
+  if(!DIR_HANDLE){
+    showLibStatus('Playing the streaming version — pick your music folder above to preview your own files.');
+  }else if(!path){
+    showLibStatus('Playing the streaming version — no file matched in your library yet.');
+  }
   const url=previewLink(req);
   if(url) window.open(url,'_blank','noopener');
   else showLibStatus('Nothing to preview for this song yet.');
