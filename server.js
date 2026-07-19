@@ -528,7 +528,7 @@ app.post('/api/events', auth.requireAuth, (req, res) => {
     name: (b.name || 'Untitled Event').toString().slice(0, 120),
     type: (b.type || 'Event').toString().slice(0, 40),
     host: (b.host || req.user.name || 'Your host').toString().slice(0, 80),
-    votes_per: Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999)),
+    votes_per: Math.max(1, Math.min(parseInt(b.votesPer, 10) || 3, 999)),
     deadline: b.deadline ? Number(b.deadline) : null,
     event_date: b.eventDate ? Number(b.eventDate) : null,
     locked: false,
@@ -750,7 +750,7 @@ app.post('/api/events/:id/update', auth.requireAuth, (req, res) => {
   if (b.name !== undefined) fields.name = (b.name || 'Untitled Event').toString().slice(0, 120);
   if (b.type !== undefined) fields.type = (b.type || 'Event').toString().slice(0, 40);
   if (b.host !== undefined) fields.host = (b.host || 'Your host').toString().slice(0, 80);
-  if (b.votesPer !== undefined) fields.votes_per = Math.max(1, Math.min(parseInt(b.votesPer, 10) || 5, 999));
+  if (b.votesPer !== undefined) fields.votes_per = Math.max(1, Math.min(parseInt(b.votesPer, 10) || 3, 999));
   if (b.deadline !== undefined) fields.deadline = b.deadline ? Number(b.deadline) : null;
   if (b.eventDate !== undefined) fields.event_date = b.eventDate ? Number(b.eventDate) : null;
   if (b.askName !== undefined) fields.ask_name = !!b.askName;
@@ -856,7 +856,7 @@ app.post('/api/events/:id/vote', (req, res) => {
   const updated = db.applyVotes(e.id, {
     add, remove, guest,
     guestId,
-    votesPer: e.votes_per || 5,
+    votesPer: e.votes_per || 3,
   });
   const rejected = updated._rejected || 0;
   const payload = { event: publicEvent(updated), myVotes: updated._myVotes || [] };
@@ -874,7 +874,7 @@ app.get('/api/events/:id/my-votes', (req, res) => {
   const e = db.getEvent(req.params.id);
   if (!e) return res.status(404).json({ error: 'Event not found.' });
   const guestId = (req.query.guestId || '').toString().slice(0, 64);
-  res.json({ myVotes: db.guestVotesFor(e.id, guestId), votesPer: e.votes_per || 5 });
+  res.json({ myVotes: db.guestVotesFor(e.id, guestId), votesPer: e.votes_per || 3 });
 });
 
 // Shape an event for public/guest consumption (full track list).
@@ -1178,7 +1178,7 @@ function publicWedding(w, viewerId) {
     liveBlockId: w.live_block_id || null,
     liveEventId: w.live_event_id || null,
     liveEventCode: w.live_event_id || null,   // event id doubles as the join code
-    liveVotesPer: liveEv ? liveEv.votes_per : 5,
+    liveVotesPer: liveEv ? liveEv.votes_per : 3,
     liveAskName: liveEv ? !!liveEv.ask_name : false,
     assignedDj: w.assigned_dj || null,
     dj: db.djProfileFor(w.host_id, w.assigned_dj),
@@ -1419,7 +1419,7 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
     name: (w.name || 'Wedding') + ' — Live Requests',
     type: 'Wedding',
     host: req.user.name || 'Your DJ',
-    votes_per: Math.max(1, Math.min(parseInt(bb.votesPer, 10) || 5, 999)),
+    votes_per: Math.max(1, Math.min(parseInt(bb.votesPer, 10) || 3, 999)),
     deadline: liveDeadline,
     event_date: w.wedding_date || null,
     locked: false,
@@ -1430,6 +1430,7 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
   // Assign the live event to whoever is running the wedding, so it shows for them too.
   if (w.assigned_dj) db.assignEventDj(id, w.assigned_dj);
   db.setWeddingLiveEvent(w.id, id);
+  logWedding(w, req.user, 'live', 'opened guest requests (shareable link created)');
   res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id), eventId: id });
 });
 
@@ -1448,6 +1449,9 @@ app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
     }
   }
   const updated = db.setWeddingLiveBlock(w.id, blockId);
+  logWedding(w, req.user, 'live', blockId
+    ? 'turned on live guest requests for “Play If Possible”'
+    : 'turned off live guest requests');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 

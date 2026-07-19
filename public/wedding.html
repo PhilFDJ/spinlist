@@ -1354,7 +1354,7 @@ async function openHistory(){
       if(r==='subdj')return '<span style="background:rgba(91,140,255,.16);color:var(--plum);font-size:.66rem;font-weight:800;padding:2px 7px;border-radius:100px;text-transform:uppercase;letter-spacing:.05em">Sub-DJ</span>';
       return '<span style="background:rgba(198,242,78,.14);color:var(--neon);font-size:.66rem;font-weight:800;padding:2px 7px;border-radius:100px;text-transform:uppercase;letter-spacing:.05em">DJ</span>';
     };
-    const icon=a=>a==='songs'?'🎵':a==='timeline'?'🕐':a==='answers'?'📋':'✎';
+    const icon=a=>a==='songs'?'🎵':a==='timeline'?'🕐':a==='answers'?'📋':a==='live'?'📣':a==='photo'?'📷':'✎';
     const when=t=>{
       const d0=new Date(t), now=Date.now(), diff=now-t;
       if(diff<60000)return 'just now';
@@ -1409,11 +1409,15 @@ function coupleMembersPanel(w){
 // A picture of the couple, shown beside the wedding title. Either partner or
 // the DJ can set it.
 function weddingPhotoEl(w, canEdit, forCouple){
-  const size=68;
+  const size=96;
   if(w.photo){
     return `<div style="position:relative;flex:none">
-      <img src="${esc(w.photo)}" alt="" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;border:2px solid var(--line);display:block">
-      ${canEdit?`<button title="Change photo" onclick="pickWeddingPhoto()" style="position:absolute;right:-4px;bottom:-4px;width:26px;height:26px;border-radius:50%;border:2px solid var(--paper);background:var(--surface);color:var(--ink);cursor:pointer;font-size:.72rem;line-height:1;padding:0">✎</button>`:''}
+      <img src="${esc(w.photo)}" alt="Wedding photo" onclick="viewWeddingPhoto()"
+        onmouseover="this.style.transform='scale(1.06)'" onmouseout="this.style.transform='scale(1)'"
+        title="Click to view full size"
+        style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;border:2.5px solid var(--line);
+               display:block;cursor:zoom-in;transition:transform .25s ease;box-shadow:0 8px 28px -10px rgba(0,0,0,.7)">
+      ${canEdit?`<button title="Change photo" onclick="event.stopPropagation();pickWeddingPhoto()" style="position:absolute;right:-2px;bottom:-2px;width:30px;height:30px;border-radius:50%;border:2px solid var(--paper);background:var(--surface);color:var(--ink);cursor:pointer;font-size:.78rem;line-height:1;padding:0">✎</button>`:''}
     </div>`;
   }
   if(!canEdit) return '';
@@ -1421,19 +1425,33 @@ function weddingPhotoEl(w, canEdit, forCouple){
   // spell it out for them. The DJ just gets the compact placeholder.
   if(forCouple){
     return `<button onclick="pickWeddingPhoto()"
-      style="display:flex;align-items:center;gap:11px;flex:none;border:1.5px dashed var(--line);background:transparent;
-             border-radius:14px;padding:10px 15px 10px 11px;cursor:pointer;font:inherit;text-align:left"
+      style="display:flex;align-items:center;gap:12px;flex:none;border:1.5px dashed var(--line);background:transparent;
+             border-radius:16px;padding:12px 18px 12px 13px;cursor:pointer;font:inherit;text-align:left"
       title="Add a photo of you both">
-      <span style="width:42px;height:42px;border-radius:50%;background:rgba(233,196,106,.15);color:#e9c46a;
-                   display:flex;align-items:center;justify-content:center;font-size:1.15rem;flex:none">📷</span>
+      <span style="width:52px;height:52px;border-radius:50%;background:rgba(233,196,106,.15);color:#e9c46a;
+                   display:flex;align-items:center;justify-content:center;font-size:1.35rem;flex:none">📷</span>
       <span>
-        <span style="display:block;color:var(--ink);font-weight:700;font-size:.9rem">Add your photo</span>
-        <span style="display:block;color:var(--muted);font-size:.78rem;margin-top:1px">A picture of you both</span>
+        <span style="display:block;color:var(--ink);font-weight:700;font-size:.95rem">Add your photo</span>
+        <span style="display:block;color:var(--muted);font-size:.8rem;margin-top:2px">A picture of you both</span>
       </span>
     </button>`;
   }
   return `<button onclick="pickWeddingPhoto()" title="Add a photo of the couple"
-    style="width:${size}px;height:${size}px;border-radius:50%;flex:none;border:2px dashed var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:1.3rem;line-height:1">＋</button>`;
+    style="width:${size}px;height:${size}px;border-radius:50%;flex:none;border:2px dashed var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:1.5rem;line-height:1">＋</button>`;
+}
+
+// Click the photo to see it full size.
+function viewWeddingPhoto(){
+  if(!CURRENT||!CURRENT.photo)return;
+  const box=document.createElement('div');
+  box.id='photo-lightbox';
+  box.style.cssText='position:fixed;inset:0;z-index:200;background:rgba(4,8,20,.88);display:flex;align-items:center;justify-content:center;padding:28px;cursor:zoom-out';
+  box.onclick=()=>box.remove();
+  box.innerHTML=`<img src="${esc(CURRENT.photo)}" alt="Wedding photo"
+    style="max-width:min(680px,92vw);max-height:88vh;border-radius:16px;box-shadow:0 40px 100px -20px rgba(0,0,0,.9)">`;
+  document.body.appendChild(box);
+  const esc2=e=>{ if(e.key==='Escape'){ box.remove(); document.removeEventListener('keydown',esc2); } };
+  document.addEventListener('keydown',esc2);
 }
 
 function pickWeddingPhoto(){
@@ -1520,7 +1538,7 @@ function liveEventControls(){
       <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         <label class="field" style="margin:0"><span style="font-size:.8rem">Votes per guest</span>
           <select id="live-votes" style="font:inherit;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">
-            <option value="1">1 vote</option><option value="3">3 votes</option><option value="5" selected>5 votes</option><option value="10">10 votes</option><option value="999">Unlimited</option>
+            <option value="1">1 vote</option><option value="3" selected>3 votes</option><option value="5">5 votes</option><option value="10">10 votes</option><option value="999">Unlimited</option>
           </select>
         </label>
         <label class="switch-row" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="live-askname"><span>Ask guests their name</span></label>
@@ -1546,7 +1564,7 @@ async function toggleLiveBlock(blockId){
 async function createLiveEvent(){
   const votesEl=document.getElementById('live-votes');
   const askEl=document.getElementById('live-askname');
-  const votesPer=votesEl?parseInt(votesEl.value,10)||5:5;
+  const votesPer=votesEl?parseInt(votesEl.value,10)||3:3;
   const askName=askEl?askEl.checked:false;
   try{
     const d=await api('/api/weddings/'+CURRENT.id+'/live-event',{method:'POST',body:JSON.stringify({votesPer,askName})});
