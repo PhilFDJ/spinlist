@@ -606,24 +606,25 @@ function mp4HasVideoTrack(buf){
   return false;
 }
 /* Parse MP4/M4A metadata atoms. Looks for the iTunes-style tags inside 'ilst':
-   ©nam = title, ©ART = artist, aART = album artist. Each holds a 'data' sub-atom
+   ©nam = title, ©ART = artist, ©dir = director. Each holds a 'data' sub-atom
    whose payload (after an 8-byte header) is the UTF-8 string. We scan the buffer
    for these 4-byte atom names directly — robust without walking the full box tree. */
 /* Parse MP4/M4A metadata atoms. Looks for the iTunes-style tags inside 'ilst':
-   ©nam = title, ©ART = artist, aART = album artist, ©dir = director.
+   ©nam = title, ©ART = artist, ©dir = director. Album artist is NOT read.
 
    We restrict the scan to the 'ilst' container rather than sweeping the whole
    buffer. Scanning raw bytes anywhere in the file can match those 4 characters
    inside some OTHER atom's payload — which is how an album name could end up
    in the artist field. */
 function parseMp4Tags(buf){
-  const res={title:'',artist:'',albumArtist:'',director:''};
+  const res={title:'',artist:'',director:''};
   const dec=new TextDecoder('utf-8');
   const u32=(o)=>((buf[o]<<24)|(buf[o+1]<<16)|(buf[o+2]<<8)|buf[o+3])>>>0;
   const A9='\u00A9';
-  // Note aART is captured separately: it's ALBUM artist, only a last-resort
-  // fallback for artist, never a first choice.
-  const wanted={ [A9+'nam']:'title', [A9+'ART']:'artist', 'aART':'albumArtist', [A9+'dir']:'director' };
+  // aART (album artist) is deliberately NOT read: on music videos it commonly
+  // holds a label, compilation or album name, which is never what we want to
+  // show. Only the real artist (©ART) and director (©dir) are used.
+  const wanted={ [A9+'nam']:'title', [A9+'ART']:'artist', [A9+'dir']:'director' };
 
   // Find the 'ilst' metadata container; only read tags inside it.
   let scanStart=0, scanEnd=buf.length;
@@ -660,9 +661,6 @@ function parseMp4Tags(buf){
       j++;
     }
   }
-  // Only fall back to album artist when there's no real artist tag.
-  if(!res.artist && res.albumArtist) res.artist=res.albumArtist;
-  delete res.albumArtist;
   return res;
 }
 function decodeFrame(bytes){
