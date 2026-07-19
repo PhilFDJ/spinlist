@@ -1546,10 +1546,19 @@ function liveEventControls(){
   }
   const link=location.origin+'/#vote/'+w.liveEventCode;
   return `<div style="background:var(--paper-2);border-radius:10px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-    <div><b>Guest requests are open</b><div class="muted" style="font-size:.84rem">${w.liveVotesPer>=999?'Unlimited votes':((w.liveVotesPer||5)+' votes')} per guest${w.liveAskName?' · asks for names':''}. Share so guests can request &amp; vote.</div></div>
+    <div><b>Guest requests are open</b><div class="muted" style="font-size:.84rem">${w.liveVotesPer>=999?'Unlimited votes':((w.liveVotesPer||3)+' vote'+((w.liveVotesPer||3)===1?'':'s'))} per guest${w.liveAskName?' · asks for names':''}. Share so guests can request &amp; vote.${(isDjView()&&ME&&ME.weddingVotesPer&&w.liveVotesPer!==ME.weddingVotesPer)?` <button onclick="applyWeddingVotes()" style="background:none;border:0;color:var(--neon);font:inherit;font-size:.84rem;text-decoration:underline;cursor:pointer;padding:0">Change to ${ME.weddingVotesPer>=999?'unlimited':ME.weddingVotesPer}</button>`:''}</div></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="code">${esc(w.liveEventCode)}</span><button class="btn btn-ghost btn-sm" onclick="copyLiveLink('${esc(link)}')">Copy link</button><button class="btn btn-ghost btn-sm" onclick="downloadLiveQR()">⬇ QR code</button></div>
   </div>`;
 }
+// DJ: push their current account setting onto an already-open requests event.
+async function applyWeddingVotes(){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/live-event/votes',{method:'POST'});
+    CURRENT=d.wedding;renderBlocks();
+    toast(d.votesPer>=999?'Guests now get unlimited votes':`Guests now get ${d.votesPer} vote${d.votesPer===1?'':'s'}`);
+  }catch(e){ toast(e.message); }
+}
+
 async function toggleLiveBlock(blockId){
   const turningOn=CURRENT.liveBlockId!==blockId;
   try{

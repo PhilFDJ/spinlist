@@ -738,7 +738,7 @@ async function openEditModal(id){
     document.getElementById('ed-name').value=ev.name||'';
     document.getElementById('ed-type').value=ev.type||'Other';
     document.getElementById('ed-host').value=ev.host||'';
-    document.getElementById('ed-votes').value=String(ev.votesPer||5);
+    document.getElementById('ed-votes').value=String(ev.votesPer||3);
     // datetime-local needs YYYY-MM-DDTHH:MM in local time
     if(ev.deadline){const d=new Date(ev.deadline);const pad=n=>String(n).padStart(2,'0');
       document.getElementById('ed-deadline').value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;}

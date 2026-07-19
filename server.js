@@ -2079,6 +2079,24 @@ app.post('/api/wedding-votes-per', auth.requireAuth, (req, res) => {
   res.json({ ok: true, weddingVotesPer: votes });
 });
 
+// DJ: re-apply their votes-per-guest setting to a wedding's already-open
+// requests event. Without this, an event opened before the setting changed is
+// stuck on its original number.
+app.post('/api/weddings/:id/live-event/votes', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Only the DJ can change this.' });
+  }
+  if (!w.live_event_id) return res.status(400).json({ error: 'Guest requests are not open yet.' });
+  const host = db.getUserById(w.host_id);
+  const n = host && parseInt(host.wedding_votes_per, 10);
+  const votes = (Number.isFinite(n) && n >= 1 && n <= 999) ? n : 3;
+  db.updateEvent(w.live_event_id, { votes_per: votes });
+  logWedding(w, req.user, 'live', `set guest votes to ${votes >= 999 ? 'unlimited' : votes}`);
+  res.json({ wedding: publicWedding(db.getWedding(w.id), req.user.id), votesPer: votes });
+});
+
 // Apple Music developer token for MusicKit JS (browser-side "Add to Apple
 // Music"). This is the DEVELOPER token only (signed from our .p8) — it does
 // NOT grant library access. The host still authorises in Apple's own popup,
