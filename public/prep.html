@@ -90,6 +90,7 @@
         <span class="stat" id="library-stat"></span>
       </div>
       <p class="note" id="lib-status" style="color:var(--neon)"></p>
+      <p class="note"><a href="#" onclick="reReadTags();return false" style="color:var(--neon)">Re-read tags from my files</a> <span style="color:var(--muted)">— use this if artist or title names look wrong</span></p>
       <p class="note"><a href="#" onclick="clearSavedLibrary();return false" style="color:var(--muted)">Forget my saved library</a></p>
     </div>
   </div>
@@ -142,6 +143,28 @@ async function loadSavedLibrary(){
 }
 function showLibStatus(msg){ const el=document.getElementById('lib-status'); if(el)el.textContent=msg; }
 function invalidateLibIndex(){ LIB_INDEXED=false; }
+/* Force a full re-read of every file's tags. A normal rescan is incremental —
+   it skips files whose size and modified-time are unchanged and reuses the
+   stored tags — so changes to HOW tags are read (watermark filtering, which
+   atoms are used) never reach an existing library without this. */
+async function reReadTags(){
+  if(!DIR_HANDLE){
+    showLibStatus('Pick your music folder first (or use the desktop app), then try again.');
+    return;
+  }
+  if(!confirm('Re-read the tags from every file in your library?\n\nThis takes longer than a normal rescan, but picks up corrected artist names and strips VJ watermarks.'))return;
+  FORCE_RETAG=true;
+  showLibStatus('Re-reading tags from every file — this may take a few minutes…');
+  try{
+    await scanFromHandle(DIR_HANDLE);
+    showLibStatus('✓ Tags re-read from your files.');
+  }catch(e){
+    showLibStatus('Could not re-read tags: '+(e&&e.message||'unknown error'));
+  }finally{
+    FORCE_RETAG=false;
+  }
+}
+
 async function clearSavedLibrary(){
   if(!confirm('Forget your saved library? You can set it up again with the Mac app or a library import.'))return;
   try{ await fetch('/api/prep/library',{method:'DELETE',credentials:'same-origin'}); }catch(e){}
@@ -432,6 +455,8 @@ function chosenFor(req){
 /* ---------- folder scan ---------- */
 /* ---- persist the chosen directory handle (Chrome/Edge) in IndexedDB ---- */
 let DIR_HANDLE=null;
+// Set for one scan to re-read every file's tags, ignoring the incremental cache.
+let FORCE_RETAG=false;
 function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('spinlist-prep',1); r.onupgradeneeded=()=>r.result.createObjectStore('kv'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
 async function idbSet(k,v){ try{ const db=await idb(); return await new Promise((res)=>{ const t=db.transaction('kv','readwrite'); t.objectStore('kv').put(v,k); t.oncomplete=()=>res(); t.onerror=()=>res(); }); }catch(e){} }
 async function idbGet(k){ try{ const db=await idb(); return await new Promise((res)=>{ const t=db.transaction('kv','readonly'); const rq=t.objectStore('kv').get(k); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>res(null); }); }catch(e){ return null; } }
@@ -515,8 +540,11 @@ async function scanFiles(files, fsapi){
       const blob = fsapi ? await f.handle.getFile() : f.file;   // cheap: gives us size + lastModified
       const prev=prevByPath[f.path];
       // INCREMENTAL: if we've seen this exact file before (same size + modified time), reuse its tags.
-      if(prev && prev.size===blob.size && prev.mtime===blob.lastModified){
-        newLib.push({title:prev.title,artist:prev.artist,director:prev.director||'',path:f.path,video:!!prev.video,size:blob.size,mtime:blob.lastModified});
+      // FORCE_RETAG skips this, so a change to how tags are read (new watermark
+      // filtering, different atom priority) can be applied to an existing library
+      // — otherwise unchanged files keep their old, stale values forever.
+      if(!FORCE_RETAG && prev && prev.size===blob.size && prev.mtime===blob.lastModified){
+        newLib.push({title:cleanTag(prev.title),artist:cleanTag(prev.artist),director:cleanTag(prev.director||''),path:f.path,video:!!prev.video,size:blob.size,mtime:blob.lastModified});
         reused++; done++; tick(); return;
       }
       const tags = await readTags(blob);      // only read tags for new/changed files
