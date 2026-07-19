@@ -1534,17 +1534,14 @@ function renderBlocks(){
 function liveEventControls(){
   const w=CURRENT;
   if(!w.liveEventId){
+    const dv=(ME&&ME.weddingVotesPer)||3;
+    const dvTxt=dv>=999?'unlimited votes':dv+' vote'+(dv===1?'':'s');
     return `<div style="background:var(--paper-2);border-radius:10px;padding:14px">
       <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-        <label class="field" style="margin:0"><span style="font-size:.8rem">Votes per guest</span>
-          <select id="live-votes" style="font:inherit;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)">
-            <option value="1">1 vote</option><option value="3" selected>3 votes</option><option value="5">5 votes</option><option value="10">10 votes</option><option value="999">Unlimited</option>
-          </select>
-        </label>
         <label class="switch-row" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="live-askname"><span>Ask guests their name</span></label>
       </div>
       <button class="btn btn-neon btn-sm" onclick="createLiveEvent()">▸ Open guest requests</button>
-      <p class="muted" style="font-size:.78rem;margin-top:8px">You'll get a link and QR code to share — send it out before the day and guests can request songs in advance.</p>
+      <p class="muted" style="font-size:.78rem;margin-top:8px">You'll get a link and QR code to share — send it out before the day and guests can request songs in advance. Each guest gets <b>${dvTxt}</b>${isDjView()?' (change this in your Account settings)':''}.</p>
     </div>`;
   }
   const link=location.origin+'/#vote/'+w.liveEventCode;
@@ -1562,12 +1559,12 @@ async function toggleLiveBlock(blockId){
   }catch(e){ toast(e.message); }
 }
 async function createLiveEvent(){
-  const votesEl=document.getElementById('live-votes');
+  // Votes per guest is the DJ's account setting now — the server applies it,
+  // so nothing is sent from here.
   const askEl=document.getElementById('live-askname');
-  const votesPer=votesEl?parseInt(votesEl.value,10)||3:3;
   const askName=askEl?askEl.checked:false;
   try{
-    const d=await api('/api/weddings/'+CURRENT.id+'/live-event',{method:'POST',body:JSON.stringify({votesPer,askName})});
+    const d=await api('/api/weddings/'+CURRENT.id+'/live-event',{method:'POST',body:JSON.stringify({askName})});
     CURRENT=d.wedding;renderBlocks();
     toast('Guest requests opened ✓');
   }catch(e){ toast(e.message); }

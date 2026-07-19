@@ -1419,7 +1419,13 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
     name: (w.name || 'Wedding') + ' — Live Requests',
     type: 'Wedding',
     host: req.user.name || 'Your DJ',
-    votes_per: Math.max(1, Math.min(parseInt(bb.votesPer, 10) || 3, 999)),
+    // Votes per guest comes from the WEDDING'S DJ, not from whoever clicked
+    // "open requests" — couples shouldn't be setting vote mechanics.
+    votes_per: (() => {
+      const host = db.getUserById(w.host_id);
+      const n = host && parseInt(host.wedding_votes_per, 10);
+      return (Number.isFinite(n) && n >= 1 && n <= 999) ? n : 3;
+    })(),
     deadline: liveDeadline,
     event_date: w.wedding_date || null,
     locked: false,
@@ -2061,6 +2067,16 @@ app.post('/api/search-source', auth.requireAuth, (req, res) => {
   if (source === 'apple' && !APPLE_MUSIC_ENABLED) source = 'spotify';
   db.setSearchSource(req.user.id, source);
   res.json({ ok: true, searchSource: source, appleAvailable: APPLE_MUSIC_ENABLED });
+});
+
+// The DJ sets how many votes guests get when wedding requests are opened.
+// Couples don't choose this — they just open requests and the DJ's setting applies.
+app.post('/api/wedding-votes-per', auth.requireAuth, (req, res) => {
+  const n = parseInt((req.body || {}).votesPer, 10);
+  const allowed = [1, 3, 5, 10, 999];
+  const votes = allowed.includes(n) ? n : 3;
+  db.setWeddingVotesPer(req.user.id, votes);
+  res.json({ ok: true, weddingVotesPer: votes });
 });
 
 // Apple Music developer token for MusicKit JS (browser-side "Add to Apple
@@ -3217,7 +3233,7 @@ function publicUser(u) {
   // export and the playlist tool use this. Spotify export is separate and
   // comp-code-only (spotifyExport below).
   const playlistExport = !!(p && p.spotifyExport);
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export, playlistExport, branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export, playlistExport, branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED, weddingVotesPer: u.wedding_votes_per || 3 };
 }
 // Shareable public demo — a clean URL for socials/marketing that drops
 // anyone straight into the live guest voting experience.

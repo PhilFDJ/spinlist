@@ -194,6 +194,21 @@ async function boot(){
       </div>
     ` : ''}
 
+    ${d.user.weddingPlanner ? `
+      <div class="panel">
+        <h2>Wedding guest requests</h2>
+        <p style="color:var(--muted);font-size:.9rem;margin:4px 0 14px">When a wedding&rsquo;s &ldquo;Play If Possible&rdquo; block is switched to live guest requests, this is how many songs each guest can vote for. Couples can open requests themselves, but you decide this.</p>
+        <label class="field" style="margin:0;max-width:220px">
+          <span style="font-size:.8rem">Votes per guest</span>
+          <select id="wed-votes" onchange="setWeddingVotes(this.value)" style="width:100%;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
+            ${[[1,'1 vote'],[3,'3 votes'],[5,'5 votes'],[10,'10 votes'],[999,'Unlimited']].map(([v,l])=>
+              `<option value="${v}" ${((d.user.weddingVotesPer||3)===v)?'selected':''}>${l}</option>`).join('')}
+          </select>
+        </label>
+        <p id="wedvotes-msg" style="font-size:.85rem;color:var(--muted);margin-top:8px;min-height:16px"></p>
+      </div>
+    ` : ''}
+
     ${d.user.emailInvites ? `
       <div class="panel">
         <h2>Email invites (Resend)</h2>
@@ -316,6 +331,20 @@ async function resetCal(){
     if(m2){m2.style.color='var(--neon-dim,#a8d63f)';m2.textContent='Link reset — re-subscribe with the new link.';}
   }catch(e){
     if(msg){msg.style.color='#ff6b5e';msg.textContent='Could not reset — please try again.';}
+  }
+}
+
+async function setWeddingVotes(v){
+  const msg=document.getElementById('wedvotes-msg');
+  try{
+    const r=await fetch('/api/wedding-votes-per',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({votesPer:parseInt(v,10)})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Could not save');
+    if(msg)msg.textContent=d.weddingVotesPer>=999
+      ? 'Saved — guests get unlimited votes at weddings.'
+      : `Saved — guests get ${d.weddingVotesPer} vote${d.weddingVotesPer===1?'':'s'} at weddings.`;
+  }catch(e){
+    if(msg)msg.textContent='Could not save that setting.';
   }
 }
 
