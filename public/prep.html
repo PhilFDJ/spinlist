@@ -219,7 +219,25 @@ function scoreFast(req, lib){
   const titleInWhole=jaccard(rt, lib._tok);
   titleScore=Math.max(titleScore, titleInWhole*0.9);
   let artistScore=lib._ta.size?jaccard(ra, lib._ta):jaccard(ra, lib._tok)*0.9;
-  return titleScore*0.7 + artistScore*0.3;
+
+  // The artist matters. Weighting it at only 0.3 meant a same-title-different-
+  // artist file (e.g. "Love Machine" by The Miracles when the couple asked for
+  // Girls Aloud) scored 0.7 on title alone and won — the artist was barely
+  // consulted.
+  const libHasArtist = !!(lib._ta && lib._ta.size);
+  // With no artist to compare (untagged file, or a video whose artist tag holds
+  // the director), fall back to title-led scoring rather than punishing it —
+  // otherwise perfectly good untagged files would drop out entirely.
+  if(!libHasArtist || lib.video){
+    return titleScore*0.85 + artistScore*0.15;
+  }
+  let score=titleScore*0.55 + artistScore*0.45;
+  // A confident title with a clearly WRONG artist is the classic wrong-song
+  // case. Push it down so the right artist wins.
+  if(req._ra && req._ra.size && artistScore < 0.15){
+    score *= 0.55;
+  }
+  return score;
 }
 // All library tracks scoring above threshold, best first — using the token index.
 function candidates(req){
