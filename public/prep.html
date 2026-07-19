@@ -256,12 +256,82 @@ function previewLink(req){
   const q=encodeURIComponent(((req.title||'')+' '+(req.artist||'')).trim());
   return q ? 'https://open.spotify.com/search/'+q : '';
 }
-function previewSong(key){
-  // Find the request by key across all blocks.
+
+/* ---- Local file preview ----
+   Playing YOUR file is far more useful than opening the streaming version: it
+   confirms the actual audio you'd play — right edit, right version, not a
+   corrupt or half-downloaded file. Needs the File System Access API handle
+   (Chrome/Edge). Where that isn't available we fall back to the streaming link. */
+let PREVIEW_AUDIO=null, PREVIEW_URL=null, PREVIEW_KEY=null;
+
+function stopPreview(){
+  if(PREVIEW_AUDIO){ try{PREVIEW_AUDIO.pause();}catch(_){} PREVIEW_AUDIO=null; }
+  if(PREVIEW_URL){ URL.revokeObjectURL(PREVIEW_URL); PREVIEW_URL=null; }
+  const old=PREVIEW_KEY; PREVIEW_KEY=null;
+  if(old){ const btn=document.querySelector(`[data-preview="${CSS.escape(old)}"]`); if(btn)btn.textContent='▶'; }
+  const bar=document.getElementById('preview-bar'); if(bar)bar.remove();
+}
+
+// Walk the picked folder to the file at `path` and return a File.
+async function fileFromLibraryPath(path){
+  if(!DIR_HANDLE||!path) return null;
+  const parts=path.split('/').filter(Boolean);
+  let dir=DIR_HANDLE;
+  try{
+    for(let i=0;i<parts.length-1;i++) dir=await dir.getDirectoryHandle(parts[i]);
+    const fh=await dir.getFileHandle(parts[parts.length-1]);
+    return await fh.getFile();
+  }catch(_){ return null; }   // moved, renamed, or drive unplugged
+}
+
+async function previewSong(key){
+  // Clicking the playing track stops it.
+  if(PREVIEW_KEY===key){ stopPreview(); return; }
+  stopPreview();
+
   let req=null;
   for(const b of (WED.blocks||[])){ for(const s of (b.songs||[])){ if(songKey(s)===key){ req=s; break; } } if(req)break; }
+  if(!req) return;
+
+  // Prefer the matched local file.
+  const cf=chosenFor(req);
+  const path=cf&&cf.chosen&&cf.chosen.track&&cf.chosen.track.path;
+  if(path&&DIR_HANDLE){
+    const file=await fileFromLibraryPath(path);
+    if(file){
+      PREVIEW_URL=URL.createObjectURL(file);
+      PREVIEW_AUDIO=new Audio(PREVIEW_URL);
+      PREVIEW_KEY=key;
+      const btn=document.querySelector(`[data-preview="${CSS.escape(key)}"]`);
+      if(btn)btn.textContent='⏸';
+      PREVIEW_AUDIO.onended=stopPreview;
+      PREVIEW_AUDIO.onerror=()=>{ showLibStatus('Could not play that file — it may be an unsupported format.'); stopPreview(); };
+      showPreviewBar(file.name);
+      try{ await PREVIEW_AUDIO.play(); }
+      catch(e){ showLibStatus('Could not play that file in the browser.'); stopPreview(); }
+      return;
+    }
+    showLibStatus('That file could not be found — it may have moved, or the drive is disconnected.');
+  }
+  // No local file (or no folder access) — fall back to the streaming version.
   const url=previewLink(req);
   if(url) window.open(url,'_blank','noopener');
+  else showLibStatus('Nothing to preview for this song yet.');
+}
+
+// A small bar showing what's playing, with a stop button.
+function showPreviewBar(name){
+  let bar=document.getElementById('preview-bar');
+  if(!bar){
+    bar=document.createElement('div');
+    bar.id='preview-bar';
+    bar.style.cssText='position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:150;'+
+      'background:var(--surface);border:1px solid var(--line);border-radius:100px;padding:9px 10px 9px 16px;'+
+      'display:flex;align-items:center;gap:12px;box-shadow:0 18px 50px -18px rgba(0,0,0,.8);max-width:min(520px,92vw)';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML=`<span style="font-size:.86rem;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🔊 ${escHtml(name)}</span>
+    <button onclick="stopPreview()" style="flex:none;background:var(--paper-2);border:1px solid var(--line);color:var(--ink);border-radius:100px;padding:5px 13px;font:inherit;font-size:.8rem;cursor:pointer">Stop</button>`;
 }
 
 // Given a request + its candidates, return the chosen one honouring a remembered pick.
@@ -792,7 +862,7 @@ function renderResults(){
       const excluded = EXCLUDED[key];
       // Build a preview link: open the requested song so the DJ can confirm the match.
       const previewBtn = previewLink(r.s)
-        ? `<button class="findbtn" title="Preview the requested song to check the match" onclick="previewSong('${esc(key)}')">▶</button>`
+        ? `<button class="findbtn" data-preview="${esc(key)}" title="Play your file to check the match (falls back to streaming if the file isn't available)" onclick="previewSong('${esc(key)}')">▶</button>`
         : '';
       return `<div class="song" style="${excluded?'opacity:.5':''}">
         <label class="incbox" title="Untick to leave this song out of the exported playlist" style="display:flex;align-items:center;cursor:pointer">
