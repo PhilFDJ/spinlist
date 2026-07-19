@@ -213,6 +213,30 @@ function buildLibIndex(){
   }
   LIB_INDEXED=true;
 }
+/* ---- VJ-pack watermark filtering ----
+   Some VJ editors stamp their branding into the metadata of video files. The
+   real track info is still there (usually in ©ART), but a watermark can sit in
+   Album Artist, Comment or the encoding-tool field and end up on screen.
+
+   This is DISPLAY-SIDE ONLY — nothing is written back to the files.
+
+   To add a new source, just put its token in this list. Matching is
+   case-insensitive and by substring, so "vjvidz" also catches "www.vjvidz.com".  */
+const WATERMARK_TOKENS=[
+  'vjvidz.com','vjvidz',
+  'smashvidz',
+  'czares/t','czares',
+  // Add new VJ-pack branding here as it turns up.
+];
+// True if a metadata value is really a watermark rather than track info.
+function isWatermark(v){
+  const s=(v==null?'':String(v)).toLowerCase().trim();
+  if(!s) return false;
+  return WATERMARK_TOKENS.some(tok=>s.includes(tok));
+}
+// Blank out a value that's actually a watermark.
+function cleanTag(v){ return isWatermark(v) ? '' : (v==null?'':String(v)); }
+
 function scoreFast(req, lib){
   const rt=req._rt, ra=req._ra;
   let titleScore=jaccard(rt, lib._tt);
@@ -510,7 +534,7 @@ async function scanFiles(files, fsapi){
       else { title=base.trim(); }
     }
     const isVid = extVid || (maybeMp4 && detectedVid) || detectedVid;
-    newLib.push({title,artist,director:_director||'',path:f.path,video:isVid,size:_size,mtime:_mtime});
+    newLib.push({title:cleanTag(title),artist:cleanTag(artist),director:cleanTag(_director||''),path:f.path,video:isVid,size:_size,mtime:_mtime});
     done++; tick();
   }
   function tick(){
@@ -679,6 +703,10 @@ function parseMp4Tags(buf){
       j++;
     }
   }
+  // Drop VJ-pack watermarks so they never reach the library or the display.
+  res.title=cleanTag(res.title);
+  res.artist=cleanTag(res.artist);
+  res.director=cleanTag(res.director);
   return res;
 }
 function decodeFrame(bytes){
@@ -730,7 +758,7 @@ function parseITunes(xml){
     }
     // Also treat obvious video file extensions / kinds as video.
     const isVideo = hasVideo || /video/i.test(kind) || /\.(m4v|mov|mp4|avi|mkv)(\?|$)/i.test(loc);
-    if(name){ out.push({title:name,artist,director,path:decodeURIComponent((loc||'').replace(/^file:\/\/+/,'/')), video:isVideo}); }
+    if(name){ out.push({title:cleanTag(name),artist:cleanTag(artist),director:cleanTag(director),path:decodeURIComponent((loc||'').replace(/^file:\/\/+/,'/')), video:isVideo}); }
   });
   return dedupe(out);
 }
@@ -738,7 +766,7 @@ function parseRekordbox(xml){
   const out=[]; const doc=new DOMParser().parseFromString(xml,'application/xml');
   doc.querySelectorAll('TRACK').forEach(t=>{
     const name=t.getAttribute('Name')||'', artist=t.getAttribute('Artist')||'', loc=t.getAttribute('Location')||'';
-    if(name)out.push({title:name,artist,path:decodeURIComponent(loc.replace(/^file:\/\/localhost/,'').replace(/^file:\/\/+/,'/'))});
+    if(name)out.push({title:cleanTag(name),artist:cleanTag(artist),path:decodeURIComponent(loc.replace(/^file:\/\/localhost/,'').replace(/^file:\/\/+/,'/'))});
   });
   return dedupe(out);
 }
@@ -1006,7 +1034,7 @@ document.getElementById('find-file-input').onchange=async(e)=>{
   if(!title){ const base=f.name.replace(/\.[^.]+$/,''); const parts=base.split(' - '); if(parts.length>=2){artist=artist||parts[0].trim();title=parts.slice(1).join(' - ').trim();} else title=base.trim(); }
   const path=f.webkitRelativePath||f.name;
   // Add to the in-memory library so it exports + shows immediately.
-  LIB.push({title,artist,director,video,path}); invalidateLibIndex();
+  LIB.push({title:cleanTag(title),artist:cleanTag(artist),director:cleanTag(director),video,path}); invalidateLibIndex();
   // Remember as a MANUAL pick keyed to the song (by filename, so a rescan re-finds it).
   await savePick(_findKey, {manual:true, title, artist, director, video, name:f.name, path});
   _findKey=null;
