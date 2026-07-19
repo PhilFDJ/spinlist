@@ -1000,6 +1000,8 @@ async function openWedding(id){
 let currentTab='music';
 function renderPlan(){
   const w=CURRENT, isDJ=isDjView(), canEdit=!DEMO&&(CURRENT.canEdit!==false)&&!PREVIEW_COUPLE;
+  // The photo isn't a song choice, so it stays editable even after the lock date.
+  const canPhoto=!DEMO&&!PREVIEW_COUPLE;
   const root=document.getElementById('root');
   const filled=w.blocks.reduce((s,b)=>s+b.songs.length,0);
   const cap=w.blocks.reduce((s,b)=>s+b.capacity,0);
@@ -1010,7 +1012,7 @@ function renderPlan(){
     </div>`:''}
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
       <div style="display:flex;align-items:center;gap:16px">
-        ${weddingPhotoEl(w, canEdit)}
+        ${weddingPhotoEl(w, canPhoto)}
         <div>
           <p class="eyebrow">${isDJ?'Wedding plan':'Your wedding songs'}</p>
           <h1 class="display" style="margin-top:6px">${esc(w.name)}</h1>
@@ -1443,7 +1445,7 @@ async function uploadWeddingPhoto(e){
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Upload failed');
     CURRENT=d.wedding;
-    renderWedding();
+    renderPlan();
     toast('Photo added ✓');
   }catch(err){
     toast(err.message||'Could not upload that photo');
@@ -1455,7 +1457,7 @@ async function removeWeddingPhoto(){
   try{
     const d=await api('/api/weddings/'+CURRENT.id+'/photo',{method:'DELETE'});
     CURRENT=d.wedding;
-    renderWedding();
+    renderPlan();
     toast('Photo removed');
   }catch(e){ toast(e.message); }
 }
