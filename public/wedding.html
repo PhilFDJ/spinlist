@@ -999,7 +999,7 @@ async function openWedding(id){
 }
 let currentTab='music';
 function renderPlan(){
-  const w=CURRENT, isDJ=isDjView();
+  const w=CURRENT, isDJ=isDjView(), canEdit=!DEMO&&(CURRENT.canEdit!==false)&&!PREVIEW_COUPLE;
   const root=document.getElementById('root');
   const filled=w.blocks.reduce((s,b)=>s+b.songs.length,0);
   const cap=w.blocks.reduce((s,b)=>s+b.capacity,0);
@@ -1009,10 +1009,13 @@ function renderPlan(){
       <button class="btn btn-neon btn-sm" onclick="toggleCouplePreview()">← Back to DJ view</button>
     </div>`:''}
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;flex-wrap:wrap;gap:12px">
-      <div>
-        <p class="eyebrow">${isDJ?'Wedding plan':'Your wedding songs'}</p>
-        <h1 class="display" style="margin-top:6px">${esc(w.name)}</h1>
-        <p class="muted">${w.weddingDate?('📅 '+fmtWeddingDate(w.weddingDate)+' · '):''}${esc(w.coupleNames||'')} · ${filled} of ${cap} songs chosen</p>
+      <div style="display:flex;align-items:center;gap:16px">
+        ${weddingPhotoEl(w, canEdit)}
+        <div>
+          <p class="eyebrow">${isDJ?'Wedding plan':'Your wedding songs'}</p>
+          <h1 class="display" style="margin-top:6px">${esc(w.name)}</h1>
+          <p class="muted">${w.weddingDate?('📅 '+fmtWeddingDate(w.weddingDate)+' · '):''}${esc(w.coupleNames||'')} · ${filled} of ${cap} songs chosen</p>
+        </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${DEMO?'<span class="pill">Demo · read-only</span>':isDJ?`<button class="btn btn-ghost btn-sm" onclick="renderDJHome()">← All weddings</button>
@@ -1399,6 +1402,64 @@ function coupleMembersPanel(w){
   </div>`;
 }
 
+/* ---------- Wedding photo ---------- */
+// A picture of the couple, shown beside the wedding title. Either partner or
+// the DJ can set it.
+function weddingPhotoEl(w, canEdit){
+  const size=68;
+  if(w.photo){
+    return `<div style="position:relative;flex:none">
+      <img src="${esc(w.photo)}" alt="" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;border:2px solid var(--line);display:block">
+      ${canEdit?`<button title="Change photo" onclick="pickWeddingPhoto()" style="position:absolute;right:-4px;bottom:-4px;width:26px;height:26px;border-radius:50%;border:2px solid var(--paper);background:var(--surface);color:var(--ink);cursor:pointer;font-size:.72rem;line-height:1;padding:0">✎</button>`:''}
+    </div>`;
+  }
+  if(!canEdit) return '';
+  return `<button onclick="pickWeddingPhoto()" title="Add a photo of the couple"
+    style="width:${size}px;height:${size}px;border-radius:50%;flex:none;border:2px dashed var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:1.3rem;line-height:1">＋</button>`;
+}
+
+function pickWeddingPhoto(){
+  let inp=document.getElementById('wed-photo-input');
+  if(!inp){
+    inp=document.createElement('input');
+    inp.type='file'; inp.id='wed-photo-input'; inp.accept='image/jpeg,image/png,image/webp';
+    inp.style.display='none';
+    inp.addEventListener('change',uploadWeddingPhoto);
+    document.body.appendChild(inp);
+  }
+  inp.value='';
+  inp.click();
+}
+
+async function uploadWeddingPhoto(e){
+  const file=e.target.files && e.target.files[0];
+  if(!file)return;
+  if(file.size>4*1024*1024){ toast('That photo is over 4MB — please pick a smaller one'); return; }
+  const fd=new FormData();
+  fd.append('photo',file);
+  toast('Uploading photo…');
+  try{
+    const r=await fetch('/api/weddings/'+CURRENT.id+'/photo',{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Upload failed');
+    CURRENT=d.wedding;
+    renderWedding();
+    toast('Photo added ✓');
+  }catch(err){
+    toast(err.message||'Could not upload that photo');
+  }
+}
+
+async function removeWeddingPhoto(){
+  if(!confirm('Remove this photo?'))return;
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/photo',{method:'DELETE'});
+    CURRENT=d.wedding;
+    renderWedding();
+    toast('Photo removed');
+  }catch(e){ toast(e.message); }
+}
+
 function renderBlocks(){
   const w=CURRENT, isDJ=isDjView(), canEdit=!DEMO&&(CURRENT.canEdit!==false)&&!PREVIEW_COUPLE;
   document.getElementById('blocks').innerHTML=w.blocks.map((b,i)=>{
@@ -1755,6 +1816,15 @@ async function exportWeddingPDF(){
       doc.setFont('helvetica','normal');
       doc.text(clip(t.label||'',70),M+34,y);
       y+=7;
+      // The couple's note for this moment — what the DJ actually needs on the night.
+      if((t.note||'').trim()){
+        doc.setFont('helvetica','italic');doc.setFontSize(9);
+        doc.setTextColor(90,96,112);
+        const lines=doc.splitTextToSize(t.note.trim(),PW-M*2-38);
+        lines.forEach(ln=>{ need(5); doc.text(ln,M+34,y); y+=4.6; });
+        y+=2;
+        doc.setTextColor(INK[0],INK[1],INK[2]);
+      }
     });
   }
 
@@ -1808,24 +1878,48 @@ function renderTimeline(){
   }
   if(DEMO){
     el.innerHTML=tl.map(t=>`
-      <div style="display:flex;gap:14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)">
-        <span style="width:90px;font-weight:700;color:var(--neon)">${esc(t.time)}</span>
-        <span>${esc(t.label)}</span>
+      <div style="padding:8px 0;border-bottom:1px solid var(--line)">
+        <div style="display:flex;gap:14px;align-items:baseline">
+          <span style="width:90px;font-weight:700;color:var(--neon)">${esc(t.time)}</span>
+          <span>${esc(t.label)}</span>
+        </div>
+        ${t.note?`<div class="muted" style="font-size:.84rem;margin:3px 0 0 104px;white-space:pre-wrap">${esc(t.note)}</div>`:''}
       </div>`).join('');
     return;
   }
   el.innerHTML=tl.map((t,i)=>`
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-      <input value="${esc(t.time)}" placeholder="7:30pm" oninput="CURRENT.timeline[${i}].time=this.value;queueTimelineSave()"
-        style="width:110px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
-      <input value="${esc(t.label)}" placeholder="e.g. First dance" oninput="CURRENT.timeline[${i}].label=this.value;queueTimelineSave()"
-        style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
-      <button class="iconbtn" title="Remove" onclick="removeTimelineRow(${i})">🗑</button>
+    <div style="margin-bottom:10px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input value="${esc(t.time)}" placeholder="7:30pm" oninput="CURRENT.timeline[${i}].time=this.value;queueTimelineSave()"
+          style="width:110px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
+        <input value="${esc(t.label)}" placeholder="e.g. First dance" oninput="CURRENT.timeline[${i}].label=this.value;queueTimelineSave()"
+          style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)">
+        <button class="iconbtn" title="${t.note?'Hide note':'Add a note'}" onclick="toggleTimelineNote(${i})">${t.note?'📝':'＋'}</button>
+        <button class="iconbtn" title="Remove" onclick="removeTimelineRow(${i})">🗑</button>
+      </div>
+      <div id="tl-note-${i}" style="${(t.note||TL_NOTE_OPEN.has(i))?'':'display:none;'}margin:6px 0 0 0">
+        <textarea rows="2" placeholder="Anything the DJ should know — e.g. lights down, speech first, announce us in…"
+          oninput="CURRENT.timeline[${i}].note=this.value;queueTimelineSave()"
+          style="width:100%;font:inherit;font-size:.88rem;padding:8px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink);resize:vertical">${esc(t.note||'')}</textarea>
+      </div>
     </div>`).join('');
+}
+// Which note boxes the user has opened (so an empty one stays visible while typing).
+const TL_NOTE_OPEN=new Set();
+function toggleTimelineNote(i){
+  const box=document.getElementById('tl-note-'+i);
+  if(!box)return;
+  const showing=box.style.display!=='none';
+  if(showing && !(CURRENT.timeline[i].note||'').trim()){
+    box.style.display='none'; TL_NOTE_OPEN.delete(i);
+  }else{
+    box.style.display=''; TL_NOTE_OPEN.add(i);
+    const ta=box.querySelector('textarea'); if(ta)ta.focus();
+  }
 }
 function addTimelineRow(){
   if(!CURRENT.timeline)CURRENT.timeline=[];
-  CURRENT.timeline.push({id:'tl'+Date.now(),time:'',label:''});
+  CURRENT.timeline.push({id:'tl'+Date.now(),time:'',label:'',note:''});
   renderTimeline();
   queueTimelineSave();
 }

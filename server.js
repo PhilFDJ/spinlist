@@ -72,6 +72,26 @@ const upload = multer({
   },
 });
 
+/* Wedding photo — the couple (or their DJ) can add a picture of themselves, so
+   the plan feels like theirs rather than a form. Same storage and limits as
+   logos; named distinctly so cleanup can tell them apart. */
+const weddingPhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (req, file, cb) => {
+      const ext = ALLOWED_LOGO_TYPES[file.mimetype] || 'bin';
+      cb(null, `wed_${(req.params.id || 'x').slice(0, 12)}_${crypto.randomBytes(6).toString('hex')}.${ext}`);
+    },
+  }),
+  limits: { fileSize: 4 * 1024 * 1024 },   // 4 MB — photos are bigger than logos
+  fileFilter: (_req, file, cb) => {
+    // SVG makes no sense for a photo, and carries script risk — images only.
+    if (file.mimetype === 'image/svg+xml') return cb(new Error('Please upload a photo (JPG, PNG or WebP).'));
+    if (ALLOWED_LOGO_TYPES[file.mimetype]) cb(null, true);
+    else cb(new Error('Unsupported file type. Use JPG, PNG or WebP.'));
+  },
+});
+
 /* ---------- Spotify config ---------- */
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
@@ -998,6 +1018,17 @@ function describeTimelineChange(before, after) {
   const added = (after || []).filter(t => !b.includes(key(t)));
   const removed = (before || []).filter(t => !a.includes(key(t)));
 
+  // Notes changing on an otherwise-unchanged row is its own kind of edit.
+  const noteEdits = [];
+  for (const t of (after || [])) {
+    const was = (before || []).find(x => key(x) === key(t));
+    if (was && (was.note || '') !== (t.note || '')) {
+      noteEdits.push((t.note || '').trim()
+        ? `updated the note on ${t.label || 'a moment'}`
+        : `cleared the note on ${t.label || 'a moment'}`);
+    }
+  }
+
   // A row whose label survives but whose time moved is a retime, not an add+remove.
   const retimed = [];
   const addedOnly = [];
@@ -1019,6 +1050,9 @@ function describeTimelineChange(before, after) {
   cap(addedOnly, 'added');
   cap(removedOnly, 'removed');
   cap(retimed, 'moved');
+  if (noteEdits.length) {
+    bits.push(`${noteEdits.slice(0, 2).join(', ')}${noteEdits.length > 2 ? ` +${noteEdits.length - 2} more` : ''}`);
+  }
   return bits.length ? bits.join('; ') : 'reordered the timeline';
 }
 
@@ -1133,11 +1167,12 @@ function publicWedding(w, viewerId) {
   const liveEv = w.live_event_id ? db.getEvent(w.live_event_id) : null;
   return {
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
+    photo: w.photo || null,
     inviteCode: (isDjSide ? w.invite_code : undefined),   // the DJ (or sub-DJ) sees the code
     coupleJoined: !!w.couple_id,
     coupleMembers: isDjSide ? db.weddingCoupleMembers(w) : undefined,   // DJ/sub-DJ sees who's joined
     blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
-    timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label })),
+    timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label, note: t.note || '' })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
     answers: w.answers || {},
     liveBlockId: w.live_block_id || null,
@@ -1236,6 +1271,7 @@ app.get('/api/weddings', auth.requireAuth, (req, res) => {
   }
   const list = source.map(w => ({
     id: w.id, name: w.name, coupleNames: w.couple_names, weddingDate: w.wedding_date,
+    photo: w.photo || null,
     inviteCode: w.invite_code, coupleJoined: !!w.couple_id,
     coupleMembers: db.weddingCoupleMembers(w),
     blockCount: (w.blocks || []).length,
@@ -1318,6 +1354,36 @@ app.get('/api/weddings/:id/history', auth.requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Only the DJ can see the history.' });
   }
   res.json({ history: db.getWeddingHistory(w.id) });
+});
+
+// Wedding photo — the couple or their DJ can set a picture of the couple.
+app.post('/api/weddings/:id/photo', auth.requireAuth, (req, res) => {
+  weddingPhotoUpload.single('photo')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Upload failed.' });
+    const w = db.getWedding(req.params.id);
+    if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+    if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id && !db.isCoupleMember(w, req.user.id)) {
+      if (req.file) safeUnlink('/uploads/' + req.file.filename);
+      return res.status(403).json({ error: 'Not your wedding plan.' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No photo received.' });
+    if (w.photo) safeUnlink(w.photo);            // replace the old one
+    const updated = db.updateWedding(w.id, { photo: '/uploads/' + req.file.filename });
+    logWedding(w, req.user, 'photo', 'added a photo');
+    res.json({ wedding: publicWedding(updated, req.user.id) });
+  });
+});
+
+app.delete('/api/weddings/:id/photo', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id && !db.isCoupleMember(w, req.user.id)) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
+  }
+  if (w.photo) safeUnlink(w.photo);
+  const updated = db.updateWedding(w.id, { photo: null });
+  logWedding(w, req.user, 'photo', 'removed the photo');
+  res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
 // DJ (or assigned sub-DJ): create (or return existing) a live-requests event linked to this wedding.
@@ -1557,6 +1623,7 @@ app.delete('/api/weddings/:id', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
   if (req.user.id !== w.host_id) return res.status(403).json({ error: 'Not your wedding plan.' });
+  if (w.photo) safeUnlink(w.photo);        // don't orphan the uploaded file
   db.deleteWedding(w.id);
   res.json({ ok: true });
 });
