@@ -1261,21 +1261,6 @@ app.get('/api/weddings/:id', auth.requireAuth, (req, res) => {
   if (!canAccessWedding(req.user, w)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
-  // TEMP DIAGNOSTIC — remove once the sub-DJ visibility is confirmed.
-  if (req.query.diag === '1') {
-    return res.json({
-      _diag: {
-        viewerId: req.user.id,
-        viewerRole: req.user.role,
-        wedding_host_id: w.host_id,
-        wedding_assigned_dj: w.assigned_dj,
-        assigned_matches_viewer: w.assigned_dj === req.user.id,
-        host_matches_viewer: w.host_id === req.user.id,
-        isDjSide: (w.host_id === req.user.id) || (w.assigned_dj === req.user.id),
-        invite_code_present: !!w.invite_code,
-      },
-    });
-  }
   res.json({ wedding: publicWedding(w, req.user.id) });
 });
 
@@ -1339,8 +1324,11 @@ app.get('/api/weddings/:id/history', auth.requireAuth, (req, res) => {
 app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
-    return res.status(403).json({ error: 'Only the DJ can do this.' });
+  // The couple can open guest requests too, so they can share the link with
+  // guests ahead of the day without waiting on their DJ. The event is still
+  // owned by the host account (see below), so the DJ keeps full control.
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id && !db.isCoupleMember(w, req.user.id)) {
+    return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   // If one already exists and is still valid, just return it.
   if (w.live_event_id && db.getEvent(w.live_event_id)) {
