@@ -372,7 +372,7 @@ function chosenFor(req){
   // Manual file pick: the DJ chose an exact file for this song.
   if(remembered && remembered.manual){
     let track=LIB.find(t=>t.path && t.path.split(/[\\/]/).pop()===remembered.name);
-    if(!track) track={title:remembered.title||req.title, artist:remembered.artist||'', path:remembered.path||remembered.name};
+    if(!track) track={title:remembered.title||req.title, artist:remembered.artist||'', director:remembered.director||'', video:!!remembered.video, path:remembered.path||remembered.name};
     return {chosen:{track,score:1}, cands:[], remembered:true, manual:true};
   }
   const cands=candidates(req);
@@ -861,7 +861,17 @@ function renderResults(){
       // Build a dropdown of all candidate versions if more than one.
       let picker;
       if(manual){
-        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${esc((chosen.track.artist?chosen.track.artist+' - ':'')+(chosen.track.title||''))}</span><span class="pill ok" style="margin-left:6px">chosen</span>`;
+        // Use the same naming as the other branches: videos show the director
+        // (falling back to artist), audio shows the artist. This branch used to
+        // show the raw artist field, so a manually-picked video displayed the
+        // wrong name.
+        const mfname=chosen.track.path?chosen.track.path.split(/[\\/]/).pop():'';
+        const mbase=mfname.replace(/\.[^.]+$/,'');
+        const mParts=mbase.split(' - ');
+        let mart=chosen.track.artist||''; if(!mart && mParts.length>=2)mart=mParts[0].trim(); if(!mart)mart=r.s.artist||'';
+        let mti=chosen.track.title||''; if(!mti)mti=(mParts.length>=2?mParts.slice(1).join(' - '):mbase).trim();
+        const mwho = chosen.track.video ? (chosen.track.director || mart) : mart;
+        picker=`<span class="found" title="${esc(chosen.track.path||'')}">${(chosen.track.video?'🎬 ':'')}${esc((mwho?mwho+' - ':'')+mti)}</span><span class="pill ok" style="margin-left:6px">chosen</span>`;
       }else if(cands.length>1){
         const opts=cands.map(c=>{
           const val=(c.track.title||'').trim().toLowerCase()+'|'+(c.track.artist||'').trim().toLowerCase();
@@ -947,14 +957,23 @@ let _findKey=null;
 function findFile(key){ _findKey=key; document.getElementById('find-file-input').value=''; document.getElementById('find-file-input').click(); }
 document.getElementById('find-file-input').onchange=async(e)=>{
   const f=e.target.files[0]; if(!f||!_findKey)return;
-  let title='',artist='';
-  try{ const tags=await readTags(f); title=(tags.title||'').trim(); artist=(tags.artist||'').trim(); }catch(_){}
+  let title='',artist='',director='',video=false;
+  // Read the director and video flag too — a manually-picked music video used to
+  // lose both, so it showed the plain artist and never got the 🎬 treatment.
+  try{
+    const tags=await readTags(f);
+    title=(tags.title||'').trim();
+    artist=(tags.artist||'').trim();
+    director=(tags.director||'').trim();
+    if(tags.video!==undefined) video=!!tags.video;
+  }catch(_){}
+  if(!video) video=/\.(mp4|m4v|mov|avi|mkv)$/i.test(f.name);   // fall back to the extension
   if(!title){ const base=f.name.replace(/\.[^.]+$/,''); const parts=base.split(' - '); if(parts.length>=2){artist=artist||parts[0].trim();title=parts.slice(1).join(' - ').trim();} else title=base.trim(); }
   const path=f.webkitRelativePath||f.name;
   // Add to the in-memory library so it exports + shows immediately.
-  LIB.push({title,artist,path}); invalidateLibIndex();
+  LIB.push({title,artist,director,video,path}); invalidateLibIndex();
   // Remember as a MANUAL pick keyed to the song (by filename, so a rescan re-finds it).
-  await savePick(_findKey, {manual:true, title, artist, name:f.name, path});
+  await savePick(_findKey, {manual:true, title, artist, director, video, name:f.name, path});
   _findKey=null;
   renderResults();
 };
