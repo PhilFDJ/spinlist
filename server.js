@@ -25,6 +25,29 @@ const auth = require('./lib/auth');
 const PLANS = require('./lib/plans');
 
 const app = express();
+
+/* Express 4 does NOT forward errors from `async` route handlers to the error
+   middleware — a rejected promise escapes to unhandledRejection and the request
+   hangs forever, leaving the user's browser spinning. This wraps the app's route
+   methods so async handlers report errors properly like sync ones do.
+   (Express 5 does this natively; this can be removed on upgrade.) */
+(function patchAsyncRoutes(a) {
+  for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
+    const orig = a[method].bind(a);
+    a[method] = (path, ...handlers) => orig(path, ...handlers.map(h => (
+      typeof h === 'function' && h.length < 4
+        ? function wrapped(req, res, next) {
+            try {
+              const out = h(req, res, next);
+              if (out && typeof out.catch === 'function') out.catch(next);
+              return out;
+            } catch (e) { next(e); }
+          }
+        : h
+    )));
+  }
+})(app);
+
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
@@ -3329,6 +3352,50 @@ function ensureDemoEvent() {
 // Reset hourly so the demo stays clean for the next visitor.
 ensureDemoEvent();
 setInterval(buildDemoEvent, 60 * 60 * 1000);
+
+/* ================================================================
+   CRASH GUARDS
+
+   Without these, one unexpected error anywhere — a malformed upload, an odd
+   response from Spotify, a bad request body — takes the whole site down. Render
+   would restart it, but that's real downtime, possibly mid-gig, with no record
+   of what happened.
+
+   Two layers:
+     1) An Express error handler, so a throw in a route fails THAT REQUEST only.
+     2) Process-level handlers, so anything that escapes is logged and the site
+        keeps serving rather than exiting.
+   ================================================================ */
+
+// 1) Express error handler. Must take four arguments and be registered LAST,
+//    after all routes — Express identifies error handlers by arity.
+app.use((err, req, res, _next) => {
+  const ref = crypto.randomBytes(4).toString('hex');   // so a report can be traced to a log line
+  console.error(`[error ${ref}] ${req.method} ${req.originalUrl}:`, err && (err.stack || err.message || err));
+
+  if (res.headersSent) return;                          // response already started — nothing safe to send
+
+  // Multer's own errors are user-fixable, so say something useful.
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ error: 'That file is too large.' });
+  }
+  const status = (err && err.status && err.status >= 400 && err.status < 600) ? err.status : 500;
+  // Don't leak internals to the browser; the reference ties it to the log.
+  res.status(status).json({
+    error: status === 500 ? 'Something went wrong on our end. Please try again.' : (err.message || 'Request failed.'),
+    ref,
+  });
+});
+
+// 2) Last line of defence. Log loudly, but keep serving — a single bad request
+//    shouldn't end the process. (A real crash-loop would still be visible in
+//    Render's logs and via the /api/health check.)
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason && (reason.stack || reason));
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && (err.stack || err));
+});
 
 const underPassenger = !!(process.env.PASSENGER_BASE_URI || process.env.PASSENGER_APP_ENV ||
   (typeof PhusionPassenger !== 'undefined'));
