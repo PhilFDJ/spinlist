@@ -609,25 +609,41 @@ function mp4HasVideoTrack(buf){
    ©nam = title, ©ART = artist, aART = album artist. Each holds a 'data' sub-atom
    whose payload (after an 8-byte header) is the UTF-8 string. We scan the buffer
    for these 4-byte atom names directly — robust without walking the full box tree. */
+/* Parse MP4/M4A metadata atoms. Looks for the iTunes-style tags inside 'ilst':
+   ©nam = title, ©ART = artist, aART = album artist, ©dir = director.
+
+   We restrict the scan to the 'ilst' container rather than sweeping the whole
+   buffer. Scanning raw bytes anywhere in the file can match those 4 characters
+   inside some OTHER atom's payload — which is how an album name could end up
+   in the artist field. */
 function parseMp4Tags(buf){
-  const res={title:'',artist:'',director:''};
+  const res={title:'',artist:'',albumArtist:'',director:''};
   const dec=new TextDecoder('utf-8');
   const u32=(o)=>((buf[o]<<24)|(buf[o+1]<<16)|(buf[o+2]<<8)|buf[o+3])>>>0;
-  // atom name bytes: © is 0xA9 in the classic MP4 metadata keys
   const A9='\u00A9';
-  const wanted={ [A9+'nam']:'title', [A9+'ART']:'artist', 'aART':'artist', [A9+'dir']:'director' };
+  // Note aART is captured separately: it's ALBUM artist, only a last-resort
+  // fallback for artist, never a first choice.
+  const wanted={ [A9+'nam']:'title', [A9+'ART']:'artist', 'aART':'albumArtist', [A9+'dir']:'director' };
+
+  // Find the 'ilst' metadata container; only read tags inside it.
+  let scanStart=0, scanEnd=buf.length;
   for(let i=0;i+8<buf.length;i++){
-    // read a 4-char atom name at i
+    if(buf[i]===0x69&&buf[i+1]===0x6c&&buf[i+2]===0x73&&buf[i+3]===0x74){   // "ilst"
+      const size=(i>=4)?u32(i-4):0;
+      scanStart=i+4;
+      if(size>8 && (i-4)+size<=buf.length) scanEnd=(i-4)+size;
+      break;
+    }
+  }
+
+  for(let i=scanStart;i+8<scanEnd;i++){
     const name=String.fromCharCode(buf[i],buf[i+1],buf[i+2],buf[i+3]);
     const which=wanted[name];
     if(!which) continue;
-    // the atom size is the 4 bytes BEFORE the name
     const atomStart=i-4;
     if(atomStart<0) continue;
     const atomSize=u32(atomStart);
     if(atomSize<16 || atomStart+atomSize>buf.length) continue;
-    // inside: expect a 'data' sub-atom: [size(4)][ 'data'(4) ][type(4)][locale(4)][payload...]
-    // find 'data' within this atom
     let j=i+4;
     const atomEnd=atomStart+atomSize;
     while(j+8<atomEnd){
@@ -644,6 +660,9 @@ function parseMp4Tags(buf){
       j++;
     }
   }
+  // Only fall back to album artist when there's no real artist tag.
+  if(!res.artist && res.albumArtist) res.artist=res.albumArtist;
+  delete res.albumArtist;
   return res;
 }
 function decodeFrame(bytes){
