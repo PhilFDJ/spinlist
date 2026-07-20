@@ -200,6 +200,16 @@ function norm(s){
     .replace(/\bfeat\.?\b|\bft\.?\b/g,' ')
     .replace(/&/g,' and ');
   s=stripEditTags(s);                                 // remove loose DJ-edit words too
+  /* Fold accents to plain letters BEFORE stripping non-ASCII, so "Beyoncé"
+     becomes "beyonce" rather than "beyonc". Previously the é was simply deleted,
+     so a request for "Beyoncé" could never match a file tagged "Beyonce" — the
+     artist scored 0 and the track was reported as not found. Same for Sigur Rós,
+     Mötley Crüe, Céline Dion and anything else with a diacritic. */
+  s=s.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  // A few letters that don't decompose into base + accent.
+  s=s.replace(/ø/g,'o').replace(/æ/g,'ae').replace(/œ/g,'oe')
+     .replace(/ð/g,'d').replace(/þ/g,'th').replace(/ß/g,'ss')
+     .replace(/ł/g,'l').replace(/đ/g,'d');
   return s.replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
 }
 function tokens(s){ return new Set(norm(s).split(' ').filter(Boolean)); }
