@@ -283,6 +283,25 @@ function scoreFast(req, lib){
   if(!libHasArtist){
     return titleScore*0.85 + artistScore*0.15;
   }
+
+  /* The TITLE is what identifies the song. Weighting the artist at 0.45 meant a
+     perfect artist match alone reached the 0.45 threshold with a title score of
+     zero — so a request for "Valerie" by Steve Winwood matched his "Higher
+     Love". A different song by the right artist is still the wrong song, so
+     require a real title overlap before anything can match.
+
+     "Contained" matters as much as the raw overlap: "Valerie" inside
+     "Valerie (Radio Edit)" is a strong match, but scores only 0.33 on jaccard
+     because the file's title has extra words. */
+  let titleContained = false;
+  if(rt && rt.size && lib._tt && lib._tt.size){
+    titleContained = true;
+    for(const w of rt){ if(!lib._tt.has(w)){ titleContained = false; break; } }
+  }
+  if(!titleContained && titleScore < 0.34){
+    return 0;
+  }
+  if(titleContained) titleScore = Math.max(titleScore, 0.85);
   let score=titleScore*0.55 + artistScore*0.45;
   // A confident title with a clearly WRONG artist is the classic wrong-song
   // case. Push it down so the right artist wins.
