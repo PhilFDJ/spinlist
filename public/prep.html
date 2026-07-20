@@ -38,7 +38,7 @@
   .song .dot.ok{background:var(--ok)} .song .dot.miss{background:var(--miss)}
   .song .req{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .song .req b{color:#fff;font-weight:600}
-  .song .found{font-size:.8rem;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .song .found{font-size:.8rem;color:var(--muted);max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pill{font-size:.72rem;font-weight:800;padding:2px 8px;border-radius:20px}
   .pill.ok{background:rgba(57,217,138,.15);color:var(--ok)}
   .pill.miss{background:rgba(255,107,94,.15);color:var(--miss)}
@@ -49,7 +49,7 @@
   .bar{height:6px;background:var(--paper);border-radius:6px;overflow:hidden;margin-top:6px}
   .bar > i{display:block;height:100%;background:var(--neon)}
   .pickwrap{display:flex;align-items:center;gap:4px;min-width:0;justify-content:flex-end}
-  .verpick{min-width:0;width:auto;max-width:360px;flex:0 1 auto;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:.82rem}
+  .verpick{min-width:0;width:auto;max-width:620px;flex:0 1 auto;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:.82rem}
   @media(max-width:560px){ .verpick{max-width:240px} .song .found{max-width:120px} }
   .findbtn{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:4px 8px;font:inherit;font-size:.78rem;cursor:pointer;white-space:nowrap;flex-shrink:0}
   .findbtn:hover{color:var(--ink);border-color:var(--plum)}
@@ -1092,7 +1092,11 @@ function renderResults(){
           // Videos: "director - title" (fall back to artist if no director). Audio: "artist - title".
           let who = c.track.video ? (c.track.director || art) : art;
           const prefix = c.track.video ? '🎬 ' : '';
-          let label = prefix + short((who?who+' - ':'')+ti, 54);
+          // Native <option> elements can't be truncated with CSS, so this has to
+          // be a character limit. 54 was set when the page was 900px wide and cut
+          // real filenames short ("...(Clean WeMix Intro)"); 110 comfortably fits
+          // a long VJ-pack name at the current width.
+          let label = prefix + short((who?who+' - ':'')+ti, 110);
           const sel=(c===chosen)?'selected':'';
           return `<option value="${esc(val)}" ${sel}>${esc(label)}</option>`;
         }).join('');
