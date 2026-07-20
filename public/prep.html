@@ -286,6 +286,19 @@ function scoreFast(req, lib){
   titleScore=Math.max(titleScore, titleInWhole*0.9);
   let artistScore=lib._ta.size?jaccard(ra, lib._ta):jaccard(ra, lib._tok)*0.9;
 
+  /* Jaccard punishes long credit lists. A request for "Music Sounds Better With
+     You" by "Stardust, Benjamin Diamond, Alan Braxe, Thomas Bangalter" against a
+     file simply tagged "Stardust" scores 1/7 = 0.14 — below the wrong-artist
+     threshold — so a correctly-tagged file was filtered out. If either artist is
+     wholly contained in the other, that's a genuine match, not a weak one. */
+  if(lib._ta && lib._ta.size && ra && ra.size){
+    const smaller = ra.size <= lib._ta.size ? ra : lib._ta;
+    const larger  = ra.size <= lib._ta.size ? lib._ta : ra;
+    let allIn = true;
+    for(const w of smaller){ if(!larger.has(w)){ allIn = false; break; } }
+    if(allIn) artistScore = Math.max(artistScore, 0.9);
+  }
+
   // The artist matters. Weighting it at only 0.3 meant a same-title-different-
   // artist file (e.g. "Love Machine" by The Miracles when the couple asked for
   // Girls Aloud) scored 0.7 on title alone and won — the artist was barely
