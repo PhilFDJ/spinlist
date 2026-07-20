@@ -840,8 +840,9 @@ function dedupe(list){ const seen=new Set(); return list.filter(t=>{const k=norm
 const MUSIC_STORES=[
   { name:'WeMix',        url:'https://app.wemix.eu/?s={q}&qType=qSearch&Search=', video:true, plus:true },
   { name:'Beatport',     url:'https://www.beatport.com/search?q={q}' },
-  { name:'Juno',         url:'https://www.junodownload.com/search/?q%5Ball%5D%5B%5D={q}' },
+  { name:'Traxsource',   url:'https://www.traxsource.com/search?term={q}' },
   { name:'Bandcamp',     url:'https://bandcamp.com/search?q={q}' },
+  { name:'Volumo',       url:'https://volumo.com/search?q={q}' },
   { name:'Amazon MP3',   url:'https://www.amazon.co.uk/s?k={q}&i=digital-music' },
   { name:'7digital',     url:'https://uk.7digital.com/search?q={q}' },
 ];
