@@ -210,7 +210,16 @@ function norm(s){
   s=s.replace(/ø/g,'o').replace(/æ/g,'ae').replace(/œ/g,'oe')
      .replace(/ð/g,'d').replace(/þ/g,'th').replace(/ß/g,'ss')
      .replace(/ł/g,'l').replace(/đ/g,'d');
-  return s.replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+  /* Collapse dotted acronyms BEFORE punctuation is turned into spaces:
+     "Y.M.C.A." would otherwise become four separate tokens (y, m, c, a) which
+     share nothing with a request for "YMCA", so a track you own reads as not
+     found. Also handles D.I.S.C.O., R.E.M., E.T.A. and so on. */
+  s=s.replace(/\b(?:[a-z]\.){2,}[a-z]?\b/g, m=>m.replace(/\./g,''));
+  s=s.replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+  // Same problem when a tagger uses spaces instead of dots ("Y M C A"): join
+  // runs of 2+ single letters back into one word so they match "YMCA".
+  s=s.replace(/\b(?:[a-z] ){1,}[a-z]\b/g, m=>m.replace(/ /g,''));
+  return s;
 }
 function tokens(s){ return new Set(norm(s).split(' ').filter(Boolean)); }
 function jaccard(a,b){ if(!a.size||!b.size)return 0; let i=0; a.forEach(x=>{if(b.has(x))i++;}); return i/(a.size+b.size-i); }
