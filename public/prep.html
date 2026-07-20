@@ -827,14 +827,23 @@ function dedupe(list){ const seen=new Set(); return list.filter(t=>{const k=norm
    To add a partner (or a referral/affiliate parameter), add a line here —
    e.g. url:'https://partner.com/search?q={q}&ref=spinlist'. Set `video:true`
    for video-only sources so they're only offered for music videos. */
+/* Where to buy a track you don't have.
+   These are DOWNLOAD stores — places that sell you an actual file. Streaming
+   services (Apple Music, Amazon Music, YouTube) are deliberately excluded:
+   you can't put a stream in a crate, so they're no use when you're trying to
+   fill a gap in your library.
+
+   To add a partner, copy a line below. Include a referral parameter if you
+   have one, e.g. url:'https://partner.com/search?q={q}&ref=spinlist'.
+   Set `video:true` for video sources (shown first), and `plus:true` if the
+   site wants + rather than %20 for spaces. */
 const MUSIC_STORES=[
-  { name:'iTunes',      url:'https://music.apple.com/gb/search?term={q}' },
-  { name:'Beatport',    url:'https://www.beatport.com/search?q={q}' },
-  { name:'Bandcamp',    url:'https://bandcamp.com/search?q={q}' },
-  { name:'Juno',        url:'https://www.junodownload.com/search/?q%5Ball%5D%5B%5D={q}' },
-  { name:'Amazon',      url:'https://www.amazon.co.uk/s?k={q}+mp3' },
-  { name:'WeMix',       url:'https://app.wemix.eu/?s={q}&qType=qSearch&Search=', video:true, plus:true },
-  { name:'YouTube',     url:'https://www.youtube.com/results?search_query={q}' },
+  { name:'WeMix',        url:'https://app.wemix.eu/?s={q}&qType=qSearch&Search=', video:true, plus:true },
+  { name:'Beatport',     url:'https://www.beatport.com/search?q={q}' },
+  { name:'Juno',         url:'https://www.junodownload.com/search/?q%5Ball%5D%5B%5D={q}' },
+  { name:'Bandcamp',     url:'https://bandcamp.com/search?q={q}' },
+  { name:'Amazon MP3',   url:'https://www.amazon.co.uk/s?k={q}&i=digital-music' },
+  { name:'7digital',     url:'https://uk.7digital.com/search?q={q}' },
 ];
 
 function buyTrack(key, btn){
