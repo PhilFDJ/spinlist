@@ -272,10 +272,15 @@ function scoreFast(req, lib){
   // Girls Aloud) scored 0.7 on title alone and won — the artist was barely
   // consulted.
   const libHasArtist = !!(lib._ta && lib._ta.size);
-  // With no artist to compare (untagged file, or a video whose artist tag holds
-  // the director), fall back to title-led scoring rather than punishing it —
-  // otherwise perfectly good untagged files would drop out entirely.
-  if(!libHasArtist || lib.video){
+  /* Fall back to title-led scoring only when there is genuinely nothing to
+     compare the artist against — an untagged file, or a video that has a
+     director but NO artist (so its "artist" is really the director).
+
+     This deliberately does NOT exempt every video. Exempting all of them meant
+     a video with a plainly wrong artist ("Love Machine" by The Miracles when
+     the couple asked for Girls Aloud) scored on title alone and won. If a file
+     has a real artist tag, we compare it — video or not. */
+  if(!libHasArtist){
     return titleScore*0.85 + artistScore*0.15;
   }
   let score=titleScore*0.55 + artistScore*0.45;
