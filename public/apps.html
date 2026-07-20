@@ -120,13 +120,23 @@
 
 <script>
   // ===================================================================
-  //  Download links — paste new release URLs here when you rebuild.
+  //  Download links.
+  //
+  //  These point at a SPECIFIC release so the filename matches what the build
+  //  produced. When you cut a new release, update the version in one place —
+  //  the MM/GW/CC constants below — rather than editing each URL.
+  //
   //  Leave a URL blank ('') to show "coming soon" for that download.
+  const MM_VER = '1.6.0';          // Music Manager   (tag: v1.6)
+  const MM_TAG = 'v1.6';
+  const GW_VER = '1.2.0';          // Gig Window      (tag: v1.2.0)
+  const GW_TAG = 'v1.2.0';
+
   const APPS = {
-    mmMac: 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.4.0/Spinlist.Music.Manager-1.4.0-universal.dmg',
-    mmWin: 'https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/v1.4.0/Spinlist.Music.Manager.Setup.1.4.0.exe',
-    gwMac: 'https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/v1.2.0/Spinlist.Gig.Window-1.2.0-universal.dmg',   // Gig Window Mac
-    gwWin: 'https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/v1.2.0/Spinlist.Gig.Window.Setup.1.2.0.exe',
+    mmMac: `https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/${MM_TAG}/Spinlist.Music.Manager-${MM_VER}-universal.dmg`,
+    mmWin: `https://github.com/PhilFDJ/Spinlist-Music-Manager/releases/download/${MM_TAG}/Spinlist.Music.Manager.Setup.${MM_VER}.exe`,
+    gwMac: `https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/${GW_TAG}/Spinlist.Gig.Window-${GW_VER}-universal.dmg`,
+    gwWin: `https://github.com/PhilFDJ/Spindisc-Gig-Window/releases/download/${GW_TAG}/Spinlist.Gig.Window.Setup.${GW_VER}.exe`,
     ccMac: 'https://github.com/PhilFDJ/Spinlist-Crate-Converter/releases/download/v1.0/Spinlist.Crate.Converter.dmg',   // Crate Converter (Mac only)
   };
   // ===================================================================
@@ -141,8 +151,8 @@
   wire('cc-mac', APPS.ccMac);
   const macNote = 'Mac: open the .dmg and drag the app into your Applications folder, then open it — no security warning.';
   const winNote = 'Windows: run the installer; if a "protected your PC" notice appears, click More info → Run anyway.';
-  document.getElementById('mm-note').textContent = macNote + '  ' + winNote;
-  document.getElementById('gw-note').textContent = macNote + '  ' + winNote;
+  document.getElementById('mm-note').textContent = 'Version ' + MM_VER + '. ' + macNote + '  ' + winNote;
+  document.getElementById('gw-note').textContent = 'Version ' + GW_VER + '. ' + macNote + '  ' + winNote;
 </script>
 <script src="/js/track.js"></script>
 </body>
