@@ -839,20 +839,22 @@ const MUSIC_STORES=[
 
 function buyTrack(key, btn){
   closeBuyMenu();
-  let req=null, isVideo=false;
+  let req=null;
   for(const b of (WED.blocks||[])){
     for(const s of (b.songs||[])){ if(songKey(s)===key){ req=s; break; } }
     if(req)break;
   }
   if(!req)return;
   // Videos get the video-capable sources too; audio requests skip those.
-  const cf=chosenFor(req);
-  isVideo=!!(cf&&cf.chosen&&cf.chosen.track&&cf.chosen.track.video);
   const q=encodeURIComponent(((req.artist||'')+' '+(req.title||'')).trim());
 
-  // Video-only sources (like WeMix) are offered when the request is a music
-  // video; audio-only requests don't need them.
-  const stores=MUSIC_STORES.filter(s=>!s.video||isVideo);
+  // Show every source, video ones included. The old code only offered video
+  // stores when the MATCHED file was a video — but you only press "Get" for a
+  // song you DON'T have, so there's no match to inspect and video sources could
+  // never appear. Video DJs want them regardless, and an audio DJ can simply
+  // ignore a source they don't use.
+  // Video sources first, since a video DJ reaches for those first.
+  const stores=MUSIC_STORES.slice().sort((a,b)=>(b.video?1:0)-(a.video?1:0));
   const menu=document.createElement('div');
   menu.id='buy-menu';
   menu.innerHTML=`
