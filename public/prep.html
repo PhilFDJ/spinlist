@@ -819,6 +819,71 @@ function dedupe(list){ const seen=new Set(); return list.filter(t=>{const k=norm
 
 // Copy a single missing song's title + artist so the DJ can paste it into
 // their music provider to find and buy/download it.
+/* ---- "Get this track" ----
+   Prep knows exactly which songs the DJ doesn't own, which is the moment they'd
+   want to buy one. Each store just needs a search URL; {q} is replaced with the
+   "artist title" search text.
+
+   To add a partner (or a referral/affiliate parameter), add a line here —
+   e.g. url:'https://partner.com/search?q={q}&ref=spinlist'. Set `video:true`
+   for video-only sources so they're only offered for music videos. */
+const MUSIC_STORES=[
+  { name:'iTunes',      url:'https://music.apple.com/gb/search?term={q}' },
+  { name:'Beatport',    url:'https://www.beatport.com/search?q={q}' },
+  { name:'Bandcamp',    url:'https://bandcamp.com/search?q={q}' },
+  { name:'Juno',        url:'https://www.junodownload.com/search/?q%5Ball%5D%5B%5D={q}' },
+  { name:'Amazon',      url:'https://www.amazon.co.uk/s?k={q}+mp3' },
+  { name:'WeMix',       url:'https://www.wemix.eu/search?q={q}', video:true },
+  { name:'YouTube',     url:'https://www.youtube.com/results?search_query={q}' },
+];
+
+function buyTrack(key, btn){
+  closeBuyMenu();
+  let req=null, isVideo=false;
+  for(const b of (WED.blocks||[])){
+    for(const s of (b.songs||[])){ if(songKey(s)===key){ req=s; break; } }
+    if(req)break;
+  }
+  if(!req)return;
+  // Videos get the video-capable sources too; audio requests skip those.
+  const cf=chosenFor(req);
+  isVideo=!!(cf&&cf.chosen&&cf.chosen.track&&cf.chosen.track.video);
+  const q=encodeURIComponent(((req.artist||'')+' '+(req.title||'')).trim());
+
+  // Video-only sources (like WeMix) are offered when the request is a music
+  // video; audio-only requests don't need them.
+  const stores=MUSIC_STORES.filter(s=>!s.video||isVideo);
+  const menu=document.createElement('div');
+  menu.id='buy-menu';
+  menu.innerHTML=`
+    <div style="position:fixed;inset:0;z-index:160" onclick="closeBuyMenu()"></div>
+    <div style="position:absolute;z-index:161;background:var(--card,#141c33);border:1px solid var(--line);border-radius:12px;
+                padding:6px;min-width:190px;box-shadow:0 18px 50px -18px rgba(0,0,0,.85)">
+      <div style="font-size:.72rem;color:var(--muted);padding:6px 10px 4px">Find “${escHtml(((req.title||'')).slice(0,28))}”</div>
+      ${stores.map(s=>`<a href="${s.url.replace('{q}',q)}" target="_blank" rel="noopener"
+          onclick="closeBuyMenu()"
+          style="display:block;padding:8px 10px;border-radius:8px;color:var(--ink);text-decoration:none;font-size:.88rem">${escHtml(s.name)}</a>`).join('')}
+    </div>`;
+  document.body.appendChild(menu);
+  // Position under the button.
+  const panel=menu.lastElementChild;
+  const r=btn.getBoundingClientRect();
+  panel.style.top=(window.scrollY+r.bottom+6)+'px';
+  panel.style.left=Math.min(window.scrollX+r.left, window.scrollX+document.documentElement.clientWidth-210)+'px';
+  // Hover highlight
+  panel.querySelectorAll('a').forEach(a=>{
+    a.onmouseover=()=>a.style.background='rgba(255,255,255,.07)';
+    a.onmouseout=()=>a.style.background='transparent';
+  });
+  document.addEventListener('keydown',buyEsc);
+}
+function closeBuyMenu(){
+  const m=document.getElementById('buy-menu');
+  if(m)m.remove();
+  document.removeEventListener('keydown',buyEsc);
+}
+function buyEsc(e){ if(e.key==='Escape')closeBuyMenu(); }
+
 function copySong(btn, text){
   const done=()=>{ if(btn){ const o=btn.innerHTML; btn.innerHTML='✓ Copied'; setTimeout(()=>{btn.innerHTML=o;},1200); } };
   if(navigator.clipboard && navigator.clipboard.writeText){
@@ -944,7 +1009,7 @@ function renderResults(){
           <span></span>
           <span class="dot miss"></span>
           <span class="req"><b>${esc(r.s.title||'')}</b>${r.s.artist?' · '+esc(r.s.artist):''}</span>
-          <span class="pickwrap"><span class="pill miss">not found</span><button class="findbtn" title="Copy title &amp; artist to search your music provider" onclick="copySong(this,'${esc(copyText.replace(/'/g,"\\'"))}')">📋 Copy</button><button class="findbtn" onclick="findFile('${esc(key)}')">📂 Find file</button></span>
+          <span class="pickwrap"><span class="pill miss">not found</span><button class="findbtn" title="Copy title &amp; artist to search your music provider" onclick="copySong(this,'${esc(copyText.replace(/'/g,"\\'"))}')">📋 Copy</button><button class="findbtn" title="Find this track to buy or download" onclick="buyTrack('${esc(key)}',this)">🛒 Get</button><button class="findbtn" onclick="findFile('${esc(key)}')">📂 Find file</button></span>
         </div>`;
       }
       const {chosen,cands,remembered,manual}=r.cf;
