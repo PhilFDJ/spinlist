@@ -838,7 +838,10 @@ function dedupe(list){ const seen=new Set(); return list.filter(t=>{const k=norm
    Set `video:true` for video sources (shown first), and `plus:true` if the
    site wants + rather than %20 for spaces. */
 const MUSIC_STORES=[
-  { name:'WeMix',        url:'https://app.wemix.eu/?s={q}&qType=qSearch&Search=', video:true, plus:true },
+  // Send WeMix the FULL parameter set exactly as its own search box produces.
+  // Trimming these to the ones that "looked necessary" caused the site to bounce
+  // you to a login page instead of showing results.
+  { name:'WeMix',        url:'https://app.wemix.eu/?s={q}&pageNo=0&page=newest&qType=qSearch&noResults=&pageSort=&Search=', video:true, plus:true },
   { name:'Beatport',     url:'https://www.beatport.com/search?q={q}' },
   { name:'Traxsource',   url:'https://www.traxsource.com/search?term={q}' },
   { name:'Bandcamp',     url:'https://bandcamp.com/search?q={q}' },
