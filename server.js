@@ -1765,6 +1765,7 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
       // Activity. lastLogin = last actual sign-in; lastSeen = last time they used
       // the app at all (a session cookie keeps people signed in for weeks, so a
       // stale lastLogin doesn't mean they've gone away).
+      crm: !!u.crm_access,
       lastLogin: u.last_login || null,
       lastSeen: u.last_seen || null,
       loginCount: u.login_count || 0,
@@ -1829,6 +1830,13 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
 });
 
 // --- admin: make a managed sub-DJ an independent DJ (keeps them linked to the team) ---
+// Admin: turn the Bookings add-on on or off for a DJ.
+app.post('/api/admin/users/:id/crm', requireAdmin, (req, res) => {
+  const u = db.setCrmAccess(req.params.id, !!(req.body || {}).on);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  res.json({ ok: true, id: u.id, crm: !!u.crm_access });
+});
+
 app.post('/api/admin/users/:id/make-independent', requireAdmin, (req, res) => {
   const u = db.getUserById(req.params.id);
   if (!u) return res.status(404).json({ error: 'User not found.' });

@@ -435,7 +435,7 @@ function renderUsersTable(){
     const [label,cls]=map[st]||['Free','free'];
     return `<span class="badge ${cls}">${label}</span>`;
   };
-  list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th title="Total events + weddings on the account, including jobs assigned to them">Gigs</th><th title="Last time they used Spinlist. Hover a value for sign-in detail.">Last active</th><th>Joined</th><th></th></tr></thead><tbody>${
+  list.innerHTML=`<table><thead><tr><th>Email</th><th>Name</th><th>Plan</th><th>Status</th><th title="Total events + weddings on the account, including jobs assigned to them">Gigs</th><th title="Last time they used Spinlist. Hover a value for sign-in detail.">Last active</th><th title="The Bookings CRM add-on">Bookings</th><th>Joined</th><th></th></tr></thead><tbody>${
     users.map(u=>{
       const joined=u.createdAt?new Date(u.createdAt).toLocaleDateString():'—';
       const la=lastActive(u);
@@ -456,11 +456,22 @@ function renderUsersTable(){
         <td>${badge(u.status)}</td>
         <td>${u.eventsCreated}</td>
         <td title="${la.title}" style="white-space:nowrap;color:${la.stale?'var(--muted)':'var(--ink-2)'}">${la.text}</td>
+        <td><button class="btn ${u.crm?'btn-neon':'btn-ghost'} btn-sm" onclick="toggleCrm('${u.id}',${u.crm?'false':'true'})" title="${u.crm?'Turn the Bookings add-on off':'Turn the Bookings add-on on'}">${u.crm?'On':'Off'}</button></td>
         <td>${joined}</td>
         <td style="white-space:nowrap">${actions}</td>
       </tr>`;
     }).join('')
   }</tbody></table>`;
+}
+
+async function toggleCrm(id,on){
+  try{
+    const r=await fetch('/api/admin/users/'+encodeURIComponent(id)+'/crm',
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Failed');
+    await loadUsers();
+  }catch(e){ alert('Could not change that: '+e.message); }
 }
 
 async function loadUsers(){
