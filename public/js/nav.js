@@ -29,6 +29,7 @@
     var isCouple = me && me.user && me.user.role === 'couple';
     var multiOp = me && me.user && me.user.multiOp;
     var planner = me && me.user && me.user.weddingPlanner;
+    var crm = me && me.user && me.user.crm;
 
     // Each item: label, href, and a key used to detect "active" on the current page.
     var items = [];
@@ -39,6 +40,7 @@
     } else {
       items.push(['Home', '/index.html#home', 'home']);
       items.push(['My Events', '/index.html#events', 'events']);
+      if (crm) items.push(['Bookings', '/bookings.html', 'bookings']);
       if (multiOp) items.push(['My DJs', '/team.html', 'team']);
       items.push(['Apps', '/apps.html', 'apps']);
       items.push(['Contact', '/contact.html', 'contact']);
@@ -48,7 +50,8 @@
     var path = location.pathname.toLowerCase();
     var hash = (location.hash || '').replace('#', '').toLowerCase();
     var activeKey = '';
-    if (path.indexOf('team.html') > -1) activeKey = 'team';
+    if (path.indexOf('bookings.html') > -1) activeKey = 'bookings';
+    else if (path.indexOf('team.html') > -1) activeKey = 'team';
     else if (path.indexOf('wedding.html') > -1) activeKey = 'wedding';
     else if (path.indexOf('apps.html') > -1) activeKey = 'apps';
     else if (path.indexOf('contact.html') > -1) activeKey = 'contact';

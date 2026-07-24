@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spinlist — Bookings</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png"><link rel="apple-touch-icon" sizes="180x180" href="/img/favicon-180.png">
+<style>
+  :root{--ink:#eaf0ff;--ink-2:#b6c2e0;--paper:#0a1228;--paper-2:#121d3d;--surface:#16234a;--neon:#c6f24e;--neon-dim:#a8d63f;--plum:#5b8cff;--coral:#ff6b5e;--gold:#e9c46a;--muted:#7e8db5;--line:rgba(180,200,255,.16);--shadow:0 18px 50px -22px rgba(0,0,0,.7)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink)}
+  .wrap{max-width:1240px;margin:0 auto;padding:0 22px}
+  header.bar{background:rgba(10,18,40,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .bar .wrap{display:flex;align-items:center;justify-content:space-between;height:74px;max-width:1240px}
+  .logo{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+  .logo-img{height:54px;width:auto;display:block}
+  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:12px 22px;cursor:pointer;font-size:.92rem;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:transform .15s}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-neon{background:var(--neon);color:#0a1228}
+  .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+  .btn-sm{padding:8px 14px;font-size:.82rem}
+  .btn-danger{background:transparent;color:var(--coral);border:1.5px solid var(--coral)}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px;margin-top:20px}
+  h1{font-size:2.2rem;margin-top:30px}
+  h2{font-size:1.15rem}
+  .eyebrow{font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .sub{color:var(--muted);margin-top:6px}
+  .muted{color:var(--muted)}
+  .field{display:block;margin-bottom:14px}
+  .field span{display:block;font-size:.82rem;color:var(--muted);margin-bottom:6px;font-weight:700}
+  input,select,textarea{width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)}
+  textarea{resize:vertical;min-height:70px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+  @media(max-width:620px){.cols{grid-template-columns:1fr}}
+
+  /* Pipeline summary */
+  .stats{display:flex;gap:26px;flex-wrap:wrap;margin:6px 0 2px}
+  .stat b{display:block;font-size:1.7rem;line-height:1.1}
+  .stat span{font-size:.75rem;color:var(--muted)}
+
+  /* Booking rows */
+  .bk{display:flex;align-items:center;gap:14px;padding:13px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+  .bk:first-child{border-top:0}
+  .bk .when{width:104px;flex:none;font-weight:700;font-size:.86rem}
+  .bk .who{flex:1;min-width:180px}
+  .bk .who b{display:block;font-size:.98rem}
+  .bk .money{text-align:right;font-size:.86rem;flex:none;min-width:130px}
+  .pill{display:inline-block;font-size:.66rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:100px}
+  .s-enquiry{background:rgba(126,141,181,.2);color:var(--muted)}
+  .s-quoted{background:rgba(91,140,255,.18);color:var(--plum)}
+  .s-confirmed{background:rgba(198,242,78,.16);color:var(--neon)}
+  .s-completed{background:rgba(233,196,106,.16);color:var(--gold)}
+  .s-lost{background:rgba(255,107,94,.15);color:var(--coral)}
+  .owed{color:var(--coral);font-weight:700}
+  .settled{color:var(--neon);font-weight:700}
+
+  /* Modal */
+  .modal{position:fixed;inset:0;z-index:200;background:rgba(4,8,20,.7);display:flex;align-items:center;justify-content:center;padding:22px}
+  .modal .card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:24px;width:min(620px,100%);max-height:88vh;overflow:auto}
+  .tabs{display:flex;gap:8px;margin-top:22px;flex-wrap:wrap}
+  .tab{padding:9px 16px;border-radius:100px;cursor:pointer;font-weight:700;font-size:.88rem;background:transparent;color:var(--muted);border:1.5px solid transparent}
+  .tab.on{background:var(--paper-2);color:var(--ink);border-color:var(--line)}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="logo" href="/index.html"><img class="logo-img" src="/img/spinlist-logo-dark.png" alt="Spinlist"></a>
+    <div id="spinlist-nav"></div>
+  </div>
+</header>
+
+<div class="wrap" id="root"><p class="muted" style="margin-top:40px">Loading…</p></div>
+
+<script src="/js/nav.js"></script>
+<script>
+let ME=null, BOOKINGS=[], CLIENTS=[], TAB='upcoming';
+
+const $=id=>document.getElementById(id);
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+/* Money is held in PENCE as integers — floats can't represent currency exactly
+   (0.1 + 0.2 !== 0.3), which is how invoices end up a penny out. */
+function money(pence){
+  const n=(pence||0)/100;
+  return '£'+n.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function toPence(v){
+  const s=String(v==null?'':v).replace(/[£,\s]/g,'').trim();
+  if(!s) return 0;
+  const f=parseFloat(s);
+  if(!Number.isFinite(f)||f<0) return 0;
+  return Math.round(f*100);   // round, don't truncate: 19.99 must be 1999
+}
+function fmtDate(ts){
+  if(!ts) return '—';
+  return new Date(ts).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+}
+function dateInput(ts){ return ts? new Date(ts).toISOString().slice(0,10) : ''; }
+
+async function api(url,opts){
+  const r=await fetch(url,Object.assign({headers:{'Content-Type':'application/json'}},opts||{}));
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.error||'Something went wrong');
+  return d;
+}
+
+async function boot(){
+  try{
+    const me=await api('/api/me');
+    ME=me.user;
+  }catch(e){ ME=null; }
+  if(!ME){
+    $('root').innerHTML='<h1 class="display" style="margin-top:40px">Bookings</h1><p class="sub">Please sign in to manage your bookings.</p><p style="margin-top:18px"><a class="btn btn-neon" href="/index.html">Sign in</a></p>';
+    return;
+  }
+  if(!ME.crm){
+    $('root').innerHTML=`<h1 style="margin-top:40px">Bookings</h1>
+      <p class="sub">Bookings is an add-on that isn't enabled on your account yet — it tracks enquiries, quotes, payments and your gig calendar in one place.</p>
+      <p style="margin-top:18px"><a class="btn btn-ghost" href="/contact.html">Ask about Bookings</a></p>`;
+    return;
+  }
+  await load();
+}
+
+async function load(){
+  try{
+    const d=await api('/api/crm/bookings');
+    BOOKINGS=d.bookings||[]; CLIENTS=d.clients||[];
+    render();
+  }catch(e){
+    $('root').innerHTML='<p class="muted" style="margin-top:40px">Could not load your bookings. '+esc(e.message)+'</p>';
+  }
+}
+
+function render(){
+  const now=Date.now();
+  const upcoming=BOOKINGS.filter(b=>b.status!=='lost'&&b.status!=='completed'&&(!b.event_date||b.event_date>=now-864e5));
+  const past=BOOKINGS.filter(b=>b.status==='completed'||(b.event_date&&b.event_date<now-864e5));
+  const lost=BOOKINGS.filter(b=>b.status==='lost');
+
+  // Only count money that's actually committed — an enquiry isn't income.
+  const committed=BOOKINGS.filter(b=>b.status==='confirmed'||b.status==='completed');
+  const owed=committed.reduce((s,b)=>s+(b.outstanding_pence||0),0);
+  const booked=committed.reduce((s,b)=>s+(b.fee_pence||0),0);
+  const enquiries=BOOKINGS.filter(b=>b.status==='enquiry').length;
+
+  const list = TAB==='upcoming'?upcoming : TAB==='past'?past : TAB==='lost'?lost : CLIENTS;
+
+  $('root').innerHTML=`
+    <p class="eyebrow" style="margin-top:34px">Your business</p>
+    <h1>Bookings</h1>
+    <p class="sub">Enquiries, confirmed gigs and what you're still owed.</p>
+
+    <div class="panel">
+      <div class="stats">
+        <div class="stat"><b style="color:var(--neon)">${committed.length}</b><span>confirmed gigs</span></div>
+        <div class="stat"><b>${money(booked)}</b><span>booked in</span></div>
+        <div class="stat"><b style="color:${owed?'var(--coral)':'var(--neon)'}">${money(owed)}</b><span>outstanding</span></div>
+        <div class="stat"><b style="color:var(--plum)">${enquiries}</b><span>open enquiries</span></div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:22px">
+      <div class="tabs" style="margin:0">
+        <button class="tab ${TAB==='upcoming'?'on':''}" onclick="setTab('upcoming')">Upcoming (${upcoming.length})</button>
+        <button class="tab ${TAB==='past'?'on':''}" onclick="setTab('past')">Past (${past.length})</button>
+        <button class="tab ${TAB==='lost'?'on':''}" onclick="setTab('lost')">Lost (${lost.length})</button>
+        <button class="tab ${TAB==='clients'?'on':''}" onclick="setTab('clients')">Clients (${CLIENTS.length})</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        ${TAB==='clients'
+          ? '<button class="btn btn-neon btn-sm" onclick="editClient()">+ New client</button>'
+          : '<button class="btn btn-neon btn-sm" onclick="editBooking()">+ New booking</button>'}
+      </div>
+    </div>
+
+    <div class="panel">${TAB==='clients'?clientsHtml():bookingsHtml(list)}</div>
+  `;
+}
+
+function bookingsHtml(list){
+  if(!list.length) return '<p class="muted" style="font-size:.92rem">Nothing here yet.</p>';
+  return list.map(b=>{
+    const paid=b.paid_pence||0, out=b.outstanding_pence||0;
+    const clientName=b.client?b.client.name:'';
+    return `<div class="bk">
+      <div class="when">${esc(fmtDate(b.event_date))}</div>
+      <div class="who">
+        <b>${esc(b.title)}</b>
+        <span class="muted" style="font-size:.84rem">${esc(b.type||'')}${clientName?' · '+esc(clientName):''}${b.venue?' · '+esc(b.venue):''}</span>
+      </div>
+      <div><span class="pill s-${esc(b.status)}">${esc(b.status)}</span></div>
+      <div class="money">
+        ${b.fee_pence?`${money(b.fee_pence)}<br><span class="${out?'owed':'settled'}" style="font-size:.78rem">${out?money(out)+' due':'paid in full'}</span>`:'<span class="muted">—</span>'}
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="openBooking('${esc(b.id)}')">Open</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function clientsHtml(){
+  if(!CLIENTS.length) return '<p class="muted" style="font-size:.92rem">No clients yet.</p>';
+  return CLIENTS.map(c=>{
+    const jobs=BOOKINGS.filter(b=>b.client_id===c.id).length;
+    return `<div class="bk">
+      <div class="who">
+        <b>${esc(c.name)}</b>
+        <span class="muted" style="font-size:.84rem">${esc(c.email||'')}${c.phone?' · '+esc(c.phone):''}</span>
+      </div>
+      <div class="muted" style="font-size:.84rem">${jobs} booking${jobs===1?'':'s'}</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="editClient('${esc(c.id)}')">Edit</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function setTab(t){ TAB=t; render(); }
+
+/* ---------- Booking editor ---------- */
+function openBooking(id){ editBooking(id); }
+
+function editBooking(id){
+  const b=id?BOOKINGS.find(x=>x.id===id):null;
+  const opts=CLIENTS.map(c=>`<option value="${esc(c.id)}" ${b&&b.client_id===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+  const payments=(b&&b.payments||[]).map(p=>`
+    <div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line);font-size:.86rem">
+      <span>${esc(fmtDate(p.at))} <span class="muted">· ${esc(p.method||'')}</span></span>
+      <span><b>${money(p.amount_pence)}</b>
+        <button onclick="delPayment('${esc(b.id)}','${esc(p.id)}')" title="Remove" style="background:none;border:0;color:var(--muted);cursor:pointer;font-size:.9rem">×</button>
+      </span>
+    </div>`).join('');
+
+  const box=document.createElement('div');
+  box.className='modal'; box.id='bk-modal';
+  box.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <h2>${b?'Edit booking':'New booking'}</h2>
+      <button onclick="closeModal()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;cursor:pointer;line-height:1">×</button>
+    </div>
+
+    <label class="field" style="margin-top:16px"><span>Title</span>
+      <input id="f-title" value="${esc(b?b.title:'')}" placeholder="e.g. Sarah &amp; Tom Wedding"></label>
+
+    <div class="cols">
+      <label class="field"><span>Type</span>
+        <select id="f-type">
+          ${['Wedding','Party','Corporate','Birthday','Anniversary','Other'].map(t=>`<option ${b&&b.type===t?'selected':''}>${t}</option>`).join('')}
+        </select></label>
+      <label class="field"><span>Status</span>
+        <select id="f-status">
+          ${['enquiry','quoted','confirmed','completed','lost'].map(s=>`<option value="${s}" ${b&&b.status===s?'selected':''}>${s}</option>`).join('')}
+        </select></label>
+    </div>
+
+    <div class="cols">
+      <label class="field"><span>Date</span>
+        <input id="f-date" type="date" value="${b?dateInput(b.event_date):''}" onchange="checkClash(this.value,'${esc(b?b.id:'')}')"></label>
+      <label class="field"><span>Client</span>
+        <select id="f-client"><option value="">— none —</option>${opts}</select></label>
+    </div>
+    <p id="clash" class="muted" style="font-size:.82rem;margin:-6px 0 12px;min-height:16px"></p>
+
+    <label class="field"><span>Venue</span>
+      <input id="f-venue" value="${esc(b?b.venue:'')}" placeholder="Venue name / town"></label>
+
+    <div class="cols">
+      <label class="field"><span>Fee (£)</span>
+        <input id="f-fee" inputmode="decimal" value="${b&&b.fee_pence?(b.fee_pence/100).toFixed(2):''}" placeholder="750.00"></label>
+      <label class="field"><span>Deposit (£)</span>
+        <input id="f-dep" inputmode="decimal" value="${b&&b.deposit_pence?(b.deposit_pence/100).toFixed(2):''}" placeholder="150.00"></label>
+    </div>
+
+    <label class="field"><span>Notes</span>
+      <textarea id="f-notes" placeholder="Anything worth remembering — access, timings, special requests…">${esc(b?b.notes:'')}</textarea></label>
+
+    ${b?`
+      <div style="margin-top:6px;padding-top:14px;border-top:1px solid var(--line)">
+        <h2 style="font-size:1rem">Payments</h2>
+        <p class="muted" style="font-size:.82rem;margin:2px 0 8px">
+          ${money(b.paid_pence||0)} received of ${money(b.fee_pence||0)} —
+          <b class="${(b.outstanding_pence||0)?'owed':'settled'}">${(b.outstanding_pence||0)?money(b.outstanding_pence)+' outstanding':'paid in full'}</b>
+        </p>
+        ${payments||'<p class="muted" style="font-size:.84rem">Nothing recorded yet.</p>'}
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <input id="p-amt" inputmode="decimal" placeholder="Amount £" style="flex:1;min-width:110px">
+          <input id="p-method" placeholder="Method (bank, cash…)" style="flex:1;min-width:130px">
+          <button class="btn btn-ghost btn-sm" onclick="addPayment('${esc(b.id)}')">Record</button>
+        </div>
+      </div>`:''}
+
+    <div style="display:flex;gap:8px;margin-top:20px;flex-wrap:wrap">
+      <button class="btn btn-neon" onclick="saveBooking('${esc(b?b.id:'')}')">${b?'Save changes':'Create booking'}</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      ${b?`<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="delBooking('${esc(b.id)}')">Delete</button>`:''}
+    </div>
+  </div>`;
+  document.body.appendChild(box);
+  box.addEventListener('click',e=>{ if(e.target===box) closeModal(); });
+}
+
+function closeModal(){ const m=$('bk-modal')||$('cl-modal'); if(m)m.remove(); }
+
+// Warn if the date is already taken — the double-booking question.
+async function checkClash(date,selfId){
+  const el=$('clash'); if(!el) return;
+  el.textContent='';
+  if(!date) return;
+  try{
+    const d=await api('/api/crm/availability?date='+encodeURIComponent(date));
+    const others=(d.bookings||[]).filter(b=>b.id!==selfId);
+    if(others.length){
+      el.innerHTML='⚠ <span style="color:var(--coral)">Already booked that day: '+esc(others.map(b=>b.title).join(', '))+'</span>';
+    }
+  }catch(e){ /* availability is advisory — never block saving */ }
+}
+
+async function saveBooking(id){
+  const body={
+    title:$('f-title').value.trim(),
+    type:$('f-type').value,
+    status:$('f-status').value,
+    venue:$('f-venue').value.trim(),
+    notes:$('f-notes').value,
+    client_id:$('f-client').value||null,
+    event_date:$('f-date').value? new Date($('f-date').value+'T12:00:00').getTime() : null,
+    fee_pence:toPence($('f-fee').value),
+    deposit_pence:toPence($('f-dep').value),
+  };
+  if(!body.title){ alert('Give the booking a title.'); return; }
+  try{
+    if(id) await api('/api/crm/bookings/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
+    else await api('/api/crm/bookings',{method:'POST',body:JSON.stringify(body)});
+    closeModal(); await load();
+  }catch(e){ alert(e.message); }
+}
+
+async function delBooking(id){
+  if(!confirm('Delete this booking? This cannot be undone.'))return;
+  try{ await api('/api/crm/bookings/'+encodeURIComponent(id),{method:'DELETE'}); closeModal(); await load(); }
+  catch(e){ alert(e.message); }
+}
+
+async function addPayment(id){
+  const amt=toPence($('p-amt').value);
+  if(!amt){ alert('Enter an amount.'); return; }
+  try{
+    await api('/api/crm/bookings/'+encodeURIComponent(id)+'/payments',
+      {method:'POST',body:JSON.stringify({amount_pence:amt,method:$('p-method').value.trim()||'manual'})});
+    closeModal(); await load();
+    const fresh=BOOKINGS.find(b=>b.id===id); if(fresh) editBooking(id);
+  }catch(e){ alert(e.message); }
+}
+
+async function delPayment(id,pid){
+  try{
+    await api('/api/crm/bookings/'+encodeURIComponent(id)+'/payments/'+encodeURIComponent(pid),{method:'DELETE'});
+    closeModal(); await load();
+    editBooking(id);
+  }catch(e){ alert(e.message); }
+}
+
+/* ---------- Client editor ---------- */
+function editClient(id){
+  const c=id?CLIENTS.find(x=>x.id===id):null;
+  const box=document.createElement('div');
+  box.className='modal'; box.id='cl-modal';
+  box.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <h2>${c?'Edit client':'New client'}</h2>
+      <button onclick="closeModal()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;cursor:pointer;line-height:1">×</button>
+    </div>
+    <label class="field" style="margin-top:16px"><span>Name</span>
+      <input id="c-name" value="${esc(c?c.name:'')}" placeholder="Sarah &amp; Tom / Acme Ltd"></label>
+    <div class="cols">
+      <label class="field"><span>Email</span><input id="c-email" value="${esc(c?c.email:'')}"></label>
+      <label class="field"><span>Phone</span><input id="c-phone" value="${esc(c?c.phone:'')}"></label>
+    </div>
+    <label class="field"><span>Notes</span>
+      <textarea id="c-notes" placeholder="How they found you, preferences, anything useful…">${esc(c?c.notes:'')}</textarea></label>
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-neon" onclick="saveClient('${esc(c?c.id:'')}')">${c?'Save':'Add client'}</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      ${c?`<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="delClient('${esc(c.id)}')">Delete</button>`:''}
+    </div>
+  </div>`;
+  document.body.appendChild(box);
+  box.addEventListener('click',e=>{ if(e.target===box) closeModal(); });
+}
+
+async function saveClient(id){
+  const body={name:$('c-name').value.trim(),email:$('c-email').value.trim(),
+              phone:$('c-phone').value.trim(),notes:$('c-notes').value};
+  if(!body.name){ alert('Give the client a name.'); return; }
+  try{
+    if(id) await api('/api/crm/clients/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
+    else await api('/api/crm/clients',{method:'POST',body:JSON.stringify(body)});
+    closeModal(); await load();
+  }catch(e){ alert(e.message); }
+}
+
+async function delClient(id){
+  if(!confirm('Delete this client? Their bookings are kept, but unlinked.'))return;
+  try{ await api('/api/crm/clients/'+encodeURIComponent(id),{method:'DELETE'}); closeModal(); await load(); }
+  catch(e){ alert(e.message); }
+}
+
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+boot();
+</script>
+<script src="/js/track.js"></script>
+</body>
+</html>

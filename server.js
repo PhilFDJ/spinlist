@@ -2549,6 +2549,123 @@ app.post('/api/admin/backup/email', requireAdmin, async (req, res) => {
   res.json({ ok: true, to: BACKUP_EMAIL_TO });
 });
 
+/* ================================================================
+   CRM — clients & bookings
+
+   A booking stands alone (party, corporate) and can optionally link to a
+   Spinlist wedding. Everything is scoped to the signed-in DJ: a multi-op
+   agency's sub-DJs never see each other's books.
+
+   Money is handled in PENCE throughout, as integers.
+   ================================================================ */
+
+// Every CRM route checks the record belongs to the caller.
+function ownsBooking(req, b) { return b && b.owner_id === req.user.id; }
+function ownsClient(req, c) { return c && c.owner_id === req.user.id; }
+
+/* CRM is a paid add-on. Hiding the nav link is presentation, not security —
+   every route is gated here as well, or anyone could call the API directly. */
+function requireCrm(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Please sign in.' });
+  if (!req.user.crm_access) {
+    return res.status(403).json({ error: 'Bookings is an add-on that isn\'t enabled on your account.' });
+  }
+  next();
+}
+
+app.get('/api/crm/clients', auth.requireAuth, requireCrm, (req, res) => {
+  res.json({ clients: db.listClients(req.user.id) });
+});
+
+app.post('/api/crm/clients', auth.requireAuth, requireCrm, (req, res) => {
+  const b = req.body || {};
+  if (!(b.name || '').trim()) return res.status(400).json({ error: 'A name is required.' });
+  res.json({ client: db.createClient(req.user.id, b) });
+});
+
+app.put('/api/crm/clients/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const c = db.getClient(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Client not found.' });
+  if (!ownsClient(req, c)) return res.status(403).json({ error: 'Not your client.' });
+  res.json({ client: db.updateClient(c.id, req.body || {}) });
+});
+
+app.delete('/api/crm/clients/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const c = db.getClient(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Client not found.' });
+  if (!ownsClient(req, c)) return res.status(403).json({ error: 'Not your client.' });
+  db.deleteClient(c.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/crm/bookings', auth.requireAuth, requireCrm, (req, res) => {
+  const bookings = db.listBookings(req.user.id);
+  const clients = db.listClients(req.user.id);
+  const byId = {};
+  clients.forEach(c => { byId[c.id] = c; });
+  // Attach the client and a payment summary so the list needs no extra calls.
+  res.json({
+    bookings: bookings.map(b => {
+      const paid = (b.payments || []).reduce((s, p) => s + (p.amount_pence || 0), 0);
+      return Object.assign({}, b, {
+        client: b.client_id ? (byId[b.client_id] || null) : null,
+        paid_pence: paid,
+        outstanding_pence: Math.max(0, (b.fee_pence || 0) - paid),
+      });
+    }),
+    clients,
+  });
+});
+
+app.post('/api/crm/bookings', auth.requireAuth, requireCrm, (req, res) => {
+  const b = req.body || {};
+  if (!(b.title || '').trim()) return res.status(400).json({ error: 'A title is required.' });
+  res.json({ booking: db.createBooking(req.user.id, b) });
+});
+
+app.put('/api/crm/bookings/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.updateBooking(b.id, req.body || {}) });
+});
+
+app.delete('/api/crm/bookings/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  db.deleteBooking(b.id);
+  res.json({ ok: true });
+});
+
+// Record a payment received (bank transfer, cash, or anything else).
+app.post('/api/crm/bookings/:id/payments', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  const updated = db.addPayment(b.id, req.body || {});
+  if (!updated) return res.status(400).json({ error: 'Enter an amount greater than zero.' });
+  res.json({ booking: updated });
+});
+
+app.delete('/api/crm/bookings/:id/payments/:pid', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.removePayment(b.id, req.params.pid) });
+});
+
+// Is this date already booked? Answers the double-booking question.
+app.get('/api/crm/availability', auth.requireAuth, requireCrm, (req, res) => {
+  const day = (req.query.date || '').toString().slice(0, 10);   // YYYY-MM-DD
+  if (!day) return res.status(400).json({ error: 'A date is required.' });
+  const clash = db.listBookings(req.user.id).filter(b => {
+    if (!b.event_date || b.status === 'lost') return false;
+    return new Date(b.event_date).toISOString().slice(0, 10) === day;
+  });
+  res.json({ date: day, busy: clash.length > 0, bookings: clash });
+});
+
 app.post('/api/redeem', auth.requireAuth, (req, res) => {
   const c = db.getCode((req.body || {}).code);
   if (!c || !c.active) return res.status(404).json({ error: 'That code is not valid.' });
@@ -3274,7 +3391,7 @@ function publicUser(u) {
   // export and the playlist tool use this. Spotify export is separate and
   // comp-code-only (spotifyExport below).
   const playlistExport = !!(p && p.spotifyExport);
-  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export, playlistExport, branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED, weddingVotesPer: u.wedding_votes_per || 3 };
+  return { id: u.id, email: u.email, name: u.name, plan: u.plan, planName: (p && p.name) || '', sub_status: u.sub_status, role: u.role || 'host', weddingPlanner: userHasPlannerAccess(u), multiOp: planIsMultiOp(u), isSubDj: u.role === 'subdj', spotifyExport: !!u.spotify_export, playlistExport, branding: planHasBranding(u), emailInvites: userHasPlannerAccess(u), dailyDigest: !!u.daily_digest, prepAccess: userHasPrepAccess(u), searchSource: u.search_source === 'apple' ? 'apple' : 'spotify', appleSearchAvailable: APPLE_MUSIC_ENABLED, weddingVotesPer: u.wedding_votes_per || 3, crm: !!u.crm_access };
 }
 // Shareable public demo — a clean URL for socials/marketing that drops
 // anyone straight into the live guest voting experience.
