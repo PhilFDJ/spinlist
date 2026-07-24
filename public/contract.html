@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your agreement</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png">
+<style>
+  :root{--ink:#0f1626;--ink-2:#3d4759;--paper:#f6f7fb;--surface:#fff;--line:#e3e7f0;--neon:#7aa116;--good:#1f9d55;--muted:#77809a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6}
+  .wrap{max-width:760px;margin:0 auto;padding:0 20px 70px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:30px;margin-top:20px;box-shadow:0 10px 30px -22px rgba(20,30,60,.35)}
+  h1{font-size:1.6rem;margin-bottom:4px}
+  .eyebrow{font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:800}
+  .muted{color:var(--muted)}
+
+  /* Contract body — deliberately plain and predictable, so what's on screen
+     matches what's archived. */
+  .doc h3{font-size:1.02rem;margin:26px 0 8px;padding-top:4px}
+  .doc h3:first-child{margin-top:6px}
+  .doc p{margin:0 0 10px;color:var(--ink-2)}
+  .doc ul{margin:0 0 12px 20px;color:var(--ink-2)}
+  .doc li{margin-bottom:5px}
+  .doc hr{border:0;border-top:1px solid var(--line);margin:20px 0}
+  .doc strong{color:var(--ink)}
+
+  .sign{background:#f0f4ff;border:1px solid #dde5ff;border-radius:14px;padding:22px;margin-top:26px}
+  label.f{display:block;margin-bottom:14px}
+  label.f span{display:block;font-size:.82rem;font-weight:700;color:var(--ink-2);margin-bottom:6px}
+  input[type=text]{width:100%;font:inherit;padding:12px 14px;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+  .sig{font-family:"Snell Roundhand","Apple Chancery","Segoe Script",cursive;font-size:1.6rem;padding:14px}
+  .agree{display:flex;gap:10px;align-items:flex-start;margin:6px 0 16px;cursor:pointer;font-size:.92rem}
+  .agree input{width:20px;height:20px;flex:none;margin-top:2px}
+  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:14px 26px;cursor:pointer;font-size:1rem;width:100%}
+  .btn-sign{background:var(--neon);color:#fff}
+  .btn-sign:disabled{background:#c3cbd8;cursor:not-allowed}
+  .done{text-align:center;padding:26px 10px}
+  .done .big{font-size:2.6rem;line-height:1}
+  .foot{text-align:center;color:var(--muted);font-size:.8rem;margin-top:22px}
+  @media print{ .sign,.foot{display:none} .card{box-shadow:none;border:0} }
+  @media(max-width:520px){ .card{padding:20px} }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"><p class="muted" style="margin-top:50px;text-align:center">Loading…</p></div>
+
+<script>
+const $=id=>document.getElementById(id);
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtDate(ts){return ts?new Date(ts).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'';}
+
+const TOKEN=new URLSearchParams(location.search).get('c')||'';
+let DATA=null;
+
+async function load(){
+  if(!TOKEN){ $('root').innerHTML='<div class="card done"><p>No agreement reference in that link.</p></div>'; return; }
+  try{
+    const r=await fetch('/api/contract/'+encodeURIComponent(TOKEN));
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'Not found');
+    DATA=d; render();
+  }catch(e){
+    $('root').innerHTML='<div class="card done"><p>'+esc(e.message)+'</p><p class="muted" style="margin-top:8px">Please check the link, or ask for a new one.</p></div>';
+  }
+}
+
+function render(){
+  const c=DATA.contract, b=DATA.booking, dj=DATA.dj;
+
+  /* Section bodies arrive as HTML that the SERVER built and escaped — client
+     data was neutralised there. We don't re-escape here or the markup the DJ
+     wrote (bold, lists) would show as literal tags. */
+  const doc=(c.sections||[]).map(s=>`
+    ${s.heading?`<h3>${esc(s.heading)}</h3>`:''}
+    ${s.body_html||''}`).join('');
+
+  let signBlock='';
+  if(c.status==='signed'){
+    signBlock=`<div class="done">
+      <div class="big" style="color:var(--good)">✓</div>
+      <p style="font-weight:700;margin-top:8px">Signed${c.signed_by?' by '+esc(c.signed_by):''}</p>
+      <p class="muted">${esc(new Date(c.signed_at).toLocaleString('en-GB'))}</p>
+      <p class="muted" style="margin-top:14px;font-size:.85rem">Keep this link for your records. You can print this page.</p>
+    </div>`;
+  }else if(c.status==='void'){
+    signBlock=`<div class="done"><p class="muted">This agreement is no longer valid.</p></div>`;
+  }else{
+    signBlock=`<div class="sign">
+      <h3 style="font-size:1.05rem;margin-bottom:12px">Sign this agreement</h3>
+      <label class="f"><span>Your full name</span>
+        <input type="text" id="s-name" autocomplete="name" placeholder="e.g. Janet Mitchell" oninput="syncSig()"></label>
+      <label class="f"><span>Type your name to sign</span>
+        <input type="text" id="s-typed" class="sig" placeholder="Your signature" oninput="checkReady()"></label>
+      <label class="agree">
+        <input type="checkbox" id="s-agree" onchange="checkReady()">
+        <span>I have read and agree to the terms of this agreement.</span></label>
+      <button class="btn btn-sign" id="s-btn" disabled onclick="sign(this)">Sign agreement</button>
+      <p class="muted" style="font-size:.78rem;margin-top:10px">Signing records your name, the date and time, and your device details.</p>
+    </div>`;
+  }
+
+  $('root').innerHTML=`
+    <div class="card" style="margin-top:34px">
+      <p class="eyebrow">${esc((dj&&dj.company)||'Agreement')}</p>
+      <h1>${esc(c.title||'Agreement')}</h1>
+      ${b?`<p class="muted">${esc(b.title||'')}${b.event_date?' · '+esc(fmtDate(b.event_date)):''}</p>`:''}
+      <div class="doc" style="margin-top:22px">${doc}</div>
+      ${signBlock}
+    </div>
+    <p class="foot">${esc((dj&&dj.company)||'')}</p>
+  `;
+}
+
+// Typing the name into the signature box is a deliberate act, so we prompt it
+// rather than auto-filling.
+function syncSig(){ checkReady(); }
+
+function checkReady(){
+  const n=($('s-name')||{}).value||'', t=($('s-typed')||{}).value||'', a=($('s-agree')||{}).checked;
+  const btn=$('s-btn'); if(!btn) return;
+  btn.disabled=!(n.trim() && a && t.trim().toLowerCase()===n.trim().toLowerCase());
+}
+
+async function sign(btn){
+  const name=$('s-name').value.trim(), typed=$('s-typed').value.trim();
+  btn.disabled=true; btn.textContent='Signing…';
+  try{
+    const r=await fetch('/api/contract/'+encodeURIComponent(TOKEN)+'/sign',
+      {method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({name,typed,agreed:true})});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'Could not sign');
+    await load();
+    window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
+  }catch(e){
+    alert(e.message);
+    btn.disabled=false; btn.textContent='Sign agreement';
+  }
+}
+
+load();
+</script>
+</body>
+</html>

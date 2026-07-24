@@ -2558,6 +2558,132 @@ app.post('/api/admin/backup/email', requireAdmin, async (req, res) => {
 });
 
 /* ================================================================
+   MERGE TOKENS
+
+   Quotes, contracts and emails are written once as templates and filled per
+   job: "Dear {{primary_contact.first_name}}, ... at {{venue.name}} on
+   {{booking.date}}". This is what stops the same details being retyped into
+   every document.
+
+   Unknown tokens are left VISIBLE as [missing: token] rather than blanked.
+   A contract that silently reads "on  at " is far worse than one that shows
+   plainly what hasn't been filled in yet.
+   ================================================================ */
+function mergeTokens(booking, owner, quote) {
+  const t = {};
+  const money = p => '£' + ((p || 0) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  t['booking.title'] = booking.title || '';
+  t['booking.type'] = booking.type || '';
+  t['booking.venue'] = booking.venue || '';
+  t['booking.date'] = booking.event_date
+    ? new Date(booking.event_date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    : '';
+  t['booking.date_short'] = booking.event_date
+    ? new Date(booking.event_date).toLocaleDateString('en-GB')
+    : '';
+  t['booking.fee'] = money(booking.fee_pence);
+  t['booking.deposit'] = money(booking.deposit_pence);
+
+  // Each contact role exposes its own fields.
+  for (const [role, c] of Object.entries(booking.contacts || {})) {
+    t[`${role}.name`] = c.name || '';
+    t[`${role}.first_name`] = c.first_name || (c.name || '').split(/\s+/)[0] || '';
+    t[`${role}.email`] = c.email || '';
+    t[`${role}.phone`] = c.phone || '';
+    t[`${role}.address`] = c.address || '';
+    t[`${role}.company`] = c.company || '';
+  }
+
+  // The DJ's own details, for signatures and letterheads.
+  if (owner) {
+    t['dj.name'] = owner.name || '';
+    t['dj.email'] = owner.email || '';
+    t['dj.company'] = (owner.company || owner.name || '');
+  }
+
+  // Custom fields — {{custom.what_3_words}}, {{custom.purchase_order_number}}.
+  for (const [key, val] of Object.entries(booking.custom || {})) {
+    t[`custom.${key}`] = val === true ? 'Yes' : val === false ? 'No' : String(val);
+  }
+
+  /* Combined client names. A contract needs "Sarah and Tom", not two separate
+     tokens the DJ has to join by hand in every template. */
+  const partyNames = ['partner_a', 'partner_b']
+    .map(r => (booking.contacts || {})[r])
+    .filter(Boolean)
+    .map(c => c.name)
+    .filter(Boolean);
+  const joinNames = arr => arr.length > 1
+    ? arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1]
+    : (arr[0] || '');
+  t['clients.names'] = joinNames(partyNames);
+  t['clients.first_names'] = joinNames(partyNames.map(n => n.split(/\s+/)[0]));
+  t['clients.last_names'] = joinNames([...new Set(partyNames.map(n => n.split(/\s+/).slice(-1)[0]).filter(Boolean))]);
+
+  /* Per-session tokens: {{setup.start_time}}, {{main_event.end_time}}.
+     A contract states setup and performance times separately, so each session
+     type gets its own tokens keyed by a safe version of its name. */
+  const timeOf = ts => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
+  const dateOf = ts => ts ? new Date(ts).toLocaleDateString('en-GB') : '';
+  for (const s of (booking.sessions || [])) {
+    const key = String(s.type || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!key) continue;
+    t[`${key}.start_time`] = timeOf(s.starts_at);
+    t[`${key}.end_time`] = timeOf(s.ends_at);
+    t[`${key}.date`] = dateOf(s.starts_at);
+  }
+  // The main event is the primary session; fall back to the first that blocks.
+  const primary = (booking.sessions || []).find(s => /main event/i.test(s.type || ''))
+    || (booking.sessions || []).find(s => s.blocks)
+    || (booking.sessions || [])[0];
+  if (primary) {
+    t['primary_session.start_time'] = timeOf(primary.starts_at);
+    t['primary_session.end_time'] = timeOf(primary.ends_at);
+    t['primary_session.date'] = dateOf(primary.starts_at);
+  }
+  const venueContact = (booking.contacts || {}).venue;
+  t['primary_session.location.address'] = (venueContact && venueContact.address) || booking.venue || '';
+  t['primary_session.location.name'] = (venueContact && venueContact.name) || booking.venue || '';
+
+  // Money summary. Costs are subtracted so the margin reflects reality: a £950
+  // job with a £400 sub-DJ fee is a £550 job to you.
+  const paid = (booking.payments || []).reduce((s, p) => s + (p.amount_pence || 0), 0);
+  const costs = (booking.costs || []).reduce((s, c) => s + (c.amount_pence || 0), 0);
+  t['booking.paid'] = money(paid);
+  t['booking.outstanding'] = money(Math.max(0, (booking.fee_pence || 0) - paid));
+  t['booking.costs'] = money(costs);
+  t['booking.margin'] = money((booking.fee_pence || 0) - costs);
+
+  /* Quote tokens — what was actually booked, and the payment terms written out.
+     A contract needs to state both, and retyping them per job is exactly the
+     work this is meant to remove. */
+  if (quote) {
+    const m = quoteMoney(quote, booking);
+    t['booked_order.summary'] = (quote.items || [])
+      .map(it => `${it.qty > 1 ? it.qty + ' × ' : ''}${it.name} — ${money(it.qty * it.unit_pence)}`)
+      .join('\n');
+    t['booked_order.total'] = money(m.total);
+    t['payment_schedule.summary_text'] = paymentScheduleText(quote, booking);
+    t['payment_schedule.deposit'] = money(m.deposit);
+    t['payment_schedule.balance'] = money(m.balance);
+    t['payment_schedule.balance_due'] = m.balance_due_at
+      ? new Date(m.balance_due_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+      : '';
+  }
+  return t;
+}
+
+function applyMerge(text, tokens) {
+  if (!text) return '';
+  return String(text).replace(/\{\{\s*([a-z0-9_.]+)\s*\}\}/gi, (whole, key) => {
+    const v = tokens[key.toLowerCase()];
+    if (v === undefined) return `[missing: ${key}]`;
+    return v === '' ? `[missing: ${key}]` : v;
+  });
+}
+
+/* ================================================================
    CRM — clients & bookings
 
    A booking stands alone (party, corporate) and can optionally link to a
@@ -2615,10 +2741,14 @@ app.get('/api/crm/bookings', auth.requireAuth, requireCrm, (req, res) => {
   res.json({
     bookings: bookings.map(b => {
       const paid = (b.payments || []).reduce((s, p) => s + (p.amount_pence || 0), 0);
+      const costs = (b.costs || []).reduce((s, c) => s + (c.amount_pence || 0), 0);
       return Object.assign({}, b, {
         client: b.client_id ? (byId[b.client_id] || null) : null,
         paid_pence: paid,
         outstanding_pence: Math.max(0, (b.fee_pence || 0) - paid),
+        costs_pence: costs,
+        // What the job is actually worth to you once sub-DJs and hire are paid.
+        margin_pence: (b.fee_pence || 0) - costs,
       });
     }),
     clients,
@@ -2663,15 +2793,872 @@ app.delete('/api/crm/bookings/:id/payments/:pid', auth.requireAuth, requireCrm, 
   res.json({ booking: db.removePayment(b.id, req.params.pid) });
 });
 
-// Is this date already booked? Answers the double-booking question.
+// The contact roles a booking supports, and the merge tokens available.
+app.get('/api/crm/roles', auth.requireAuth, requireCrm, (req, res) => {
+  res.json({ roles: db.bookingRoles() });
+});
+
+// Set (or clear) one contact on a booking.
+app.put('/api/crm/bookings/:id/contacts/:role', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.setBookingContact(b.id, req.params.role, req.body || {}) });
+});
+
+// What tokens would fill for this booking — used to preview a template.
+app.get('/api/crm/bookings/:id/tokens', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ tokens: mergeTokens(b, req.user) });
+});
+
+// Sessions on a booking (setup, ceremony, main event…).
+app.get('/api/crm/session-types', auth.requireAuth, requireCrm, (req, res) => {
+  res.json({ types: db.sessionTypes() });
+});
+
+app.post('/api/crm/bookings/:id/sessions', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.addSession(b.id, req.body || {}) });
+});
+
+app.put('/api/crm/bookings/:id/sessions/:sid', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.updateSession(b.id, req.params.sid, req.body || {}) });
+});
+
+app.delete('/api/crm/bookings/:id/sessions/:sid', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.removeSession(b.id, req.params.sid) });
+});
+
+/* Am I free? Answers from SESSIONS rather than a booking's headline date, so a
+   setup at 2pm and a main event at 8pm are both accounted for, and a session
+   marked as not blocking (a photo booth someone else runs) doesn't count. */
 app.get('/api/crm/availability', auth.requireAuth, requireCrm, (req, res) => {
   const day = (req.query.date || '').toString().slice(0, 10);   // YYYY-MM-DD
   if (!day) return res.status(400).json({ error: 'A date is required.' });
-  const clash = db.listBookings(req.user.id).filter(b => {
-    if (!b.event_date || b.status === 'lost') return false;
-    return new Date(b.event_date).toISOString().slice(0, 10) === day;
+  const from = new Date(day + 'T00:00:00').getTime();
+  const to = new Date(day + 'T23:59:59').getTime();
+  if (!Number.isFinite(from)) return res.status(400).json({ error: 'That date is not valid.' });
+  const busy = db.busySessions(req.user.id, from, to);
+  res.json({ date: day, busy: busy.length > 0, sessions: busy });
+});
+
+/* ---- Costs on a booking (money out) ---- */
+app.post('/api/crm/bookings/:id/costs', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  const updated = db.addCost(b.id, req.body || {});
+  if (!updated) return res.status(400).json({ error: 'Enter an amount greater than zero.' });
+  res.json({ booking: updated });
+});
+
+app.put('/api/crm/bookings/:id/costs/:cid', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.updateCost(b.id, req.params.cid, req.body || {}) });
+});
+
+app.delete('/api/crm/bookings/:id/costs/:cid', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.removeCost(b.id, req.params.cid) });
+});
+
+/* ---- Custom fields (the DJ defines their own) ---- */
+app.get('/api/crm/fields', auth.requireAuth, requireCrm, (req, res) => {
+  res.json({ fields: db.listFields(req.user.id), types: db.fieldTypes() });
+});
+
+app.post('/api/crm/fields', auth.requireAuth, requireCrm, (req, res) => {
+  const f = db.createField(req.user.id, req.body || {});
+  if (!f) return res.status(400).json({ error: 'Give the field a name.' });
+  res.json({ field: f });
+});
+
+app.put('/api/crm/fields/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const f = db.getField(req.params.id);
+  if (!f) return res.status(404).json({ error: 'Field not found.' });
+  if (f.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your field.' });
+  res.json({ field: db.updateField(f.id, req.body || {}) });
+});
+
+app.delete('/api/crm/fields/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const f = db.getField(req.params.id);
+  if (!f) return res.status(404).json({ error: 'Field not found.' });
+  if (f.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your field.' });
+  db.deleteField(f.id);
+  res.json({ ok: true });
+});
+
+// Set a custom field's value on a booking.
+app.put('/api/crm/bookings/:id/custom/:key', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.setBookingField(b.id, req.params.key, (req.body || {}).value) });
+});
+
+/* ================================================================
+   ADDRESS LOOKUP (Google Places)
+
+   Clients type a venue and pick a real, validated address rather than free
+   text — so you get a postcode you can navigate to.
+
+   Cost note: Autocomplete keystrokes are FREE when the session is closed by a
+   Place Details call, which is why every lookup here uses a session token. Get
+   that wrong and each keystroke bills separately, so an abandoned search can
+   cost more than a completed one. With tokens, realistic enquiry volume sits
+   comfortably inside the free monthly allowance.
+
+   Set GOOGLE_PLACES_KEY in the environment. Restrict the key to your domain
+   and set a quota cap below the free threshold, so it can't produce a surprise
+   bill. Without a key, address fields simply fall back to plain text.
+   ================================================================ */
+const GOOGLE_PLACES_KEY = process.env.GOOGLE_PLACES_KEY || '';
+
+// Is address lookup available? The browser asks before showing the control.
+app.get('/api/places/enabled', (req, res) => {
+  res.json({ enabled: !!GOOGLE_PLACES_KEY });
+});
+
+/* Autocomplete. Proxied through the server so the API key is never exposed in
+   the browser, where anyone could lift it and spend your quota. */
+app.get('/api/places/autocomplete', async (req, res) => {
+  if (!GOOGLE_PLACES_KEY) return res.json({ predictions: [] });
+  const input = (req.query.q || '').toString().trim().slice(0, 200);
+  const token = (req.query.token || '').toString().slice(0, 64);
+  if (input.length < 3) return res.json({ predictions: [] });   // don't bill for 1-2 characters
+  try {
+    const url = new URL('https://maps.googleapis.com/maps/api/place/autocomplete/json');
+    url.searchParams.set('input', input);
+    url.searchParams.set('key', GOOGLE_PLACES_KEY);
+    url.searchParams.set('components', 'country:gb');
+    if (token) url.searchParams.set('sessiontoken', token);
+    const r = await fetch(url);
+    const d = await r.json();
+    res.json({
+      predictions: (d.predictions || []).slice(0, 6).map(p => ({
+        id: p.place_id,
+        text: p.description,
+        main: (p.structured_formatting && p.structured_formatting.main_text) || p.description,
+        secondary: (p.structured_formatting && p.structured_formatting.secondary_text) || '',
+      })),
+    });
+  } catch (e) {
+    res.json({ predictions: [] });     // lookup is a convenience, never a blocker
+  }
+});
+
+/* Place details — this is the call that CLOSES the session and makes the
+   preceding keystrokes free. The field mask is deliberately minimal: asking
+   for extra fields pushes the request into a more expensive SKU. */
+app.get('/api/places/details', async (req, res) => {
+  if (!GOOGLE_PLACES_KEY) return res.status(400).json({ error: 'Address lookup is not configured.' });
+  const id = (req.query.id || '').toString().slice(0, 200);
+  const token = (req.query.token || '').toString().slice(0, 64);
+  if (!id) return res.status(400).json({ error: 'No place selected.' });
+  try {
+    const url = new URL('https://maps.googleapis.com/maps/api/place/details/json');
+    url.searchParams.set('place_id', id);
+    url.searchParams.set('key', GOOGLE_PLACES_KEY);
+    url.searchParams.set('fields', 'name,formatted_address,geometry/location');
+    if (token) url.searchParams.set('sessiontoken', token);
+    const r = await fetch(url);
+    const d = await r.json();
+    const p = d.result || {};
+    res.json({
+      name: p.name || '',
+      address: p.formatted_address || '',
+      lat: (p.geometry && p.geometry.location && p.geometry.location.lat) || null,
+      lng: (p.geometry && p.geometry.location && p.geometry.location.lng) || null,
+    });
+  } catch (e) {
+    res.status(502).json({ error: 'Could not look that address up.' });
+  }
+});
+
+/* ================================================================
+   PUBLIC ENQUIRY FORM
+
+   Embedded on the DJ's own site (an iframe), so a client fills in everything
+   themselves — contacts, venue, custom fields. It creates a LEAD for review
+   rather than a booking directly: a public form is a spam magnet, and you want
+   to qualify an enquiry before it enters the pipeline.
+   ================================================================ */
+
+// What the form should show — the DJ's custom fields, publicly readable by
+// enquiry token only (never the whole account).
+app.get('/api/enquire/:token/form', (req, res) => {
+  const owner = db.getUserByEnquiryToken(req.params.token);
+  if (!owner) return res.status(404).json({ error: 'That enquiry form was not found.' });
+  res.json({
+    dj: { name: owner.name || '', company: owner.company || owner.name || '' },
+    fields: db.listFields(owner.id).map(f => ({ key: f.key, name: f.name, type: f.type, options: f.options })),
+    roles: db.bookingRoles(),
+    sessionTypes: db.sessionTypes(),
   });
-  res.json({ date: day, busy: clash.length > 0, bookings: clash });
+});
+
+// Submit an enquiry. Deliberately forgiving about what's filled in — a client
+// who can't complete a field shouldn't be blocked from making contact.
+app.post('/api/enquire/:token', async (req, res) => {
+  const owner = db.getUserByEnquiryToken(req.params.token);
+  if (!owner) return res.status(404).json({ error: 'That enquiry form was not found.' });
+  const b = req.body || {};
+
+  // Basic spam guard: a hidden field real people never fill in.
+  if ((b.website || '').toString().trim()) return res.json({ ok: true });
+
+  const name = (b.name || '').toString().trim();
+  const email = (b.email || '').toString().trim();
+  if (!name || !email) return res.status(400).json({ error: 'Please give your name and email.' });
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'That email doesn\'t look right.' });
+
+  const booking = db.createBooking(owner.id, {
+    title: (b.event_title || `${b.event_type || 'Enquiry'} — ${name}`).toString(),
+    type: (b.event_type || 'Wedding').toString(),
+    event_date: b.event_date ? new Date(b.event_date + 'T12:00:00').getTime() : null,
+    venue: (b.venue_name || '').toString(),
+    notes: (b.message || '').toString(),
+    status: 'enquiry',
+  });
+
+  // The person enquiring is the primary contact.
+  db.setBookingContact(booking.id, 'primary_contact', { name, email, phone: b.phone });
+  if (b.partner_a_name) db.setBookingContact(booking.id, 'partner_a', { name: b.partner_a_name });
+  if (b.partner_b_name) db.setBookingContact(booking.id, 'partner_b', { name: b.partner_b_name });
+  if (b.venue_name || b.venue_address) {
+    db.setBookingContact(booking.id, 'venue', { name: b.venue_name, address: b.venue_address });
+  }
+  // Custom field answers.
+  const known = db.listFields(owner.id).map(f => f.key);
+  for (const [k, v] of Object.entries(b.custom || {})) {
+    if (known.includes(k)) db.setBookingField(booking.id, k, v);
+  }
+  db.markEnquiryNew(booking.id);
+
+  // Tell the DJ, but never fail the client's submission because an email
+  // didn't send — from their side the enquiry went through.
+  try {
+    if (CONTACT_RESEND_KEY && CONTACT_FROM && owner.email) {
+      await sendViaResend(
+        { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME },
+        {
+          to: owner.email,
+          subject: `New enquiry — ${name}${b.event_date ? ' · ' + b.event_date : ''}`,
+          replyTo: email,
+          html: `<div style="font-family:system-ui,sans-serif">
+            <h2 style="margin:0 0 8px">New enquiry</h2>
+            <p style="margin:0 0 12px;color:#555">${escapeHtml(name)} &lt;${escapeHtml(email)}&gt;${b.phone ? ' · ' + escapeHtml(String(b.phone)) : ''}</p>
+            <table style="border-collapse:collapse;font-size:14px">
+              <tr><td style="padding:2px 10px 2px 0;color:#777">Event</td><td>${escapeHtml(String(b.event_type || ''))}</td></tr>
+              <tr><td style="padding:2px 10px 2px 0;color:#777">Date</td><td>${escapeHtml(String(b.event_date || 'not given'))}</td></tr>
+              <tr><td style="padding:2px 10px 2px 0;color:#777">Venue</td><td>${escapeHtml(String(b.venue_name || ''))} ${escapeHtml(String(b.venue_address || ''))}</td></tr>
+            </table>
+            ${b.message ? `<p style="margin-top:14px;white-space:pre-wrap">${escapeHtml(String(b.message))}</p>` : ''}
+            <p style="margin-top:18px"><a href="${BASE_URL}/bookings.html">Open in Bookings →</a></p>
+          </div>`,
+        }
+      );
+    }
+  } catch (e) { console.error('[enquiry] notify failed:', e.message); }
+
+  res.json({ ok: true });
+});
+
+// The DJ's own enquiry form link, for embedding on their website.
+app.get('/api/crm/enquiry-link', auth.requireAuth, requireCrm, (req, res) => {
+  const token = db.getEnquiryToken(req.user.id);
+  res.json({
+    token,
+    url: `${BASE_URL}/enquire.html?f=${token}`,
+    embed: `<iframe src="${BASE_URL}/enquire.html?f=${token}" style="width:100%;height:900px;border:0" title="Enquiry form"></iframe>`,
+  });
+});
+
+// Mark an enquiry as reviewed.
+app.post('/api/crm/bookings/:id/seen', auth.requireAuth, requireCrm, (req, res) => {
+  const b = db.getBooking(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Booking not found.' });
+  if (!ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  res.json({ booking: db.markEnquirySeen(b.id) });
+});
+
+/* ================================================================
+   TEMPLATES — contracts & questionnaires
+
+   User-defined, because every DJ's terms differ and a wedding contract isn't a
+   corporate one. Contracts are structured SECTIONS rather than free-form rich
+   text, so what a client signs on screen and what you archive as a PDF render
+   identically — which matters if a document is ever scrutinised.
+   ================================================================ */
+
+/* Light, predictable markup: **bold** and "- " bullets. Deliberately not a
+   full HTML editor — pasted styles and inconsistent markup are exactly what
+   makes a contract render differently in two places. */
+function renderBody(text) {
+  const lines = String(text || '').split('\n');
+  let html = '', inList = false;
+  const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    // "---" separates clauses in a contract.
+    if (/^-{3,}$/.test(trimmed)) { closeList(); html += '<hr>'; continue; }
+    const line = escapeHtml(trimmed).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    if (/^[-*]\s+/.test(trimmed)) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += `<li>${line.replace(/^[-*]\s+/, '')}</li>`;
+    } else {
+      closeList();
+      if (line) html += `<p>${line}</p>`;
+    }
+  }
+  closeList();
+  return html;
+}
+
+// Fill a template from a booking — this is what a client actually reads.
+function renderTemplate(tpl, booking, owner) {
+  const tokens = mergeTokens(booking, owner);
+  return {
+    id: tpl.id,
+    name: applyMerge(tpl.name, tokens),
+    kind: tpl.kind,
+    sections: (tpl.sections || []).map(s => ({
+      heading: applyMerge(s.heading, tokens),
+      body_html: renderBody(applyMerge(s.body, tokens)),
+    })),
+    questions: (tpl.questions || []).map(q => ({
+      id: q.id, key: q.key, type: q.type, options: q.options, required: q.required,
+      label: applyMerge(q.label, tokens),
+    })),
+  };
+}
+
+app.get('/api/crm/templates', auth.requireAuth, requireCrm, (req, res) => {
+  res.json({
+    templates: db.listTemplates(req.user.id, req.query.kind),
+    kinds: db.templateKinds(),
+  });
+});
+
+app.post('/api/crm/templates', auth.requireAuth, requireCrm, (req, res) => {
+  res.json({ template: db.createTemplate(req.user.id, req.body || {}) });
+});
+
+app.get('/api/crm/templates/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const t = db.getTemplate(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Template not found.' });
+  if (t.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your template.' });
+  res.json({ template: t });
+});
+
+app.put('/api/crm/templates/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const t = db.getTemplate(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Template not found.' });
+  if (t.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your template.' });
+  res.json({ template: db.updateTemplate(t.id, req.body || {}) });
+});
+
+app.delete('/api/crm/templates/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const t = db.getTemplate(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Template not found.' });
+  if (t.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your template.' });
+  db.deleteTemplate(t.id);
+  res.json({ ok: true });
+});
+
+// Preview a template filled with a real booking's details, before sending.
+app.get('/api/crm/templates/:id/preview/:bookingId', auth.requireAuth, requireCrm, (req, res) => {
+  const t = db.getTemplate(req.params.id);
+  if (!t || t.owner_id !== req.user.id) return res.status(404).json({ error: 'Template not found.' });
+  const b = db.getBooking(req.params.bookingId);
+  if (!b || !ownsBooking(req, b)) return res.status(404).json({ error: 'Booking not found.' });
+  res.json({ document: renderTemplate(t, b, req.user) });
+});
+
+/* ================================================================
+   QUOTES — build, send, and let the client accept or decline
+
+   The client-driven chain: they open a link, accept, pay the deposit, then
+   sign. No login — clients will not create accounts to book a DJ.
+   ================================================================ */
+
+// Deposit and balance, derived from the quote's terms. Kept in one place so
+// the figure a client sees, the figure Stripe charges and the figure on the
+// contract can never disagree.
+function quoteMoney(q, booking) {
+  const total = q.total_pence || 0;
+  let deposit = q.deposit_type === 'fixed'
+    ? q.deposit_value
+    : Math.round(total * ((q.deposit_value || 0) / 100));
+  deposit = Math.max(0, Math.min(deposit, total));
+  const balance = Math.max(0, total - deposit);
+  let dueDate = null;
+  if (booking && booking.event_date && q.balance_days_before) {
+    dueDate = booking.event_date - (q.balance_days_before * 864e5);
+  }
+  return { total, deposit, balance, balance_due_at: dueDate };
+}
+
+function moneyStr(p) {
+  return '£' + ((p || 0) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// "£237.50 deposit on booking, balance of £712.50 due by 15 August 2026."
+function paymentScheduleText(q, booking) {
+  const m = quoteMoney(q, booking);
+  if (!m.deposit) return `Full payment of ${moneyStr(m.total)} is due.`;
+  const when = m.balance_due_at
+    ? ` by ${new Date(m.balance_due_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`
+    : (q.balance_days_before ? ` ${q.balance_days_before} days before the event` : '');
+  return `${moneyStr(m.deposit)} deposit payable on booking, with the balance of ${moneyStr(m.balance)} due${when}.`;
+}
+
+app.get('/api/crm/quotes', auth.requireAuth, requireCrm, (req, res) => {
+  const quotes = db.listQuotes(req.user.id, req.query.booking_id);
+  res.json({
+    quotes: quotes.map(q => {
+      const b = q.booking_id ? db.getBooking(q.booking_id) : null;
+      return Object.assign({}, q, quoteMoney(q, b));
+    }),
+  });
+});
+
+app.post('/api/crm/quotes', auth.requireAuth, requireCrm, (req, res) => {
+  const body = req.body || {};
+  if (body.booking_id) {
+    const b = db.getBooking(body.booking_id);
+    if (!b || !ownsBooking(req, b)) return res.status(403).json({ error: 'Not your booking.' });
+  }
+  res.json({ quote: db.createQuote(req.user.id, body) });
+});
+
+app.put('/api/crm/quotes/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const q = db.getQuote(req.params.id);
+  if (!q) return res.status(404).json({ error: 'Quote not found.' });
+  if (q.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your quote.' });
+  if (q.status !== 'draft') {
+    return res.status(400).json({ error: 'That quote has been sent — the figures can\'t change now. Create a new one instead.' });
+  }
+  res.json({ quote: db.updateQuote(q.id, req.body || {}) });
+});
+
+app.delete('/api/crm/quotes/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const q = db.getQuote(req.params.id);
+  if (!q) return res.status(404).json({ error: 'Quote not found.' });
+  if (q.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your quote.' });
+  db.deleteQuote(q.id);
+  res.json({ ok: true });
+});
+
+// Send it: emails the client a link they can open without an account.
+app.post('/api/crm/quotes/:id/send', auth.requireAuth, requireCrm, async (req, res) => {
+  const q = db.getQuote(req.params.id);
+  if (!q) return res.status(404).json({ error: 'Quote not found.' });
+  if (q.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your quote.' });
+  if (!q.items.length) return res.status(400).json({ error: 'Add at least one item before sending.' });
+
+  const booking = q.booking_id ? db.getBooking(q.booking_id) : null;
+  const to = ((req.body || {}).to || '').toString().trim()
+    || (booking && booking.contacts && booking.contacts.primary_contact && booking.contacts.primary_contact.email)
+    || '';
+  if (!to) return res.status(400).json({ error: 'No email address to send to.' });
+
+  const link = `${BASE_URL}/quote.html?q=${q.token}`;
+  const m = quoteMoney(q, booking);
+
+  try {
+    if (!CONTACT_RESEND_KEY || !CONTACT_FROM) throw new Error('Email is not configured.');
+    await sendViaResend(
+      { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: req.user.name || CONTACT_FROM_NAME },
+      {
+        to,
+        replyTo: req.user.email,
+        subject: `Your quote${booking && booking.title ? ' — ' + booking.title : ''}`,
+        html: `<div style="font-family:system-ui,sans-serif;color:#0a1228">
+          <h2 style="margin:0 0 6px">Your quote</h2>
+          <p style="color:#555;margin:0 0 16px">${escapeHtml(booking && booking.title || '')}</p>
+          ${q.message ? `<p style="white-space:pre-wrap">${escapeHtml(q.message)}</p>` : ''}
+          <p style="font-size:20px;font-weight:700;margin:16px 0 4px">${moneyStr(m.total)}</p>
+          <p style="color:#555;margin:0 0 20px">${escapeHtml(paymentScheduleText(q, booking))}</p>
+          <p><a href="${link}" style="background:#c6f24e;color:#0a1228;padding:12px 22px;border-radius:100px;text-decoration:none;font-weight:700">View &amp; accept your quote</a></p>
+          <p style="color:#777;font-size:12px;margin-top:20px">Or open: ${link}</p>
+        </div>`,
+      }
+    );
+  } catch (e) {
+    return res.status(400).json({ error: 'Could not send the email: ' + e.message, link });
+  }
+
+  db.setQuoteStatus(q.id, 'sent');
+  res.json({ quote: db.getQuote(q.id), link, sent_to: to });
+});
+
+/* ---- The public quote page (no login) ---- */
+app.get('/api/quote/:token', (req, res) => {
+  const q = db.getQuoteByToken(req.params.token);
+  if (!q) return res.status(404).json({ error: 'That quote could not be found.' });
+  const booking = q.booking_id ? db.getBooking(q.booking_id) : null;
+  const owner = db.getUserById(q.owner_id);
+  const m = quoteMoney(q, booking);
+  const expired = q.expires_at && Date.now() > q.expires_at && q.status === 'sent';
+  res.json({
+    quote: {
+      status: expired ? 'expired' : q.status,
+      items: q.items,
+      message: q.message,
+      expires_at: q.expires_at,
+      total_pence: m.total,
+      deposit_pence: m.deposit,
+      balance_pence: m.balance,
+      balance_due_at: m.balance_due_at,
+      schedule_text: paymentScheduleText(q, booking),
+      responded_at: q.responded_at,
+    },
+    booking: booking ? {
+      title: booking.title,
+      type: booking.type,
+      event_date: booking.event_date,
+      venue: booking.venue,
+    } : null,
+    dj: owner ? { name: owner.name || '', company: owner.company || owner.name || '', email: owner.email || '' } : null,
+  });
+});
+
+// Accept or decline. Deliberately one-way: once answered it can't be flipped,
+// so there's no ambiguity about what was agreed.
+app.post('/api/quote/:token/respond', (req, res) => {
+  const q = db.getQuoteByToken(req.params.token);
+  if (!q) return res.status(404).json({ error: 'That quote could not be found.' });
+  if (q.status !== 'sent') {
+    return res.status(400).json({ error: q.status === 'draft' ? 'That quote isn\'t ready yet.' : 'That quote has already been answered.' });
+  }
+  if (q.expires_at && Date.now() > q.expires_at) {
+    db.setQuoteStatus(q.id, 'expired');
+    return res.status(400).json({ error: 'That quote has expired — please ask for a new one.' });
+  }
+  const accept = !!(req.body || {}).accept;
+  db.setQuoteStatus(q.id, accept ? 'accepted' : 'declined');
+
+  // Move the booking along with it, so the pipeline reflects reality.
+  if (q.booking_id) {
+    const b = db.getBooking(q.booking_id);
+    if (b) {
+      const m = quoteMoney(q, b);
+      db.updateBooking(b.id, accept
+        ? { status: 'confirmed', fee_pence: m.total, deposit_pence: m.deposit }
+        : { status: 'lost' });
+    }
+  }
+
+  // Tell the DJ. A failure here must not undo the client's decision.
+  try {
+    const owner = db.getUserById(q.owner_id);
+    if (owner && owner.email && CONTACT_RESEND_KEY && CONTACT_FROM) {
+      const b = q.booking_id ? db.getBooking(q.booking_id) : null;
+      sendViaResend(
+        { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME },
+        {
+          to: owner.email,
+          subject: `Quote ${accept ? 'ACCEPTED' : 'declined'}${b && b.title ? ' — ' + b.title : ''}`,
+          html: `<div style="font-family:system-ui,sans-serif">
+            <h2>Quote ${accept ? 'accepted' : 'declined'}</h2>
+            <p>${escapeHtml(b && b.title || 'A quote')} — ${moneyStr(q.total_pence)}</p>
+            <p><a href="${BASE_URL}/bookings.html">Open in Bookings →</a></p>
+          </div>`,
+        }
+      ).catch(() => {});
+    }
+  } catch (e) { /* never block the response */ }
+
+  res.json({ ok: true, status: accept ? 'accepted' : 'declined' });
+});
+
+/* ================================================================
+   STRIPE CONNECT — deposits paid straight to the DJ
+
+   Each DJ links their OWN Stripe account, and client payments go directly to
+   it. Money never passes through Spinlist: we're not a payment intermediary,
+   which avoids both the regulatory obligations and the liability that would
+   come with holding someone else's client's money. No platform fee — the DJ
+   keeps 100% and pays for the software instead.
+
+   Standard Connect: the DJ authorises their existing Stripe account, and
+   disputes, refunds and compliance remain theirs.
+
+   Set STRIPE_CONNECT_CLIENT_ID (from Stripe → Settings → Connect).
+   ================================================================ */
+const STRIPE_CONNECT_CLIENT_ID = process.env.STRIPE_CONNECT_CLIENT_ID || '';
+/* Used only to sign the OAuth state value. Random per boot if unset, which
+   is fine — it just means a Connect flow started before a restart must be
+   retried, rather than anything failing silently or insecurely. */
+const CONNECT_STATE_SECRET = process.env.CONNECT_STATE_SECRET || crypto.randomBytes(24).toString('hex');
+
+// Where a DJ stands: connected, or not yet.
+app.get('/api/crm/stripe/status', auth.requireAuth, requireCrm, (req, res) => {
+  const acct = req.user.stripe_connect_id || null;
+  res.json({
+    available: !!(stripe && STRIPE_CONNECT_CLIENT_ID),
+    connected: !!acct,
+    account_id: acct,
+  });
+});
+
+// Step 1: send the DJ to Stripe to authorise.
+app.get('/api/crm/stripe/connect', auth.requireAuth, requireCrm, (req, res) => {
+  if (!stripe || !STRIPE_CONNECT_CLIENT_ID) {
+    return res.status(400).json({ error: 'Card payments aren\'t set up on this system yet.' });
+  }
+  // A signed state value ties the callback back to this user and stops anyone
+  // else's callback attaching an account to them.
+  const state = crypto.createHmac('sha256', CONNECT_STATE_SECRET)
+    .update(req.user.id + '|' + Math.floor(Date.now() / 1000 / 300))
+    .digest('hex').slice(0, 32);
+  const url = new URL('https://connect.stripe.com/oauth/authorize');
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', STRIPE_CONNECT_CLIENT_ID);
+  url.searchParams.set('scope', 'read_write');
+  url.searchParams.set('redirect_uri', `${BASE_URL}/api/crm/stripe/callback`);
+  url.searchParams.set('state', `${req.user.id}.${state}`);
+  res.json({ url: url.toString() });
+});
+
+// Step 2: Stripe sends them back with a code we exchange for their account id.
+app.get('/api/crm/stripe/callback', auth.requireAuth, async (req, res) => {
+  const code = (req.query.code || '').toString();
+  const state = (req.query.state || '').toString();
+  if (req.query.error) return res.redirect('/bookings.html?stripe=denied');
+  if (!code || !state) return res.redirect('/bookings.html?stripe=failed');
+
+  // Verify the state belongs to the signed-in user.
+  const [uid, sig] = state.split('.');
+  if (uid !== req.user.id) return res.redirect('/bookings.html?stripe=mismatch');
+  const now = Math.floor(Date.now() / 1000 / 300);
+  const valid = [now, now - 1].some(slot =>
+    crypto.createHmac('sha256', CONNECT_STATE_SECRET)
+      .update(req.user.id + '|' + slot).digest('hex').slice(0, 32) === sig);
+  if (!valid) return res.redirect('/bookings.html?stripe=expired');
+
+  try {
+    const token = await stripe.oauth.token({ grant_type: 'authorization_code', code });
+    db.setStripeConnect(req.user.id, token.stripe_user_id);
+    res.redirect('/bookings.html?stripe=connected');
+  } catch (e) {
+    console.error('[stripe connect]', e.message);
+    res.redirect('/bookings.html?stripe=failed');
+  }
+});
+
+app.post('/api/crm/stripe/disconnect', auth.requireAuth, requireCrm, (req, res) => {
+  db.setStripeConnect(req.user.id, null);
+  res.json({ ok: true });
+});
+
+/* Take a deposit against an accepted quote. The charge is created ON the DJ's
+   connected account, so the money lands with them and never touches us. */
+app.post('/api/quote/:token/pay', async (req, res) => {
+  const q = db.getQuoteByToken(req.params.token);
+  if (!q) return res.status(404).json({ error: 'That quote could not be found.' });
+  if (q.status !== 'accepted') return res.status(400).json({ error: 'Please accept the quote first.' });
+
+  const owner = db.getUserById(q.owner_id);
+  if (!owner || !owner.stripe_connect_id) {
+    return res.status(400).json({ error: 'Card payments aren\'t available for this booking — please contact your DJ.' });
+  }
+  if (!stripe) return res.status(400).json({ error: 'Card payments are not configured.' });
+
+  const booking = q.booking_id ? db.getBooking(q.booking_id) : null;
+  const m = quoteMoney(q, booking);
+  const amount = m.deposit || m.total;
+  if (amount <= 0) return res.status(400).json({ error: 'There is nothing to pay.' });
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'gbp',
+          unit_amount: amount,
+          product_data: { name: `Deposit — ${(booking && booking.title) || 'Booking'}` },
+        },
+        quantity: 1,
+      }],
+      success_url: `${BASE_URL}/quote.html?q=${q.token}&paid=1`,
+      cancel_url: `${BASE_URL}/quote.html?q=${q.token}`,
+      metadata: { quote_id: q.id, booking_id: q.booking_id || '' },
+    }, {
+      // The charge belongs to the DJ's account, not ours.
+      stripeAccount: owner.stripe_connect_id,
+    });
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error('[deposit]', e.message);
+    res.status(502).json({ error: 'Could not start the payment. Please try again.' });
+  }
+});
+
+/* ================================================================
+   CONTRACTS — issue from a template, client signs online
+
+   The contract is FROZEN at issue: the rendered text is stored on the record,
+   not referenced from the template. If the DJ later edits their terms, an
+   already-signed contract still shows exactly what was agreed.
+   ================================================================ */
+
+app.get('/api/crm/contracts', auth.requireAuth, requireCrm, (req, res) => {
+  res.json({ contracts: db.listContracts(req.user.id, req.query.booking_id) });
+});
+
+// Issue a contract for a booking, filled from a template.
+app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) => {
+  const body = req.body || {};
+  const booking = db.getBooking(body.booking_id);
+  if (!booking || !ownsBooking(req, booking)) return res.status(404).json({ error: 'Booking not found.' });
+  const tpl = db.getTemplate(body.template_id);
+  if (!tpl || tpl.owner_id !== req.user.id) return res.status(404).json({ error: 'Template not found.' });
+
+  const quote = body.quote_id ? db.getQuote(body.quote_id) : null;
+  const tokens = mergeTokens(booking, req.user, quote);
+  const sections = (tpl.sections || []).map(s => ({
+    heading: applyMerge(s.heading, tokens),
+    body_html: renderBody(applyMerge(s.body, tokens)),
+  }));
+
+  const contract = db.createContract(req.user.id, {
+    booking_id: booking.id,
+    quote_id: quote ? quote.id : null,
+    template_id: tpl.id,
+    title: applyMerge(tpl.name, tokens),
+    sections,
+  });
+
+  const link = `${BASE_URL}/contract.html?c=${contract.token}`;
+  const to = ((body.to || '').toString().trim())
+    || (booking.contacts && booking.contacts.primary_contact && booking.contacts.primary_contact.email)
+    || '';
+
+  if (to && CONTACT_RESEND_KEY && CONTACT_FROM) {
+    try {
+      await sendViaResend(
+        { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: req.user.name || CONTACT_FROM_NAME },
+        {
+          to,
+          replyTo: req.user.email,
+          subject: `Please sign — ${contract.title}`,
+          html: `<div style="font-family:system-ui,sans-serif;color:#0a1228">
+            <h2 style="margin:0 0 8px">Your agreement</h2>
+            <p style="color:#555">${escapeHtml(booking.title || '')}</p>
+            <p><a href="${link}" style="background:#c6f24e;color:#0a1228;padding:12px 22px;border-radius:100px;text-decoration:none;font-weight:700">Read &amp; sign</a></p>
+            <p style="color:#777;font-size:12px;margin-top:18px">Or open: ${link}</p>
+          </div>`,
+        }
+      );
+    } catch (e) { console.error('[contract email]', e.message); }
+  }
+
+  res.json({ contract, link, sent_to: to || null });
+});
+
+app.post('/api/crm/contracts/:id/void', auth.requireAuth, requireCrm, (req, res) => {
+  const c = db.getContract(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Contract not found.' });
+  if (c.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your contract.' });
+  if (c.status === 'signed') return res.status(400).json({ error: 'That contract has been signed and can\'t be voided.' });
+  res.json({ contract: db.voidContract(c.id) });
+});
+
+/* ---- Public: read and sign (no login) ---- */
+app.get('/api/contract/:token', (req, res) => {
+  const c = db.getContractByToken(req.params.token);
+  if (!c) return res.status(404).json({ error: 'That agreement could not be found.' });
+  const owner = db.getUserById(c.owner_id);
+  const booking = c.booking_id ? db.getBooking(c.booking_id) : null;
+  res.json({
+    contract: {
+      title: c.title,
+      sections: c.sections,
+      status: c.status,
+      signed_at: c.signed_at,
+      // The signer's name is shown back to them; the IP is kept but not
+      // displayed — it's evidence, not something to put on the page.
+      signed_by: c.signature ? c.signature.name : null,
+    },
+    booking: booking ? { title: booking.title, event_date: booking.event_date, venue: booking.venue } : null,
+    dj: owner ? { name: owner.name || '', company: owner.company || owner.name || '' } : null,
+  });
+});
+
+app.post('/api/contract/:token/sign', async (req, res) => {
+  const c = db.getContractByToken(req.params.token);
+  if (!c) return res.status(404).json({ error: 'That agreement could not be found.' });
+  if (c.status === 'signed') return res.status(400).json({ error: 'This agreement has already been signed.' });
+  if (c.status === 'void') return res.status(400).json({ error: 'This agreement is no longer valid.' });
+
+  const b = req.body || {};
+  const name = (b.name || '').toString().trim();
+  const typed = (b.typed || '').toString().trim();
+  if (!name) return res.status(400).json({ error: 'Please enter your full name.' });
+  if (!b.agreed) return res.status(400).json({ error: 'Please confirm you agree to the terms.' });
+  // The typed signature must match the name, so it's a deliberate act rather
+  // than a tick-box someone clicked without reading.
+  if (typed && typed.toLowerCase() !== name.toLowerCase()) {
+    return res.status(400).json({ error: 'Your signature should match the name you entered.' });
+  }
+
+  const signed = db.signContract(c.id, {
+    name,
+    typed: typed || name,
+    ip: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(),
+    user_agent: req.headers['user-agent'] || '',
+  });
+
+  // Confirm to both sides — a signed agreement neither party has a copy of is
+  // worth very little.
+  try {
+    const owner = db.getUserById(c.owner_id);
+    const booking = c.booking_id ? db.getBooking(c.booking_id) : null;
+    const clientEmail = booking && booking.contacts && booking.contacts.primary_contact
+      ? booking.contacts.primary_contact.email : '';
+    const when = new Date(signed.signed_at).toLocaleString('en-GB');
+    const link = `${BASE_URL}/contract.html?c=${c.token}`;
+    if (CONTACT_RESEND_KEY && CONTACT_FROM) {
+      const cfg = { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME };
+      if (owner && owner.email) {
+        sendViaResend(cfg, {
+          to: owner.email,
+          subject: `Contract signed — ${c.title}`,
+          html: `<div style="font-family:system-ui,sans-serif"><h2>Signed</h2>
+            <p>${escapeHtml(name)} signed “${escapeHtml(c.title)}” on ${escapeHtml(when)}.</p>
+            <p><a href="${link}">View the agreement →</a></p></div>`,
+        }).catch(() => {});
+      }
+      if (clientEmail) {
+        sendViaResend(cfg, {
+          to: clientEmail,
+          subject: `Your signed agreement — ${c.title}`,
+          html: `<div style="font-family:system-ui,sans-serif"><h2>Thank you</h2>
+            <p>Your agreement was signed on ${escapeHtml(when)}. Keep this link for your records:</p>
+            <p><a href="${link}">${link}</a></p></div>`,
+        }).catch(() => {});
+      }
+    }
+  } catch (e) { /* never fail the signature because an email didn't send */ }
+
+  res.json({ ok: true, signed_at: signed.signed_at });
 });
 
 app.post('/api/redeem', auth.requireAuth, (req, res) => {
