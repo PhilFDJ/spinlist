@@ -1778,6 +1778,8 @@ function renderMainNavExtras(){
     a.textContent=label;a.href=href;a.setAttribute('data-extra','1');
     nav.appendChild(a);
   };
+  // Bookings (the CRM add-on) — only for DJs who have it enabled.
+  if(ME&&ME.crm)add('Bookings','/bookings.html');
   if(ME&&ME.multiOp)add('My DJs','/team.html');
   add('Apps','/apps.html');
   add('Contact','/contact.html');
