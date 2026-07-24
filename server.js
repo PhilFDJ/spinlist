@@ -3661,6 +3661,32 @@ app.post('/api/contract/:token/sign', async (req, res) => {
   res.json({ ok: true, signed_at: signed.signed_at });
 });
 
+/* ---- Packages (products) ---- */
+app.get('/api/crm/products', auth.requireAuth, requireCrm, (req, res) => {
+  res.json({ products: db.listProducts(req.user.id) });
+});
+
+app.post('/api/crm/products', auth.requireAuth, requireCrm, (req, res) => {
+  const b = req.body || {};
+  if (!(b.name || '').trim()) return res.status(400).json({ error: 'Give the package a name.' });
+  res.json({ product: db.createProduct(req.user.id, b) });
+});
+
+app.put('/api/crm/products/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const p = db.getProduct(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Package not found.' });
+  if (p.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your package.' });
+  res.json({ product: db.updateProduct(p.id, req.body || {}) });
+});
+
+app.delete('/api/crm/products/:id', auth.requireAuth, requireCrm, (req, res) => {
+  const p = db.getProduct(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Package not found.' });
+  if (p.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your package.' });
+  db.deleteProduct(p.id);
+  res.json({ ok: true });
+});
+
 app.post('/api/redeem', auth.requireAuth, (req, res) => {
   const c = db.getCode((req.body || {}).code);
   if (!c || !c.active) return res.status(404).json({ error: 'That code is not valid.' });

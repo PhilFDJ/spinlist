@@ -167,15 +167,17 @@ function render(){
         <button class="tab ${TAB==='past'?'on':''}" onclick="setTab('past')">Past (${past.length})</button>
         <button class="tab ${TAB==='lost'?'on':''}" onclick="setTab('lost')">Lost (${lost.length})</button>
         <button class="tab ${TAB==='clients'?'on':''}" onclick="setTab('clients')">Clients (${CLIENTS.length})</button>
+        <button class="tab ${TAB==='settings'?'on':''}" onclick="setTab('settings')">⚙ Setup</button>
       </div>
       <div style="display:flex;gap:8px">
-        ${TAB==='clients'
+        ${TAB==='settings' ? ''
+          : TAB==='clients'
           ? '<button class="btn btn-neon btn-sm" onclick="editClient()">+ New client</button>'
           : '<button class="btn btn-neon btn-sm" onclick="editBooking()">+ New booking</button>'}
       </div>
     </div>
 
-    <div class="panel">${TAB==='clients'?clientsHtml():bookingsHtml(list)}</div>
+    ${TAB==='settings' ? settingsHtml() : `<div class="panel">${TAB==='clients'?clientsHtml():bookingsHtml(list)}</div>`}
   `;
 }
 
@@ -218,7 +220,301 @@ function clientsHtml(){
   }).join('');
 }
 
-function setTab(t){ TAB=t; render(); }
+/* ================= Setup (templates, products, custom fields) =================
+   Set these up once, then work in bookings day to day. */
+let TEMPLATES=[], PRODUCTS=[], FIELDS=[], FIELD_TYPES=[], ENQUIRY=null, STRIPE=null;
+
+async function loadSettings(){
+  const [t,p,f,e,s]=await Promise.all([
+    api('/api/crm/templates').catch(()=>({templates:[]})),
+    api('/api/crm/products').catch(()=>({products:[]})),
+    api('/api/crm/fields').catch(()=>({fields:[],types:[]})),
+    api('/api/crm/enquiry-link').catch(()=>null),
+    api('/api/crm/stripe/status').catch(()=>null),
+  ]);
+  TEMPLATES=t.templates||[]; PRODUCTS=p.products||[];
+  FIELDS=f.fields||[]; FIELD_TYPES=f.types||[];
+  ENQUIRY=e; STRIPE=s;
+}
+
+function settingsHtml(){
+  const contracts=TEMPLATES.filter(t=>t.kind==='contract');
+  const quests=TEMPLATES.filter(t=>t.kind==='questionnaire');
+
+  const tplRow=t=>`
+    <div class="bk">
+      <div class="who"><b>${esc(t.name)}</b>
+        <span class="muted" style="font-size:.84rem">
+          ${(t.sections||[]).length} section${(t.sections||[]).length===1?'':'s'}${t.kind==='questionnaire'?` · ${(t.questions||[]).length} question${(t.questions||[]).length===1?'':'s'}`:''}
+          ${t.applies_to&&t.applies_to.length?' · '+esc(t.applies_to.join(', ')):''}
+          ${t.is_default?' · default':''}
+        </span></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="editTemplate('${esc(t.id)}')">Edit</button>
+      </div>
+    </div>`;
+
+  return `
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div><h2 style="margin:0">Contracts</h2>
+          <p class="muted" style="font-size:.86rem;margin-top:2px">Your terms. Use {{tokens}} to fill in each job's details automatically.</p></div>
+        <button class="btn btn-neon btn-sm" onclick="editTemplate(null,'contract')">+ New contract</button>
+      </div>
+      <div style="margin-top:12px">${contracts.map(tplRow).join('')||'<p class="muted" style="font-size:.9rem">No contracts yet.</p>'}</div>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div><h2 style="margin:0">Questionnaires</h2>
+          <p class="muted" style="font-size:.86rem;margin-top:2px">What you ask couples and clients.</p></div>
+        <button class="btn btn-neon btn-sm" onclick="editTemplate(null,'questionnaire')">+ New questionnaire</button>
+      </div>
+      <div style="margin-top:12px">${quests.map(tplRow).join('')||'<p class="muted" style="font-size:.9rem">No questionnaires yet.</p>'}</div>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div><h2 style="margin:0">Packages</h2>
+          <p class="muted" style="font-size:.86rem;margin-top:2px">Presets for quotes. You can still change the price per job.</p></div>
+        <button class="btn btn-neon btn-sm" onclick="editProduct()">+ New package</button>
+      </div>
+      <div style="margin-top:12px">${PRODUCTS.map(p=>`
+        <div class="bk">
+          <div class="who"><b>${esc(p.name)}</b>
+            ${p.description?`<span class="muted" style="font-size:.84rem">${esc(p.description)}</span>`:''}</div>
+          <div class="money"><b>${money(p.price_pence)}</b></div>
+          <div><button class="btn btn-ghost btn-sm" onclick="editProduct('${esc(p.id)}')">Edit</button></div>
+        </div>`).join('')||'<p class="muted" style="font-size:.9rem">No packages yet.</p>'}</div>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div><h2 style="margin:0">Custom fields</h2>
+          <p class="muted" style="font-size:.86rem;margin-top:2px">Anything else you track per job. Each becomes a {{custom.key}} token.</p></div>
+        <button class="btn btn-neon btn-sm" onclick="editField()">+ New field</button>
+      </div>
+      <div style="margin-top:12px">${FIELDS.map(f=>`
+        <div class="bk">
+          <div class="who"><b>${esc(f.name)}</b>
+            <span class="muted" style="font-size:.84rem">{{custom.${esc(f.key)}}} · ${esc(f.type)}</span></div>
+          <div><button class="btn btn-ghost btn-sm" onclick="editField('${esc(f.id)}')">Edit</button></div>
+        </div>`).join('')||'<p class="muted" style="font-size:.9rem">No custom fields yet.</p>'}</div>
+    </div>
+
+    <div class="panel">
+      <h2>Your enquiry form</h2>
+      <p class="muted" style="font-size:.86rem;margin-top:2px">Put this on your website — enquiries arrive here as leads.</p>
+      ${ENQUIRY?`
+        <label class="field" style="margin-top:12px"><span>Link</span>
+          <input readonly value="${esc(ENQUIRY.url)}" onclick="this.select()"></label>
+        <label class="field"><span>Embed code</span>
+          <textarea readonly rows="3" onclick="this.select()">${esc(ENQUIRY.embed)}</textarea></label>`
+        :'<p class="muted" style="font-size:.9rem;margin-top:10px">Not available.</p>'}
+    </div>
+
+    <div class="panel">
+      <h2>Card payments</h2>
+      ${!STRIPE||!STRIPE.available
+        ? '<p class="muted" style="font-size:.9rem;margin-top:6px">Card payments aren&rsquo;t set up on this system yet.</p>'
+        : STRIPE.connected
+          ? `<p style="font-size:.9rem;margin-top:6px">✓ Connected — deposits go straight into your own Stripe account.</p>
+             <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="disconnectStripe()">Disconnect</button>`
+          : `<p class="muted" style="font-size:.9rem;margin-top:6px">Connect your Stripe account so clients can pay their deposit online. The money goes directly to you.</p>
+             <button class="btn btn-neon btn-sm" style="margin-top:10px" onclick="connectStripe()">Connect Stripe</button>`}
+    </div>
+  `;
+}
+
+/* ---------- Template editor ---------- */
+function editTemplate(id,kind){
+  const t=id?TEMPLATES.find(x=>x.id===id):null;
+  const k=t?t.kind:(kind||'contract');
+  const sections=(t&&t.sections||[]);
+
+  const box=document.createElement('div');
+  box.className='modal'; box.id='bk-modal';
+  box.innerHTML=`<div class="card" style="width:min(820px,100%)">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <h2>${t?'Edit':'New'} ${k==='contract'?'contract':'questionnaire'}</h2>
+      <button onclick="closeModal()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;cursor:pointer;line-height:1">×</button>
+    </div>
+
+    <label class="field" style="margin-top:16px"><span>Name</span>
+      <input id="t-name" value="${esc(t?t.name:'')}" placeholder="${k==='contract'?'e.g. Wedding DJ Agreement':'e.g. Wedding questionnaire'}"></label>
+
+    <label class="field"><span>Use for (leave blank for all job types)</span>
+      <input id="t-applies" value="${esc(t&&t.applies_to?t.applies_to.join(', '):'')}" placeholder="Wedding, Corporate"></label>
+
+    <label class="check-row" style="display:flex;gap:9px;align-items:center;cursor:pointer;margin-bottom:14px">
+      <input type="checkbox" id="t-default" ${t&&t.is_default?'checked':''}>
+      <span style="font-size:.9rem">Use this one by default</span></label>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 8px">
+      <h2 style="font-size:1rem;margin:0">Sections</h2>
+      <button class="btn btn-ghost btn-sm" onclick="addSection()">+ Add section</button>
+    </div>
+    <div id="t-sections">${sections.map((s,i)=>sectionRow(s,i)).join('')||sectionRow({heading:'',body:''},0)}</div>
+
+    <details style="margin-top:16px">
+      <summary style="cursor:pointer;color:var(--plum);font-size:.88rem;font-weight:700">Which {{tokens}} can I use?</summary>
+      <div class="muted" style="font-size:.82rem;margin-top:8px;line-height:1.7">
+        <b style="color:var(--ink-2)">People:</b> {{clients.first_names}} · {{clients.names}} · {{primary_contact.name}} · {{partner_a.first_name}} · {{venue.name}} · {{venue.address}}<br>
+        <b style="color:var(--ink-2)">Job:</b> {{booking.title}} · {{booking.date}} · {{booking.venue}} · {{booking.fee}} · {{booking.deposit}}<br>
+        <b style="color:var(--ink-2)">Times:</b> {{setup.start_time}} · {{main_event.start_time}} · {{main_event.end_time}} · {{primary_session.location.address}}<br>
+        <b style="color:var(--ink-2)">Money:</b> {{booked_order.summary}} · {{payment_schedule.summary_text}}<br>
+        <b style="color:var(--ink-2)">You:</b> {{dj.name}} · {{dj.company}} · {{brand.name}}<br>
+        ${FIELDS.length?'<b style="color:var(--ink-2)">Yours:</b> '+FIELDS.map(f=>'{{custom.'+esc(f.key)+'}}').join(' · '):''}
+        <br><br>Formatting: <b>**bold**</b>, lines starting "- " become bullets, "---" draws a line.
+      </div>
+    </details>
+
+    <div style="display:flex;gap:8px;margin-top:20px;flex-wrap:wrap">
+      <button class="btn btn-neon" onclick="saveTemplate('${esc(t?t.id:'')}','${esc(k)}')">${t?'Save changes':'Create'}</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      ${t?`<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="delTemplate('${esc(t.id)}')">Delete</button>`:''}
+    </div>
+  </div>`;
+  document.body.appendChild(box);
+}
+
+function sectionRow(s,i){
+  return `<div class="t-sec" style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
+    <div style="display:flex;gap:8px;align-items:center">
+      <input class="t-head" value="${esc(s.heading||'')}" placeholder="Heading (e.g. 1. Booking and Payment)" style="flex:1">
+      <button class="iconbtn" title="Remove" onclick="this.closest('.t-sec').remove()" style="background:none;border:0;color:var(--muted);cursor:pointer;font-size:1.1rem">🗑</button>
+    </div>
+    <textarea class="t-body" rows="6" placeholder="The text of this section. Use {{tokens}} to fill in job details." style="margin-top:8px">${esc(s.body||'')}</textarea>
+  </div>`;
+}
+function addSection(){
+  const wrap=$('t-sections');
+  wrap.insertAdjacentHTML('beforeend',sectionRow({heading:'',body:''},wrap.children.length));
+}
+
+async function saveTemplate(id,kind){
+  const sections=[...document.querySelectorAll('#t-sections .t-sec')].map(el=>({
+    heading:el.querySelector('.t-head').value,
+    body:el.querySelector('.t-body').value,
+  })).filter(s=>s.heading.trim()||s.body.trim());
+  const body={
+    kind,
+    name:$('t-name').value.trim(),
+    applies_to:$('t-applies').value.split(',').map(x=>x.trim()).filter(Boolean),
+    is_default:$('t-default').checked,
+    sections,
+  };
+  if(!body.name){ alert('Give it a name.'); return; }
+  try{
+    if(id) await api('/api/crm/templates/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
+    else await api('/api/crm/templates',{method:'POST',body:JSON.stringify(body)});
+    closeModal(); await loadSettings(); render();
+  }catch(e){ alert(e.message); }
+}
+async function delTemplate(id){
+  if(!confirm('Delete this template? Contracts already sent are unaffected.'))return;
+  try{ await api('/api/crm/templates/'+encodeURIComponent(id),{method:'DELETE'});
+       closeModal(); await loadSettings(); render(); }catch(e){ alert(e.message); }
+}
+
+/* ---------- Package editor ---------- */
+function editProduct(id){
+  const p=id?PRODUCTS.find(x=>x.id===id):null;
+  const box=document.createElement('div');
+  box.className='modal'; box.id='bk-modal';
+  box.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <h2>${p?'Edit package':'New package'}</h2>
+      <button onclick="closeModal()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;cursor:pointer;line-height:1">×</button>
+    </div>
+    <label class="field" style="margin-top:16px"><span>Name</span>
+      <input id="p-name" value="${esc(p?p.name:'')}" placeholder="e.g. Wedding DJ — 5 hours"></label>
+    <label class="field"><span>Price (£)</span>
+      <input id="p-price" inputmode="decimal" value="${p&&p.price_pence?(p.price_pence/100).toFixed(2):''}" placeholder="750.00"></label>
+    <label class="field"><span>Description (shown on the quote)</span>
+      <textarea id="p-desc" rows="3" placeholder="What's included">${esc(p?p.description:'')}</textarea></label>
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-neon" onclick="saveProduct('${esc(p?p.id:'')}')">${p?'Save':'Add package'}</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      ${p?`<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="delProduct('${esc(p.id)}')">Delete</button>`:''}
+    </div>
+  </div>`;
+  document.body.appendChild(box);
+}
+async function saveProduct(id){
+  const body={name:$('p-name').value.trim(),description:$('p-desc').value,price_pence:toPence($('p-price').value)};
+  if(!body.name){ alert('Give the package a name.'); return; }
+  try{
+    if(id) await api('/api/crm/products/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
+    else await api('/api/crm/products',{method:'POST',body:JSON.stringify(body)});
+    closeModal(); await loadSettings(); render();
+  }catch(e){ alert(e.message); }
+}
+async function delProduct(id){
+  if(!confirm('Delete this package? Quotes already sent keep their prices.'))return;
+  try{ await api('/api/crm/products/'+encodeURIComponent(id),{method:'DELETE'});
+       closeModal(); await loadSettings(); render(); }catch(e){ alert(e.message); }
+}
+
+/* ---------- Custom field editor ---------- */
+function editField(id){
+  const f=id?FIELDS.find(x=>x.id===id):null;
+  const types=FIELD_TYPES.length?FIELD_TYPES:['text','textarea','money','number','date','dropdown','checkbox'];
+  const box=document.createElement('div');
+  box.className='modal'; box.id='bk-modal';
+  box.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <h2>${f?'Edit field':'New field'}</h2>
+      <button onclick="closeModal()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;cursor:pointer;line-height:1">×</button>
+    </div>
+    <label class="field" style="margin-top:16px"><span>Name</span>
+      <input id="f-name" value="${esc(f?f.name:'')}" placeholder="e.g. What 3 Words"></label>
+    <label class="field"><span>Type</span>
+      <select id="f-type">${types.map(t=>`<option ${f&&f.type===t?'selected':''}>${t}</option>`).join('')}</select></label>
+    <label class="field"><span>Options (dropdown only, one per line)</span>
+      <textarea id="f-options" rows="3" placeholder="Yes&#10;No">${esc(f&&f.options?f.options.join('\n'):'')}</textarea></label>
+    ${f?`<p class="muted" style="font-size:.82rem">Token: <b>{{custom.${esc(f.key)}}}</b> — this can't change, because templates use it.</p>`:''}
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-neon" onclick="saveField('${esc(f?f.id:'')}')">${f?'Save':'Add field'}</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      ${f?`<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="delField('${esc(f.id)}')">Delete</button>`:''}
+    </div>
+  </div>`;
+  document.body.appendChild(box);
+}
+async function saveField(id){
+  const body={name:$('f-name').value.trim(),type:$('f-type').value,
+    options:$('f-options').value.split('\n').map(x=>x.trim()).filter(Boolean)};
+  if(!body.name){ alert('Give the field a name.'); return; }
+  try{
+    if(id) await api('/api/crm/fields/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
+    else await api('/api/crm/fields',{method:'POST',body:JSON.stringify(body)});
+    closeModal(); await loadSettings(); render();
+  }catch(e){ alert(e.message); }
+}
+async function delField(id){
+  if(!confirm('Delete this field? Values already recorded on jobs are kept.'))return;
+  try{ await api('/api/crm/fields/'+encodeURIComponent(id),{method:'DELETE'});
+       closeModal(); await loadSettings(); render(); }catch(e){ alert(e.message); }
+}
+
+/* ---------- Stripe ---------- */
+async function connectStripe(){
+  try{ const d=await api('/api/crm/stripe/connect'); location.href=d.url; }
+  catch(e){ alert(e.message); }
+}
+async function disconnectStripe(){
+  if(!confirm('Disconnect Stripe? Clients will not be able to pay deposits online.'))return;
+  try{ await api('/api/crm/stripe/disconnect',{method:'POST'}); await loadSettings(); render(); }
+  catch(e){ alert(e.message); }
+}
+
+async function setTab(t){
+  TAB=t;
+  // Setup data is only fetched when the tab is opened, so the main list stays fast.
+  if(t==='settings'){ try{ await loadSettings(); }catch(e){} }
+  render();
+}
 
 /* ---------- Booking editor ---------- */
 function openBooking(id){ editBooking(id); }
