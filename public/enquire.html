@@ -138,6 +138,9 @@ button.go:disabled{opacity:.55;cursor:default}
 .msg.bad{border-color:#e6b5b0;background:var(--sl-error-bg);color:var(--sl-error)}
 .msg[hidden]{display:none}
 
+.intro{margin:0 0 var(--sl-gap);font-size:.94rem;color:var(--sl-muted)}
+.intro p{margin:0 0 8px}
+.intro p:last-child{margin:0}
 .done{padding:8px 0}
 .done h2{margin:0 0 8px;font-size:1.15rem}
 .done p{margin:0;color:var(--sl-muted)}
@@ -153,6 +156,7 @@ button.go:disabled{opacity:.55;cursor:default}
   <div class="brand" id="brand"></div>
   <p class="loading" id="loading">Loading the form…</p>
   <div class="msg bad" id="fatal" hidden></div>
+  <div class="intro" id="intro" hidden></div>
 
   <form id="form" hidden novalidate>
     <div class="msg bad" id="err" hidden></div>
@@ -348,10 +352,24 @@ if (!TOKEN){
       FIELDS = Array.isArray(d.fields) ? d.fields : [];
 
       var dj = d.dj || {};
+      var form = d.form || null;
       var who = dj.company || dj.name || '';
       if (who){
-        $('brand').innerHTML = '<h1>' + esc(who) + '</h1><p>Tell us about your event</p>';
+        $('brand').innerHTML = '<h1>' + esc(who) + '</h1><p>' +
+          esc((form && form.name) || 'Tell us about your event') + '</p>';
         document.title = 'Enquiry — ' + who;
+      }
+      // Intro copy is the DJ's own words, so paragraphs are honoured but no
+      // markup is: it is escaped first, then split on blank lines.
+      if (form && form.intro){
+        $('intro').innerHTML = form.intro.split(/\n\s*\n/).map(function(para){
+          return '<p>' + esc(para).replace(/\n/g, '<br>') + '</p>';
+        }).join('');
+        $('intro').hidden = false;
+      }
+      if (form && form.thanks){
+        $('done-h').textContent = 'Thanks — that\u2019s come through';
+        $('done-p').textContent = form.thanks;
       }
 
       var sel = $('f-type');
@@ -507,6 +525,7 @@ $('form').addEventListener('submit', function(ev){
     })
     .then(function(){
       $('form').hidden = true;
+      $('intro').hidden = true;
       $('done').hidden = false;
       tellHeight();
       $('done-h').setAttribute('tabindex','-1');

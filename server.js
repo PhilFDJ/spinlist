@@ -2999,14 +2999,40 @@ app.get('/api/places/details', async (req, res) => {
    to qualify an enquiry before it enters the pipeline.
    ================================================================ */
 
-// What the form should show — the DJ's custom fields, publicly readable by
-// enquiry token only (never the whole account).
+/* A token identifies EITHER the account's default form or one specific
+   questionnaire. Resolving both here keeps the two public endpoints honest
+   about which fields they'll accept — the allow-list is derived from the form,
+   never from the request. */
+function resolveEnquiryForm(token) {
+  const tpl = db.getTemplateByFormToken(token);
+  if (tpl) {
+    if (tpl.form_active === false) return null;
+    const owner = db.getUserById(tpl.owner_id);
+    if (!owner) return null;
+    // A form may only ask what the DJ has published. Belt and braces: if a field
+    // is later marked internal, it drops off every form that referenced it.
+    const publishable = db.listPublicFields(owner.id);
+    const wanted = Array.isArray(tpl.form_fields) ? tpl.form_fields : [];
+    return {
+      owner,
+      form: { id: tpl.id, name: tpl.name || '', intro: tpl.intro || '', thanks: tpl.thanks || '' },
+      fields: publishable.filter(f => wanted.includes(f.key)),
+    };
+  }
+  const owner = db.getUserByEnquiryToken(token);
+  if (!owner) return null;
+  return { owner, form: null, fields: db.listPublicFields(owner.id) };
+}
+
+// What the form should show — publicly readable by form token only (never the
+// whole account).
 app.get('/api/enquire/:token/form', (req, res) => {
-  const owner = db.getUserByEnquiryToken(req.params.token);
-  if (!owner) return res.status(404).json({ error: 'That enquiry form was not found.' });
+  const r = resolveEnquiryForm(req.params.token);
+  if (!r) return res.status(404).json({ error: 'That enquiry form was not found.' });
   res.json({
-    dj: { name: owner.name || '', company: owner.company || owner.name || '' },
-    fields: db.listFields(owner.id).map(f => ({ key: f.key, name: f.name, type: f.type, options: f.options })),
+    dj: { name: r.owner.name || '', company: r.owner.company || r.owner.name || '' },
+    form: r.form,
+    fields: r.fields.map(f => ({ key: f.key, name: f.name, type: f.type, options: f.options })),
     roles: db.bookingRoles(),
     sessionTypes: db.sessionTypes(),
   });
@@ -3015,8 +3041,9 @@ app.get('/api/enquire/:token/form', (req, res) => {
 // Submit an enquiry. Deliberately forgiving about what's filled in — a client
 // who can't complete a field shouldn't be blocked from making contact.
 app.post('/api/enquire/:token', async (req, res) => {
-  const owner = db.getUserByEnquiryToken(req.params.token);
-  if (!owner) return res.status(404).json({ error: 'That enquiry form was not found.' });
+  const resolved = resolveEnquiryForm(req.params.token);
+  if (!resolved) return res.status(404).json({ error: 'That enquiry form was not found.' });
+  const owner = resolved.owner;
   const b = req.body || {};
 
   // Basic spam guard: a hidden field real people never fill in.
@@ -3044,10 +3071,11 @@ app.post('/api/enquire/:token', async (req, res) => {
     db.setBookingContact(booking.id, 'venue', { name: b.venue_name, address: b.venue_address });
   }
   // Custom field answers.
-  const known = db.listFields(owner.id).map(f => f.key);
+  const known = resolved.fields.map(f => f.key);
   for (const [k, v] of Object.entries(b.custom || {})) {
     if (known.includes(k)) db.setBookingField(booking.id, k, v);
   }
+  if (resolved.form) db.setBookingSource(booking.id, resolved.form);
   db.markEnquiryNew(booking.id);
 
   // Tell the DJ, but never fail the client's submission because an email
@@ -3058,7 +3086,7 @@ app.post('/api/enquire/:token', async (req, res) => {
         { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME },
         {
           to: owner.email,
-          subject: `New enquiry — ${name}${b.event_date ? ' · ' + b.event_date : ''}`,
+          subject: `New enquiry${resolved.form && resolved.form.name ? ' (' + resolved.form.name + ')' : ''} — ${name}${b.event_date ? ' · ' + b.event_date : ''}`,
           replyTo: email,
           html: `<div style="font-family:system-ui,sans-serif">
             <h2 style="margin:0 0 8px">New enquiry</h2>
@@ -3092,6 +3120,36 @@ app.get('/api/crm/enquiry-link', auth.requireAuth, requireCrm, (req, res) => {
       `window.addEventListener('message',function(e){`,
       `  if(!e.data||e.data.type!=='spinlist:enquiry:height')return;`,
       `  var f=document.getElementById('enquiry-form');`,
+      `  if(f)f.style.height=e.data.height+'px';`,
+      `});`,
+      `<\/script>`,
+    ].join('\n'),
+  });
+});
+
+/* Link and embed code for one questionnaire, so a DJ with several brands can
+   put a different form on each website. */
+app.get('/api/crm/templates/:id/form-link', auth.requireAuth, requireCrm, (req, res) => {
+  const t = db.getTemplate(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Template not found.' });
+  if (t.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your template.' });
+  if (t.kind !== 'questionnaire') {
+    return res.status(400).json({ error: 'Only questionnaires can be used as enquiry forms.' });
+  }
+  const token = db.ensureFormToken(t.id);
+  const url = `${BASE_URL}/enquire.html?f=${token}`;
+  res.json({
+    token,
+    url,
+    active: t.form_active !== false,
+    embed: [
+      `<iframe id="enquiry-${token.slice(0, 6)}" src="${url}"`,
+      `  style="width:100%;min-height:640px;border:0" title="Enquiry form"></iframe>`,
+      `<script>`,
+      `window.addEventListener('message',function(e){`,
+      `  if(!e.data||e.data.type!=='spinlist:enquiry:height')return;`,
+      `  if(e.data.token!=='${token}')return;`,
+      `  var f=document.getElementById('enquiry-${token.slice(0, 6)}');`,
       `  if(f)f.style.height=e.data.height+'px';`,
       `});`,
       `<\/script>`,

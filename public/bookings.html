@@ -263,7 +263,9 @@ function settingsHtml(){
     <div class="bk">
       <div class="who"><b>${esc(t.name)}</b>
         <span class="muted" style="font-size:.84rem">
-          ${(t.sections||[]).length} section${(t.sections||[]).length===1?'':'s'}${t.kind==='questionnaire'?` · ${(t.questions||[]).length} question${(t.questions||[]).length===1?'':'s'}`:''}
+          ${t.kind==='questionnaire'
+            ? `${((t.form_fields||[]).length)+6} question${((t.form_fields||[]).length)+6===1?'':'s'} · ${t.form_active===false?'not accepting enquiries':'live'}`
+            : `${(t.sections||[]).length} section${(t.sections||[]).length===1?'':'s'}`}
           ${t.applies_to&&t.applies_to.length?' · '+esc(t.applies_to.join(', ')):''}
           ${t.is_default?' · default':''}
         </span></div>
@@ -316,7 +318,7 @@ function settingsHtml(){
       <div style="margin-top:12px">${FIELDS.map(f=>`
         <div class="bk">
           <div class="who"><b>${esc(f.name)}</b>
-            <span class="muted" style="font-size:.84rem">{{custom.${esc(f.key)}}} · ${esc(f.type)}</span></div>
+            <span class="muted" style="font-size:.84rem">{{custom.${esc(f.key)}}} · ${esc(f.type)} · ${f.public?'on the enquiry form':'internal only'}</span></div>
           <div><button class="btn btn-ghost btn-sm" onclick="editField('${esc(f.id)}')">Edit</button></div>
         </div>`).join('')||'<p class="muted" style="font-size:.9rem">No custom fields yet.</p>'}</div>
     </div>
@@ -369,13 +371,14 @@ function editTemplate(id,kind){
       <input type="checkbox" id="t-default" ${t&&t.is_default?'checked':''}>
       <span style="font-size:.9rem">Use this one by default</span></label>
 
+    ${k==='questionnaire'?questionnaireFormHtml(t):`
     <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 8px">
       <h2 style="font-size:1rem;margin:0">Sections</h2>
       <button class="btn btn-ghost btn-sm" onclick="addSection()">+ Add section</button>
     </div>
-    <div id="t-sections">${sections.map((s,i)=>sectionRow(s,i)).join('')||sectionRow({heading:'',body:''},0)}</div>
+    <div id="t-sections">${sections.map((s,i)=>sectionRow(s,i)).join('')||sectionRow({heading:'',body:''},0)}</div>`}
 
-    <details style="margin-top:16px">
+    <details style="margin-top:16px" ${k==='questionnaire'?'hidden':''}>
       <summary style="cursor:pointer;color:var(--plum);font-size:.88rem;font-weight:700">Which {{tokens}} can I use?</summary>
       <div class="muted" style="font-size:.82rem;margin-top:8px;line-height:1.7">
         <b style="color:var(--ink-2)">People:</b> {{clients.first_names}} · {{clients.names}} · {{primary_contact.name}} · {{partner_a.first_name}} · {{venue.name}} · {{venue.address}}<br>
@@ -395,6 +398,63 @@ function editTemplate(id,kind){
     </div>
   </div>`;
   document.body.appendChild(box);
+}
+
+/* A questionnaire IS a public enquiry form. Only fields already marked askable
+   appear here, so there's one source of truth and no way to put an internal
+   field on a public form by ticking the wrong box. */
+function questionnaireFormHtml(t){
+  const chosen=(t&&t.form_fields)||[];
+  const askable=FIELDS.filter(f=>f.public);
+  const hidden=FIELDS.length-askable.length;
+
+  return `
+    <label class="check-row" style="display:flex;gap:9px;align-items:center;cursor:pointer;margin:6px 0 18px">
+      <input type="checkbox" id="t-active" ${!t||t.form_active!==false?'checked':''}>
+      <span style="font-size:.9rem">Accepting enquiries
+        <span class="muted" style="display:block;font-size:.82rem">Turn off and the embedded form stops taking submissions.</span>
+      </span></label>
+
+    <label class="field"><span>Intro shown above the form</span>
+      <textarea id="t-intro" rows="3" placeholder="A line or two about what happens after they get in touch.">${esc(t?t.intro||'':'')}</textarea></label>
+
+    <label class="field"><span>Message shown after they send it</span>
+      <textarea id="t-thanks" rows="2" placeholder="Thanks — I'll come back to you within 24 hours.">${esc(t?t.thanks||'':'')}</textarea></label>
+
+    <div style="margin:18px 0 8px">
+      <h2 style="font-size:1rem;margin:0">What this form asks</h2>
+      <p class="muted" style="font-size:.82rem;margin:4px 0 0">Name, email, phone, event type, date and venue are always asked. Tick anything extra.</p>
+    </div>
+    <div id="t-fields">
+      ${askable.length?askable.map(f=>`
+        <label class="bk" style="display:flex;gap:10px;align-items:center;cursor:pointer">
+          <input type="checkbox" class="t-f" value="${esc(f.key)}" ${chosen.includes(f.key)?'checked':''}>
+          <span class="who"><b>${esc(f.name)}</b>
+            <span class="muted" style="font-size:.84rem">${esc(f.type)}</span></span>
+        </label>`).join('')
+        :'<p class="muted" style="font-size:.9rem">No fields are marked askable yet. Edit a custom field and tick &ldquo;Ask this on the public enquiry form&rdquo;.</p>'}
+    </div>
+    ${hidden>0?`<p class="muted" style="font-size:.82rem;margin-top:8px">${hidden} internal field${hidden===1?'':'s'} not shown — internal fields can&rsquo;t be added to a public form.</p>`:''}
+
+    ${t?`<div style="margin-top:18px">
+      <button class="btn btn-ghost btn-sm" onclick="showFormLink('${esc(t.id)}')">Get the embed code</button>
+      <div id="t-link" style="margin-top:10px"></div>
+    </div>`:'<p class="muted" style="font-size:.82rem;margin-top:16px">Create it, then come back for the embed code.</p>'}
+  `;
+}
+
+async function showFormLink(id){
+  const box=$('t-link');
+  box.innerHTML='<p class="muted" style="font-size:.88rem">Fetching…</p>';
+  try{
+    const d=await api('/api/crm/templates/'+encodeURIComponent(id)+'/form-link');
+    box.innerHTML=`
+      <label class="field"><span>Direct link — send this to someone</span>
+        <input readonly value="${esc(d.url)}" onclick="this.select()"></label>
+      <label class="field"><span>Embed code — paste into the website</span>
+        <textarea readonly rows="8" onclick="this.select()">${esc(d.embed)}</textarea></label>
+      <p class="muted" style="font-size:.82rem">The script resizes the frame as the form grows, so there&rsquo;s no scrollbar inside it.</p>`;
+  }catch(e){ box.innerHTML='<p style="font-size:.88rem;color:#c0392b">'+esc(e.message)+'</p>'; }
 }
 
 function sectionRow(s,i){
@@ -423,6 +483,13 @@ async function saveTemplate(id,kind){
     is_default:$('t-default').checked,
     sections,
   };
+  if(kind==='questionnaire'){
+    body.form_fields=[...document.querySelectorAll('#t-fields .t-f:checked')].map(el=>el.value);
+    body.intro=$('t-intro').value.trim();
+    body.thanks=$('t-thanks').value.trim();
+    body.form_active=$('t-active').checked;
+    body.sections=[];
+  }
   if(!body.name){ alert('Give it a name.'); return; }
   try{
     if(id) await api('/api/crm/templates/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
@@ -492,6 +559,12 @@ function editField(id){
       <select id="f-type">${types.map(t=>`<option ${f&&f.type===t?'selected':''}>${t}</option>`).join('')}</select></label>
     <label class="field"><span>Options (dropdown only, one per line)</span>
       <textarea id="f-options" rows="3" placeholder="Yes&#10;No">${esc(f&&f.options?f.options.join('\n'):'')}</textarea></label>
+    <label class="field" style="display:flex;gap:9px;align-items:flex-start">
+      <input id="f-public" type="checkbox" style="margin-top:3px;flex:none" ${f&&f.public?'checked':''}>
+      <span style="font-weight:400">Ask this on the public enquiry form
+        <span class="muted" style="display:block;font-size:.82rem">Leave off for anything internal — costs, margins, notes to yourself.</span>
+      </span>
+    </label>
     ${f?`<p class="muted" style="font-size:.82rem">Token: <b>{{custom.${esc(f.key)}}}</b> — this can't change, because templates use it.</p>`:''}
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
       <button class="btn btn-neon" onclick="saveField('${esc(f?f.id:'')}')">${f?'Save':'Add field'}</button>
@@ -503,6 +576,7 @@ function editField(id){
 }
 async function saveField(id){
   const body={name:$('f-name').value.trim(),type:$('f-type').value,
+    public:$('f-public').checked,
     options:$('f-options').value.split('\n').map(x=>x.trim()).filter(Boolean)};
   if(!body.name){ alert('Give the field a name.'); return; }
   try{
