@@ -3085,7 +3085,17 @@ app.get('/api/crm/enquiry-link', auth.requireAuth, requireCrm, (req, res) => {
   res.json({
     token,
     url: `${BASE_URL}/enquire.html?f=${token}`,
-    embed: `<iframe src="${BASE_URL}/enquire.html?f=${token}" style="width:100%;height:900px;border:0" title="Enquiry form"></iframe>`,
+    embed: [
+      `<iframe id="enquiry-form" src="${BASE_URL}/enquire.html?f=${token}"`,
+      `  style="width:100%;min-height:640px;border:0" title="Enquiry form"></iframe>`,
+      `<script>`,
+      `window.addEventListener('message',function(e){`,
+      `  if(!e.data||e.data.type!=='spinlist:enquiry:height')return;`,
+      `  var f=document.getElementById('enquiry-form');`,
+      `  if(f)f.style.height=e.data.height+'px';`,
+      `});`,
+      `<\/script>`,
+    ].join('\n'),
   });
 });
 
