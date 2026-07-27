@@ -3150,7 +3150,7 @@ function renderTemplate(tpl, booking, owner) {
 
 app.get('/api/crm/templates', auth.requireAuth, requireCrm, (req, res) => {
   res.json({
-    templates: db.listTemplates(req.user.id, req.query.kind),
+    templates: db.listCrmTemplates(req.user.id, req.query.kind),
     kinds: db.templateKinds(),
   });
 });
@@ -3177,7 +3177,7 @@ app.delete('/api/crm/templates/:id', auth.requireAuth, requireCrm, (req, res) =>
   const t = db.getTemplate(req.params.id);
   if (!t) return res.status(404).json({ error: 'Template not found.' });
   if (t.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your template.' });
-  db.deleteTemplate(t.id);
+  db.deleteCrmTemplate(t.id);
   res.json({ ok: true });
 });
 
