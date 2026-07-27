@@ -264,7 +264,7 @@ function settingsHtml(){
       <div class="who"><b>${esc(t.name)}</b>
         <span class="muted" style="font-size:.84rem">
           ${t.kind==='questionnaire'
-            ? `${((t.form_fields||[]).length)+6} question${((t.form_fields||[]).length)+6===1?'':'s'} · ${t.form_active===false?'not accepting enquiries':'live'}`
+            ? `${((t.form_fields||[]).length)+((t.questions||[]).length)+6} questions · ${t.form_active===false?'not accepting enquiries':'live'}`
             : `${(t.sections||[]).length} section${(t.sections||[]).length===1?'':'s'}`}
           ${t.applies_to&&t.applies_to.length?' · '+esc(t.applies_to.join(', ')):''}
           ${t.is_default?' · default':''}
@@ -436,11 +436,65 @@ function questionnaireFormHtml(t){
     </div>
     ${hidden>0?`<p class="muted" style="font-size:.82rem;margin-top:8px">${hidden} internal field${hidden===1?'':'s'} not shown — internal fields can&rsquo;t be added to a public form.</p>`:''}
 
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 4px">
+      <div>
+        <h2 style="font-size:1rem;margin:0">Your own questions</h2>
+        <p class="muted" style="font-size:.82rem;margin:4px 0 0">Just for this form. Answers show on the lead but can&rsquo;t be used in contract {{tokens}} &mdash; use a custom field for anything you&rsquo;ll reuse.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" style="flex:none" onclick="addQuestion()">+ Add</button>
+    </div>
+    <div id="t-questions">${((t&&t.questions)||[]).map((q,i)=>questionRow(q,i)).join('')}</div>
+
     ${t?`<div style="margin-top:18px">
       <button class="btn btn-ghost btn-sm" onclick="showFormLink('${esc(t.id)}')">Get the embed code</button>
       <div id="t-link" style="margin-top:10px"></div>
     </div>`:'<p class="muted" style="font-size:.82rem;margin-top:16px">Create it, then come back for the embed code.</p>'}
   `;
+}
+
+const Q_TYPES=[['text','Short answer'],['textarea','Long answer'],['dropdown','Choose one'],
+               ['checkbox','Yes / no tickbox'],['date','Date'],['number','Number']];
+
+function questionRow(q,i){
+  q=q||{label:'',type:'text',options:[],required:false};
+  return `<div class="bk t-q" style="display:block">
+    <div style="display:flex;gap:8px;align-items:flex-start">
+      <input class="q-label" value="${esc(q.label||'')}" placeholder="e.g. How did you hear about us?" style="flex:1">
+      <select class="q-type" onchange="syncQuestionRow(this)" style="flex:none;width:150px">
+        ${Q_TYPES.map(([v,l])=>`<option value="${v}" ${q.type===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <button onclick="this.closest('.t-q').remove()" title="Remove"
+        style="background:none;border:0;color:var(--muted);font-size:1.2rem;cursor:pointer;line-height:1;flex:none">×</button>
+    </div>
+    <textarea class="q-options" rows="2" placeholder="One choice per line" style="margin-top:8px;${q.type==='dropdown'?'':'display:none'}">${esc((q.options||[]).join('\n'))}</textarea>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:.84rem;cursor:pointer">
+      <input type="checkbox" class="q-req" ${q.required?'checked':''}> They must answer this
+    </label>
+  </div>`;
+}
+function syncQuestionRow(sel){
+  const row=sel.closest('.t-q');
+  row.querySelector('.q-options').style.display = sel.value==='dropdown' ? '' : 'none';
+}
+function addQuestion(){
+  const box=$('t-questions');
+  box.insertAdjacentHTML('beforeend',questionRow(null,box.children.length));
+}
+function readQuestions(){
+  return [...document.querySelectorAll('#t-questions .t-q')].map(row=>{
+    const label=row.querySelector('.q-label').value.trim();
+    const type=row.querySelector('.q-type').value;
+    return {
+      // The key is derived from the wording, which is how the answer is matched
+      // back on submission. Blank labels are dropped.
+      key:label.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40),
+      label, type,
+      options:type==='dropdown'
+        ? row.querySelector('.q-options').value.split('\n').map(x=>x.trim()).filter(Boolean)
+        : [],
+      required:row.querySelector('.q-req').checked,
+    };
+  }).filter(q=>q.label && q.key);
 }
 
 async function showFormLink(id){
@@ -488,6 +542,7 @@ async function saveTemplate(id,kind){
     body.intro=$('t-intro').value.trim();
     body.thanks=$('t-thanks').value.trim();
     body.form_active=$('t-active').checked;
+    body.questions=readQuestions();
     body.sections=[];
   }
   if(!body.name){ alert('Give it a name.'); return; }
@@ -666,6 +721,25 @@ function editBooking(id){
     <label class="field"><span>Notes</span>
       <textarea id="f-notes" placeholder="Anything worth remembering — access, timings, special requests…">${esc(b?b.notes:'')}</textarea></label>
 
+    ${FIELDS.length?`
+      <div style="margin-top:6px;padding-top:14px;border-top:1px solid var(--line)">
+        <h2 style="font-size:1rem;margin:0 0 10px">Your fields</h2>
+        ${FIELDS.map(f=>bookingFieldRow(f,b)).join('')}
+      </div>`:''}
+
+    ${b&&b.enquiry&&(b.enquiry.questions||[]).length?`
+      <div style="margin-top:6px;padding-top:14px;border-top:1px solid var(--line)">
+        <h2 style="font-size:1rem;margin:0">What they told you</h2>
+        <p class="muted" style="font-size:.82rem;margin:2px 0 10px">
+          From ${esc(b.enquiry.form_name||'your enquiry form')}${b.enquiry.at?' · '+esc(fmtDate(b.enquiry.at)):''}
+        </p>
+        ${b.enquiry.questions.map(q=>`
+          <div style="padding:7px 0;border-top:1px solid var(--line)">
+            <div class="muted" style="font-size:.8rem">${esc(q.label)}</div>
+            <div style="font-size:.92rem;white-space:pre-wrap">${q.answer===true?'Yes':q.answer===false?'No':esc(String(q.answer))||'<span class="muted">—</span>'}</div>
+          </div>`).join('')}
+      </div>`:''}
+
     ${b?`
       <div style="margin-top:6px;padding-top:14px;border-top:1px solid var(--line)">
         <h2 style="font-size:1rem">Payments</h2>
@@ -707,6 +781,48 @@ async function checkClash(date,selfId){
   }catch(e){ /* availability is advisory — never block saving */ }
 }
 
+/* Custom field answers on a booking. These were being written by the enquiry
+   form and by templates but never displayed anywhere, so an answer a client
+   gave was invisible the moment it arrived. */
+function bookingFieldRow(f,b){
+  const v=(b&&b.custom&&b.custom[f.key]!==undefined)?b.custom[f.key]:'';
+  const id='cf-'+f.key;
+  if(f.type==='checkbox') return `
+    <label style="display:flex;gap:9px;align-items:center;margin:0 0 10px;font-size:.9rem;cursor:pointer">
+      <input type="checkbox" id="${esc(id)}" data-key="${esc(f.key)}" class="cf" ${v===true||v==='true'?'checked':''}>
+      ${esc(f.name)}</label>`;
+  if(f.type==='textarea') return `
+    <label class="field"><span>${esc(f.name)}</span>
+      <textarea id="${esc(id)}" data-key="${esc(f.key)}" class="cf" rows="2">${esc(String(v))}</textarea></label>`;
+  if(f.type==='dropdown') return `
+    <label class="field"><span>${esc(f.name)}</span>
+      <select id="${esc(id)}" data-key="${esc(f.key)}" class="cf">
+        <option value="">—</option>
+        ${(f.options||[]).map(o=>`<option ${String(v)===o?'selected':''}>${esc(o)}</option>`).join('')}
+      </select></label>`;
+  const t=f.type==='date'?'date':f.type==='number'||f.type==='money'?'number':'text';
+  return `
+    <label class="field"><span>${esc(f.name)}${f.type==='money'?' (£)':''}</span>
+      <input id="${esc(id)}" data-key="${esc(f.key)}" class="cf" type="${t}"
+        ${f.type==='money'?'step="0.01"':''} value="${esc(String(v))}"></label>`;
+}
+
+/* Saved one at a time because that's the route the server exposes. Only changed
+   values are sent, so opening and closing a booking costs nothing. */
+async function saveBookingFields(id){
+  const rows=[...document.querySelectorAll('.cf')];
+  const b=BOOKINGS.find(x=>x.id===id);
+  const before=(b&&b.custom)||{};
+  for(const el of rows){
+    const key=el.dataset.key;
+    const val=el.type==='checkbox'?el.checked:el.value.trim();
+    const was=before[key]===undefined?(el.type==='checkbox'?false:''):before[key];
+    if(String(val)===String(was)) continue;
+    await api('/api/crm/bookings/'+encodeURIComponent(id)+'/custom/'+encodeURIComponent(key),
+      {method:'PUT',body:JSON.stringify({value:val===''?null:val})});
+  }
+}
+
 async function saveBooking(id){
   const body={
     title:$('f-title').value.trim(),
@@ -721,8 +837,13 @@ async function saveBooking(id){
   };
   if(!body.title){ alert('Give the booking a title.'); return; }
   try{
-    if(id) await api('/api/crm/bookings/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
-    else await api('/api/crm/bookings',{method:'POST',body:JSON.stringify(body)});
+    if(id){
+      await api('/api/crm/bookings/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
+      await saveBookingFields(id);
+    } else {
+      const r=await api('/api/crm/bookings',{method:'POST',body:JSON.stringify(body)});
+      if(r&&r.booking&&r.booking.id) await saveBookingFields(r.booking.id);
+    }
     closeModal(); await load();
   }catch(e){ alert(e.message); }
 }

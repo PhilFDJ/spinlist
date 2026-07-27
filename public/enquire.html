@@ -225,6 +225,11 @@ button.go:disabled{opacity:.55;cursor:default}
       <div id="extra"></div>
     </fieldset>
 
+    <fieldset id="q-wrap" hidden>
+      <legend id="q-legend">A few more details</legend>
+      <div id="questions"></div>
+    </fieldset>
+
     <fieldset>
       <legend>Anything else</legend>
       <div class="row">
@@ -308,18 +313,20 @@ function showErr(m){
 var EVENT_TYPES = ['Wedding','Corporate event','Birthday party','Anniversary',
                    'Christmas party','School prom','Other'];
 
-var FIELDS = [];
+var FIELDS = [], QUESTIONS = [];
 
-function fieldHtml(f){
-  var id = 'x-' + f.key;
-  var lab = '<label for="' + esc(id) + '">' + esc(f.name) + '</label>';
+function fieldHtml(f, prefix){
+  var id = (prefix || 'x-') + f.key;
+  var name = f.name || f.label || '';
+  var lab = '<label for="' + esc(id) + '">' + esc(name) +
+            (f.required ? ' <span class="req" aria-hidden="true">*</span>' : '') + '</label>';
   var t = f.type;
 
   if (t === 'textarea') return '<div class="row">' + lab + '<textarea id="' + esc(id) + '"></textarea></div>';
   if (t === 'number')   return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="number" step="any"></div>';
   if (t === 'date')     return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="date"></div>';
   if (t === 'money')    return '<div class="row">' + lab + '<div class="money"><span>&pound;</span><input id="' + esc(id) + '" type="number" step="0.01" min="0"></div></div>';
-  if (t === 'checkbox') return '<div class="row check"><input id="' + esc(id) + '" type="checkbox"><label for="' + esc(id) + '">' + esc(f.name) + '</label></div>';
+  if (t === 'checkbox') return '<div class="row check"><input id="' + esc(id) + '" type="checkbox"><label for="' + esc(id) + '">' + esc(name) + '</label></div>';
   if (t === 'dropdown'){
     var opts = ['<option value="">Please choose…</option>'].concat(
       (f.options || []).map(function(o){ return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; })
@@ -329,8 +336,8 @@ function fieldHtml(f){
   return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="text"></div>';
 }
 
-function readField(f){
-  var el = $('x-' + f.key);
+function readField(f, prefix){
+  var el = $((prefix || 'x-') + f.key);
   if (!el) return null;
   if (f.type === 'checkbox') return el.checked ? true : null;
   var v = (el.value || '').trim();
@@ -384,8 +391,15 @@ if (!TOKEN){
       syncPartners();
 
       if (FIELDS.length){
-        $('extra').innerHTML = FIELDS.map(fieldHtml).join('');
+        $('extra').innerHTML = FIELDS.map(function(f){ return fieldHtml(f, 'x-'); }).join('');
         $('extra-wrap').hidden = false;
+      }
+      QUESTIONS = Array.isArray(d.questions) ? d.questions : [];
+      if (QUESTIONS.length){
+        $('questions').innerHTML = QUESTIONS.map(function(q){ return fieldHtml(q, 'q-'); }).join('');
+        $('q-wrap').hidden = false;
+        // Two "more details" headings in a row reads as a mistake.
+        if (FIELDS.length) $('q-legend').textContent = 'And a little more';
       }
 
       $('loading').hidden = true;
@@ -489,9 +503,23 @@ $('form').addEventListener('submit', function(ev){
 
   var custom = {};
   FIELDS.forEach(function(f){
-    var v = readField(f);
+    var v = readField(f, 'x-');
     if (v !== null) custom[f.key] = v;
   });
+
+  var answers = {};
+  var missing = null;
+  QUESTIONS.forEach(function(q){
+    var v = readField(q, 'q-');
+    if (v !== null) answers[q.key] = v;
+    else if (q.required && !missing) missing = q;
+  });
+  if (missing){
+    showErr('Please answer: ' + missing.label);
+    var el = $('q-' + missing.key);
+    if (el) el.focus();
+    return;
+  }
 
   var body = {
     name: name,
@@ -505,7 +533,8 @@ $('form').addEventListener('submit', function(ev){
     partner_b_name: $('partners').hidden ? '' : $('f-pb').value.trim(),
     message: $('f-msg').value.trim(),
     website: $('f-website').value,   // honeypot, sent as-is
-    custom: custom
+    custom: custom,
+    answers: answers
   };
 
   var btn = $('send');

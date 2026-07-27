@@ -3017,11 +3017,15 @@ function resolveEnquiryForm(token) {
       owner,
       form: { id: tpl.id, name: tpl.name || '', intro: tpl.intro || '', thanks: tpl.thanks || '' },
       fields: publishable.filter(f => wanted.includes(f.key)),
+      // The form's own questions, written by the DJ for this form only. Unlike
+      // custom fields these aren't account-wide, so they can't be merged into a
+      // contract — they're recorded on the lead instead.
+      questions: (Array.isArray(tpl.questions) ? tpl.questions : []).filter(q => q.label && q.key),
     };
   }
   const owner = db.getUserByEnquiryToken(token);
   if (!owner) return null;
-  return { owner, form: null, fields: db.listPublicFields(owner.id) };
+  return { owner, form: null, fields: db.listPublicFields(owner.id), questions: [] };
 }
 
 // What the form should show — publicly readable by form token only (never the
@@ -3033,6 +3037,7 @@ app.get('/api/enquire/:token/form', (req, res) => {
     dj: { name: r.owner.name || '', company: r.owner.company || r.owner.name || '' },
     form: r.form,
     fields: r.fields.map(f => ({ key: f.key, name: f.name, type: f.type, options: f.options })),
+    questions: r.questions.map(q => ({ key: q.key, label: q.label, type: q.type, options: q.options, required: !!q.required })),
     roles: db.bookingRoles(),
     sessionTypes: db.sessionTypes(),
   });
@@ -3076,6 +3081,22 @@ app.post('/api/enquire/:token', async (req, res) => {
     if (known.includes(k)) db.setBookingField(booking.id, k, v);
   }
   if (resolved.form) db.setBookingSource(booking.id, resolved.form);
+
+  /* Form-specific answers. Only questions the form actually declares are
+     recorded, so a submission can't invent its own. */
+  if (resolved.questions.length) {
+    const given = (b.answers && typeof b.answers === 'object') ? b.answers : {};
+    const answered = resolved.questions
+      .map(q => ({ label: q.label, type: q.type, answer: given[q.key] }))
+      .filter(q => q.answer !== undefined && q.answer !== null && q.answer !== '');
+    if (answered.length) {
+      db.setBookingEnquiry(booking.id, {
+        form_id: resolved.form.id,
+        form_name: resolved.form.name,
+        questions: answered,
+      });
+    }
+  }
   db.markEnquiryNew(booking.id);
 
   // Tell the DJ, but never fail the client's submission because an email
