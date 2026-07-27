@@ -223,14 +223,23 @@ function clientsHtml(){
 /* ================= Setup (templates, products, custom fields) =================
    Set these up once, then work in bookings day to day. */
 let TEMPLATES=[], PRODUCTS=[], FIELDS=[], FIELD_TYPES=[], ENQUIRY=null, STRIPE=null;
+let SETTINGS_ERRORS=[];
 
 async function loadSettings(){
+  /* Each call falls back to an empty value so one failure doesn't blank the
+     whole tab — but the failure is RECORDED and shown, not swallowed. A
+     silent catch here once made a broken endpoint look like an empty list. */
+  SETTINGS_ERRORS=[];
+  const grab=async(url,fallback)=>{
+    try{ return await api(url); }
+    catch(err){ SETTINGS_ERRORS.push(url.replace('/api/crm/','')+' \u2014 '+err.message); return fallback; }
+  };
   const [t,p,f,e,s]=await Promise.all([
-    api('/api/crm/templates').catch(()=>({templates:[]})),
-    api('/api/crm/products').catch(()=>({products:[]})),
-    api('/api/crm/fields').catch(()=>({fields:[],types:[]})),
-    api('/api/crm/enquiry-link').catch(()=>null),
-    api('/api/crm/stripe/status').catch(()=>null),
+    grab('/api/crm/templates',{templates:[]}),
+    grab('/api/crm/products',{products:[]}),
+    grab('/api/crm/fields',{fields:[],types:[]}),
+    grab('/api/crm/enquiry-link',null),
+    grab('/api/crm/stripe/status',null),
   ]);
   TEMPLATES=t.templates||[]; PRODUCTS=p.products||[];
   FIELDS=f.fields||[]; FIELD_TYPES=f.types||[];
@@ -238,8 +247,17 @@ async function loadSettings(){
 }
 
 function settingsHtml(){
+  /* Records created before the CRM existed have no `kind`. Treat them as
+     questionnaires rather than dropping them from both lists. */
   const contracts=TEMPLATES.filter(t=>t.kind==='contract');
-  const quests=TEMPLATES.filter(t=>t.kind==='questionnaire');
+  const quests=TEMPLATES.filter(t=>t.kind==='questionnaire'||!t.kind);
+
+  const errBanner=SETTINGS_ERRORS.length?`
+    <div class="bk" style="border-left:4px solid #c0392b;background:#fdf3f2">
+      <div class="who"><b>Some settings couldn't load</b>
+        <div class="sub">${SETTINGS_ERRORS.map(esc).join('<br>')}</div>
+      </div>
+    </div>`:'';
 
   const tplRow=t=>`
     <div class="bk">
@@ -255,6 +273,7 @@ function settingsHtml(){
     </div>`;
 
   return `
+    ${errBanner}
     <div class="panel">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <div><h2 style="margin:0">Contracts</h2>
