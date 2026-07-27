@@ -79,7 +79,7 @@ label{display:block;font-size:.875rem;font-weight:600;margin:0 0 5px}
 .hint{display:block;font-weight:400;color:var(--sl-muted);font-size:.8rem;margin-top:2px}
 
 input[type=text],input[type=email],input[type=tel],input[type=date],
-input[type=number],select,textarea{
+input[type=time],input[type=number],select,textarea{
   width:100%;
   font:inherit;
   color:inherit;
@@ -325,6 +325,11 @@ function fieldHtml(f, prefix){
   if (t === 'textarea') return '<div class="row">' + lab + '<textarea id="' + esc(id) + '"></textarea></div>';
   if (t === 'number')   return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="number" step="any"></div>';
   if (t === 'date')     return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="date"></div>';
+  if (t === 'time')     return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="time"></div>';
+  if (t === 'address')  return '<div class="row ac">' + lab +
+                               '<input id="' + esc(id) + '" type="text" autocomplete="off" data-places="1"' +
+                               ' role="combobox" aria-expanded="false" aria-autocomplete="list">' +
+                               '<span class="hint" data-for="' + esc(id) + '"></span></div>';
   if (t === 'money')    return '<div class="row">' + lab + '<div class="money"><span>&pound;</span><input id="' + esc(id) + '" type="number" step="0.01" min="0"></div></div>';
   if (t === 'checkbox') return '<div class="row check"><input id="' + esc(id) + '" type="checkbox"><label for="' + esc(id) + '">' + esc(name) + '</label></div>';
   if (t === 'dropdown'){
@@ -410,9 +415,14 @@ if (!TOKEN){
     .catch(function(e){ fatal(e.message || 'That form could not be loaded.'); });
 }
 
-/* ---- address lookup -------------------------------------------------- */
-function setupAddress(){
-  var input = $('f-venue'), list = $('ac-list'), addr = $('f-addr'), hint = $('venue-hint');
+/* ---- address lookup --------------------------------------------------
+   Attachable to ANY input, so the venue box and every address question get the
+   same map-backed lookup rather than one being special. A session token spans
+   the keystrokes and is closed by the details call, which is what keeps the
+   lookups inside the free tier. */
+var PLACES_ON = false;
+
+function attachPlaces(input, list, onPick){
   var session = null, timer = null, items = [], cursor = -1;
 
   function newSession(){
@@ -420,13 +430,15 @@ function setupAddress(){
             : String(Date.now()) + Math.random().toString(36).slice(2);
   }
   function close(){
-    list.hidden = true; input.setAttribute('aria-expanded','false');
-    items = []; cursor = -1; tellHeight();
+    list.hidden = true;
+    input.setAttribute('aria-expanded','false');
+    items = []; cursor = -1;
+    tellHeight();
   }
   function draw(){
     if (!items.length) return close();
     list.innerHTML = items.map(function(p,i){
-      return '<li role="option" id="ac-' + i + '" aria-selected="' + (i===cursor) + '">' +
+      return '<li role="option" aria-selected="' + (i===cursor) + '">' +
              '<b>' + esc(p.main) + '</b>' +
              (p.secondary ? '<small>' + esc(p.secondary) + '</small>' : '') + '</li>';
     }).join('');
@@ -439,54 +451,84 @@ function setupAddress(){
     if (!p) return;
     fetch('/api/places/details?id=' + encodeURIComponent(p.id) + '&token=' + encodeURIComponent(session || ''))
       .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(d){
-        if (d){ input.value = d.name || p.main; addr.value = d.address || ''; }
-        else { input.value = p.main; addr.value = p.secondary || ''; }
-        newSession();     // details call closed the old session
-        close();
-      })
-      .catch(function(){ input.value = p.main; close(); });
+      .then(function(d){ onPick(d || { name: p.main, address: p.secondary || '' }, p); })
+      .catch(function(){ onPick({ name: p.main, address: p.secondary || '' }, p); })
+      .then(function(){ newSession(); close(); });
   }
+
+  newSession();
+  input.addEventListener('input', function(){
+    clearTimeout(timer);
+    var q = input.value.trim();
+    if (q.length < 3) return close();
+    // Debounced: billed per session rather than per keystroke, but there's still
+    // no reason to fire a request on every letter.
+    timer = setTimeout(function(){
+      fetch('/api/places/autocomplete?q=' + encodeURIComponent(q) + '&token=' + encodeURIComponent(session || ''))
+        .then(function(r){ return r.json(); })
+        .then(function(d){ items = (d && d.predictions) || []; cursor = -1; draw(); })
+        .catch(close);
+    }, 250);
+  });
+  input.addEventListener('keydown', function(ev){
+    if (list.hidden) return;
+    if (ev.key === 'ArrowDown'){ ev.preventDefault(); cursor = Math.min(cursor+1, items.length-1); draw(); }
+    else if (ev.key === 'ArrowUp'){ ev.preventDefault(); cursor = Math.max(cursor-1, 0); draw(); }
+    else if (ev.key === 'Enter' && cursor >= 0){ ev.preventDefault(); choose(cursor); }
+    else if (ev.key === 'Escape'){ close(); }
+  });
+  list.addEventListener('mousedown', function(ev){
+    var li = ev.target.closest('li');
+    if (!li) return;
+    ev.preventDefault();
+    choose(Array.prototype.indexOf.call(list.children, li));
+  });
+  document.addEventListener('click', function(ev){
+    if (input !== ev.target && !list.contains(ev.target)) close();
+  });
+}
+
+function makeList(after){
+  var ul = document.createElement('ul');
+  ul.className = 'ac-list';
+  ul.setAttribute('role','listbox');
+  ul.hidden = true;
+  after.parentNode.appendChild(ul);
+  return ul;
+}
+
+/* Wire up the venue pair plus every address-type question. Called after the
+   form definition has rendered, since the address inputs don't exist before. */
+function setupAddress(){
+  var venue = $('f-venue'), addr = $('f-addr'), hint = $('venue-hint');
 
   fetch('/api/places/enabled')
     .then(function(r){ return r.json(); })
-    .then(function(d){
-      if (!d.enabled){
+    .then(function(d){ return !!(d && d.enabled); })
+    .catch(function(){ return false; })
+    .then(function(on){
+      PLACES_ON = on;
+      if (!on){
+        // No key configured: the boxes still work, they're just typed by hand.
         hint.textContent = 'Where is the event being held?';
+        document.querySelectorAll('.hint[data-for]').forEach(function(el){
+          el.textContent = 'Type the full address';
+        });
         return;
       }
-      newSession();
-      input.addEventListener('input', function(){
-        clearTimeout(timer);
-        var q = input.value.trim();
-        if (q.length < 3) return close();
-        // Debounced: autocomplete is billed per session, not per keystroke, but
-        // there's no reason to fire a request on every letter either.
-        timer = setTimeout(function(){
-          fetch('/api/places/autocomplete?q=' + encodeURIComponent(q) + '&token=' + encodeURIComponent(session || ''))
-            .then(function(r){ return r.json(); })
-            .then(function(d){ items = (d && d.predictions) || []; cursor = -1; draw(); })
-            .catch(close);
-        }, 250);
+      attachPlaces(venue, $('ac-list'), function(det){
+        venue.value = det.name || venue.value;
+        addr.value = det.address || '';
       });
-      input.addEventListener('keydown', function(ev){
-        if (list.hidden) return;
-        if (ev.key === 'ArrowDown'){ ev.preventDefault(); cursor = Math.min(cursor+1, items.length-1); draw(); }
-        else if (ev.key === 'ArrowUp'){ ev.preventDefault(); cursor = Math.max(cursor-1, 0); draw(); }
-        else if (ev.key === 'Enter' && cursor >= 0){ ev.preventDefault(); choose(cursor); }
-        else if (ev.key === 'Escape'){ close(); }
+      document.querySelectorAll('input[data-places="1"]').forEach(function(el){
+        var h = document.querySelector('.hint[data-for="' + el.id + '"]');
+        if (h) h.textContent = 'Start typing and pick from the list';
+        attachPlaces(el, makeList(el), function(det){
+          // A single box wants the full postal address, not just the name.
+          el.value = det.address || det.name || el.value;
+        });
       });
-      list.addEventListener('mousedown', function(ev){
-        var li = ev.target.closest('li');
-        if (!li) return;
-        ev.preventDefault();
-        choose(Array.prototype.indexOf.call(list.children, li));
-      });
-      document.addEventListener('click', function(ev){
-        if (!input.contains(ev.target) && !list.contains(ev.target)) close();
-      });
-    })
-    .catch(function(){ hint.textContent = 'Where is the event being held?'; });
+    });
 }
 
 /* ---- submit ---------------------------------------------------------- */

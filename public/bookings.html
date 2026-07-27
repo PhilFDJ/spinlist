@@ -453,7 +453,8 @@ function questionnaireFormHtml(t){
 }
 
 const Q_TYPES=[['text','Short answer'],['textarea','Long answer'],['dropdown','Choose one'],
-               ['checkbox','Yes / no tickbox'],['date','Date'],['number','Number']];
+               ['checkbox','Yes / no tickbox'],['date','Date'],['time','Time'],
+               ['address','Address (map lookup)'],['number','Number']];
 
 function questionRow(q,i){
   q=q||{label:'',type:'text',options:[],required:false};
@@ -612,6 +613,7 @@ function editField(id){
       <input id="f-name" value="${esc(f?f.name:'')}" placeholder="e.g. What 3 Words"></label>
     <label class="field"><span>Type</span>
       <select id="f-type">${types.map(t=>`<option ${f&&f.type===t?'selected':''}>${t}</option>`).join('')}</select></label>
+    <p class="muted" style="font-size:.82rem;margin:-6px 0 12px">Address fields get map-backed lookup on the public form, so you get a real address rather than whatever was typed.</p>
     <label class="field"><span>Options (dropdown only, one per line)</span>
       <textarea id="f-options" rows="3" placeholder="Yes&#10;No">${esc(f&&f.options?f.options.join('\n'):'')}</textarea></label>
     <label class="field" style="display:flex;gap:9px;align-items:flex-start">
@@ -800,7 +802,8 @@ function bookingFieldRow(f,b){
         <option value="">—</option>
         ${(f.options||[]).map(o=>`<option ${String(v)===o?'selected':''}>${esc(o)}</option>`).join('')}
       </select></label>`;
-  const t=f.type==='date'?'date':f.type==='number'||f.type==='money'?'number':'text';
+  const t=f.type==='date'?'date':f.type==='time'?'time'
+         :f.type==='number'||f.type==='money'?'number':'text';
   return `
     <label class="field"><span>${esc(f.name)}${f.type==='money'?' (£)':''}</span>
       <input id="${esc(id)}" data-key="${esc(f.key)}" class="cf" type="${t}"
