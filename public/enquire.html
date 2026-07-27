@@ -138,6 +138,11 @@ button.go:disabled{opacity:.55;cursor:default}
 .msg.bad{border-color:#e6b5b0;background:var(--sl-error-bg);color:var(--sl-error)}
 .msg[hidden]{display:none}
 
+h2.sec{
+  font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--sl-muted);margin:24px 0 10px;
+}
+#items > h2.sec:first-child{margin-top:0}
 .intro{margin:0 0 var(--sl-gap);font-size:.94rem;color:var(--sl-muted)}
 .intro p{margin:0 0 8px}
 .intro p:last-child{margin:0}
@@ -161,82 +166,7 @@ button.go:disabled{opacity:.55;cursor:default}
   <form id="form" hidden novalidate>
     <div class="msg bad" id="err" hidden></div>
 
-    <fieldset>
-      <legend>Your details</legend>
-      <div class="row">
-        <label for="f-name">Your name <span class="req" aria-hidden="true">*</span></label>
-        <input id="f-name" name="name" type="text" autocomplete="name" required>
-      </div>
-      <div class="two">
-        <div class="row">
-          <label for="f-email">Email <span class="req" aria-hidden="true">*</span></label>
-          <input id="f-email" name="email" type="email" autocomplete="email" required>
-        </div>
-        <div class="row">
-          <label for="f-phone">Phone</label>
-          <input id="f-phone" name="phone" type="tel" autocomplete="tel">
-        </div>
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>The event</legend>
-      <div class="two">
-        <div class="row">
-          <label for="f-type">What kind of event?</label>
-          <select id="f-type" name="event_type"></select>
-        </div>
-        <div class="row">
-          <label for="f-date">Date <span class="hint">Leave blank if you're not sure yet</span></label>
-          <input id="f-date" name="event_date" type="date">
-        </div>
-      </div>
-      <div class="two" id="partners" hidden>
-        <div class="row">
-          <label for="f-pa">First name</label>
-          <input id="f-pa" name="partner_a_name" type="text">
-        </div>
-        <div class="row">
-          <label for="f-pb">Partner's first name</label>
-          <input id="f-pb" name="partner_b_name" type="text">
-        </div>
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Venue</legend>
-      <div class="row ac">
-        <label for="f-venue">Venue name or address
-          <span class="hint" id="venue-hint">Start typing and pick from the list</span>
-        </label>
-        <input id="f-venue" name="venue_name" type="text" autocomplete="off"
-               role="combobox" aria-expanded="false" aria-autocomplete="list"
-               aria-controls="ac-list">
-        <ul class="ac-list" id="ac-list" role="listbox" hidden></ul>
-      </div>
-      <div class="row">
-        <label for="f-addr">Address</label>
-        <input id="f-addr" name="venue_address" type="text" autocomplete="off">
-      </div>
-    </fieldset>
-
-    <fieldset id="extra-wrap" hidden>
-      <legend id="extra-legend">A few more details</legend>
-      <div id="extra"></div>
-    </fieldset>
-
-    <fieldset id="q-wrap" hidden>
-      <legend id="q-legend">A few more details</legend>
-      <div id="questions"></div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Anything else</legend>
-      <div class="row">
-        <label for="f-msg">Tell us about your event</label>
-        <textarea id="f-msg" name="message"></textarea>
-      </div>
-    </fieldset>
+    <div id="items"></div>
 
     <!-- Spam trap. Real people never fill this in; bots fill everything. -->
     <div class="hp" aria-hidden="true">
@@ -307,14 +237,10 @@ function showErr(m){
   tellHeight();
 }
 
-/* Public-facing event types. Deliberately NOT db.sessionTypes() — that list is
-   internal scheduling vocabulary ("Setup", "Unavailable") and means nothing to
-   a client. Per-form configuration replaces this hardcoded list. */
-var EVENT_TYPES = ['Wedding','Corporate event','Birthday party','Anniversary',
-                   'Christmas party','School prom','Other'];
+var ITEMS = [];
 
-var FIELDS = [], QUESTIONS = [];
-
+/* Renders one answerable control. Shared by custom fields and by a form's own
+   questions, since from the page's point of view they differ only in prefix. */
 function fieldHtml(f, prefix){
   var id = (prefix || 'x-') + f.key;
   var name = f.name || f.label || '';
@@ -326,14 +252,14 @@ function fieldHtml(f, prefix){
   if (t === 'number')   return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="number" step="any"></div>';
   if (t === 'date')     return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="date"></div>';
   if (t === 'time')     return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="time"></div>';
+  if (t === 'money')    return '<div class="row">' + lab + '<div class="money"><span>&pound;</span><input id="' + esc(id) + '" type="number" step="0.01" min="0"></div></div>';
+  if (t === 'checkbox') return '<div class="row check"><input id="' + esc(id) + '" type="checkbox"><label for="' + esc(id) + '">' + esc(name) + '</label></div>';
   if (t === 'address')  return '<div class="row ac">' + lab +
                                '<input id="' + esc(id) + '" type="text" autocomplete="off" data-places="1"' +
                                ' role="combobox" aria-expanded="false" aria-autocomplete="list">' +
                                '<span class="hint" data-for="' + esc(id) + '"></span></div>';
-  if (t === 'money')    return '<div class="row">' + lab + '<div class="money"><span>&pound;</span><input id="' + esc(id) + '" type="number" step="0.01" min="0"></div></div>';
-  if (t === 'checkbox') return '<div class="row check"><input id="' + esc(id) + '" type="checkbox"><label for="' + esc(id) + '">' + esc(name) + '</label></div>';
   if (t === 'dropdown'){
-    var opts = ['<option value="">Please choose…</option>'].concat(
+    var opts = ['<option value="">Please choose\u2026</option>'].concat(
       (f.options || []).map(function(o){ return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; })
     ).join('');
     return '<div class="row">' + lab + '<select id="' + esc(id) + '">' + opts + '</select></div>';
@@ -349,6 +275,69 @@ function readField(f, prefix){
   return v === '' ? null : v;
 }
 
+/* Every control is rendered from the layout the DJ built, in their order. The
+   page has no opinion about what a form contains beyond how each type looks. */
+function itemHtml(it){
+  if (it.kind === 'heading') return '<h2 class="sec">' + esc(it.label) + '</h2>';
+
+  var id = it.kind === 'core' ? 'c-' + it.key
+         : it.kind === 'field' ? 'x-' + it.key : 'q-' + it.key;
+  var req = it.required ? ' <span class="req" aria-hidden="true">*</span>' : '';
+  var lab = '<label for="' + esc(id) + '">' + esc(it.label) + req + '</label>';
+
+  if (it.kind === 'core'){
+    if (it.key === 'venue') return '<div class="row ac">' + lab +
+      '<input id="c-venue" type="text" autocomplete="off" role="combobox"' +
+      ' aria-expanded="false" aria-autocomplete="list">' +
+      '<span class="hint" id="venue-hint">Start typing and pick from the list</span>' +
+      '<ul class="ac-list" id="ac-list" role="listbox" hidden></ul>' +
+      '</div><div class="row"><label for="c-venue-addr">Address</label>' +
+      '<input id="c-venue-addr" type="text" autocomplete="off"></div>';
+
+    if (it.key === 'partners') return '<div class="two">' +
+      '<div class="row"><label for="c-partner-a">' + esc(it.label) + req + '</label>' +
+      '<input id="c-partner-a" type="text"></div>' +
+      '<div class="row"><label for="c-partner-b">And their partner</label>' +
+      '<input id="c-partner-b" type="text"></div></div>';
+
+    if (it.key === 'event_type'){
+      var opts = (it.options || []).map(function(o){
+        return '<option value="' + esc(o) + '">' + esc(o) + '</option>';
+      }).join('');
+      return '<div class="row">' + lab + '<select id="' + esc(id) + '">' + opts + '</select></div>';
+    }
+    if (it.key === 'message')
+      return '<div class="row">' + lab + '<textarea id="' + esc(id) + '"></textarea></div>';
+
+    var t = it.key === 'email' ? 'email' : it.key === 'phone' ? 'tel'
+          : it.key === 'event_date' ? 'date' : 'text';
+    var ac = it.key === 'name' ? ' autocomplete="name"'
+           : it.key === 'email' ? ' autocomplete="email"'
+           : it.key === 'phone' ? ' autocomplete="tel"' : '';
+    return '<div class="row">' + lab + '<input id="' + esc(id) + '" type="' + t + '"' + ac + '></div>';
+  }
+
+  return fieldHtml({ key: it.key, name: it.label, type: it.type,
+                     options: it.options, required: it.required },
+                   it.kind === 'field' ? 'x-' : 'q-');
+}
+
+function readItem(it){
+  if (it.kind === 'heading') return null;
+  if (it.kind === 'core'){
+    if (it.key === 'venue'){
+      return ($('c-venue').value.trim() + $('c-venue-addr').value.trim()) || null;
+    }
+    if (it.key === 'partners'){
+      return ($('c-partner-a').value.trim() + $('c-partner-b').value.trim()) || null;
+    }
+    var el = $('c-' + it.key);
+    var v = el ? el.value.trim() : '';
+    return v === '' ? null : v;
+  }
+  return readField({ key: it.key, type: it.type }, it.kind === 'field' ? 'x-' : 'q-');
+}
+
 /* ---- load the form definition --------------------------------------- */
 if (!TOKEN){
   fatal('This form link is incomplete. Please use the full link you were given.');
@@ -361,8 +350,6 @@ if (!TOKEN){
       });
     })
     .then(function(d){
-      FIELDS = Array.isArray(d.fields) ? d.fields : [];
-
       var dj = d.dj || {};
       var form = d.form || null;
       var who = dj.company || dj.name || '';
@@ -371,41 +358,21 @@ if (!TOKEN){
           esc((form && form.name) || 'Tell us about your event') + '</p>';
         document.title = 'Enquiry — ' + who;
       }
-      // Intro copy is the DJ's own words, so paragraphs are honoured but no
-      // markup is: it is escaped first, then split on blank lines.
+      // Intro copy is the DJ's own words: escaped first, then blank lines become
+      // paragraphs. No markup is honoured.
       if (form && form.intro){
         $('intro').innerHTML = form.intro.split(/\n\s*\n/).map(function(para){
           return '<p>' + esc(para).replace(/\n/g, '<br>') + '</p>';
         }).join('');
         $('intro').hidden = false;
       }
-      if (form && form.thanks){
-        $('done-h').textContent = 'Thanks — that\u2019s come through';
-        $('done-p').textContent = form.thanks;
-      }
+      if (form && form.thanks) $('done-p').textContent = form.thanks;
 
-      var sel = $('f-type');
-      sel.innerHTML = EVENT_TYPES.map(function(t){
-        return '<option value="' + esc(t) + '">' + esc(t) + '</option>';
-      }).join('');
-
-      // Partner names are a wedding question. Asking a corporate client for
-      // their partner's name is the kind of detail that loses you the job.
-      function syncPartners(){ $('partners').hidden = sel.value !== 'Wedding'; tellHeight(); }
-      sel.addEventListener('change', syncPartners);
-      syncPartners();
-
-      if (FIELDS.length){
-        $('extra').innerHTML = FIELDS.map(function(f){ return fieldHtml(f, 'x-'); }).join('');
-        $('extra-wrap').hidden = false;
+      ITEMS = Array.isArray(d.items) ? d.items : [];
+      if (!ITEMS.length){
+        return fatal('This form has no questions on it yet.');
       }
-      QUESTIONS = Array.isArray(d.questions) ? d.questions : [];
-      if (QUESTIONS.length){
-        $('questions').innerHTML = QUESTIONS.map(function(q){ return fieldHtml(q, 'q-'); }).join('');
-        $('q-wrap').hidden = false;
-        // Two "more details" headings in a row reads as a mistake.
-        if (FIELDS.length) $('q-legend').textContent = 'And a little more';
-      }
+      $('items').innerHTML = ITEMS.map(itemHtml).join('');
 
       $('loading').hidden = true;
       $('form').hidden = false;
@@ -500,7 +467,9 @@ function makeList(after){
 /* Wire up the venue pair plus every address-type question. Called after the
    form definition has rendered, since the address inputs don't exist before. */
 function setupAddress(){
-  var venue = $('f-venue'), addr = $('f-addr'), hint = $('venue-hint');
+  var venue = $('c-venue'), addr = $('c-venue-addr'), hint = $('venue-hint');
+  var addressInputs = document.querySelectorAll('input[data-places="1"]');
+  if (!venue && !addressInputs.length) return;
 
   fetch('/api/places/enabled')
     .then(function(r){ return r.json(); })
@@ -510,19 +479,21 @@ function setupAddress(){
       PLACES_ON = on;
       if (!on){
         // No key configured: the boxes still work, they're just typed by hand.
-        hint.textContent = 'Where is the event being held?';
+        if (hint) hint.textContent = 'Where is the event being held?';
         document.querySelectorAll('.hint[data-for]').forEach(function(el){
           el.textContent = 'Type the full address';
         });
         return;
       }
-      attachPlaces(venue, $('ac-list'), function(det){
-        venue.value = det.name || venue.value;
-        addr.value = det.address || '';
-      });
-      document.querySelectorAll('input[data-places="1"]').forEach(function(el){
-        var h = document.querySelector('.hint[data-for="' + el.id + '"]');
-        if (h) h.textContent = 'Start typing and pick from the list';
+      if (venue && $('ac-list')){
+        attachPlaces(venue, $('ac-list'), function(det){
+          venue.value = det.name || venue.value;
+          if (addr) addr.value = det.address || '';
+        });
+      }
+      addressInputs.forEach(function(el){
+        var h2 = document.querySelector('.hint[data-for="' + el.id + '"]');
+        if (h2) h2.textContent = 'Start typing and pick from the list';
         attachPlaces(el, makeList(el), function(det){
           // A single box wants the full postal address, not just the name.
           el.value = det.address || det.name || el.value;
@@ -536,29 +507,34 @@ $('form').addEventListener('submit', function(ev){
   ev.preventDefault();
   $('err').hidden = true;
 
-  var name  = $('f-name').value.trim();
-  var email = $('f-email').value.trim();
-  if (!name){ showErr('Please add your name.'); $('f-name').focus(); return; }
+  var byKey = {};
+  ITEMS.forEach(function(it){ if (it.kind === 'core') byKey[it.key] = it; });
+
+  var name  = $('c-name') ? $('c-name').value.trim() : '';
+  var email = $('c-email') ? $('c-email').value.trim() : '';
+  if (!name){ showErr('Please add your name.'); if($('c-name')) $('c-name').focus(); return; }
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){
-    showErr('That email address doesn\u2019t look right.'); $('f-email').focus(); return;
+    showErr('That email address doesn\u2019t look right.');
+    if($('c-email')) $('c-email').focus();
+    return;
   }
 
-  var custom = {};
-  FIELDS.forEach(function(f){
-    var v = readField(f, 'x-');
-    if (v !== null) custom[f.key] = v;
-  });
-
-  var answers = {};
-  var missing = null;
-  QUESTIONS.forEach(function(q){
-    var v = readField(q, 'q-');
-    if (v !== null) answers[q.key] = v;
-    else if (q.required && !missing) missing = q;
+  var custom = {}, answers = {}, missing = null;
+  ITEMS.forEach(function(it){
+    var v = readItem(it);
+    if (it.kind === 'field' && v !== null) custom[it.key] = v;
+    if (it.kind === 'question' && v !== null) answers[it.key] = v;
+    if (it.required && v === null && !missing && it.kind !== 'heading'
+        && !(it.kind === 'core' && (it.key === 'name' || it.key === 'email'))) {
+      missing = it;
+    }
   });
   if (missing){
     showErr('Please answer: ' + missing.label);
-    var el = $('q-' + missing.key);
+    var id = missing.kind === 'core'
+      ? (missing.key === 'venue' ? 'c-venue' : missing.key === 'partners' ? 'c-partner-a' : 'c-' + missing.key)
+      : (missing.kind === 'field' ? 'x-' : 'q-') + missing.key;
+    var el = $(id);
     if (el) el.focus();
     return;
   }
@@ -566,14 +542,14 @@ $('form').addEventListener('submit', function(ev){
   var body = {
     name: name,
     email: email,
-    phone: $('f-phone').value.trim(),
-    event_type: $('f-type').value,
-    event_date: $('f-date').value || '',
-    venue_name: $('f-venue').value.trim(),
-    venue_address: $('f-addr').value.trim(),
-    partner_a_name: $('partners').hidden ? '' : $('f-pa').value.trim(),
-    partner_b_name: $('partners').hidden ? '' : $('f-pb').value.trim(),
-    message: $('f-msg').value.trim(),
+    phone: byKey.phone && $('c-phone') ? $('c-phone').value.trim() : '',
+    event_type: byKey.event_type && $('c-event_type') ? $('c-event_type').value : '',
+    event_date: byKey.event_date && $('c-event_date') ? ($('c-event_date').value || '') : '',
+    venue_name: byKey.venue && $('c-venue') ? $('c-venue').value.trim() : '',
+    venue_address: byKey.venue && $('c-venue-addr') ? $('c-venue-addr').value.trim() : '',
+    partner_a_name: byKey.partners && $('c-partner-a') ? $('c-partner-a').value.trim() : '',
+    partner_b_name: byKey.partners && $('c-partner-b') ? $('c-partner-b').value.trim() : '',
+    message: byKey.message && $('c-message') ? $('c-message').value.trim() : '',
     website: $('f-website').value,   // honeypot, sent as-is
     custom: custom,
     answers: answers

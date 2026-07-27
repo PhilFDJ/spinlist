@@ -264,7 +264,7 @@ function settingsHtml(){
       <div class="who"><b>${esc(t.name)}</b>
         <span class="muted" style="font-size:.84rem">
           ${t.kind==='questionnaire'
-            ? `${((t.form_fields||[]).length)+((t.questions||[]).length)+6} questions · ${t.form_active===false?'not accepting enquiries':'live'}`
+            ? `${(t.form_items&&t.form_items.length?t.form_items:defaultItems(t)).filter(i=>i.kind!=='heading'&&!(i.kind==='core'&&i.show===false)).length} questions · ${t.form_active===false?'not accepting enquiries':'live'}`
             : `${(t.sections||[]).length} section${(t.sections||[]).length===1?'':'s'}`}
           ${t.applies_to&&t.applies_to.length?' · '+esc(t.applies_to.join(', ')):''}
           ${t.is_default?' · default':''}
@@ -398,15 +398,49 @@ function editTemplate(id,kind){
     </div>
   </div>`;
   document.body.appendChild(box);
+  if(k==='questionnaire') renderItems();
 }
 
-/* A questionnaire IS a public enquiry form. Only fields already marked askable
-   appear here, so there's one source of truth and no way to put an internal
-   field on a public form by ticking the wrong box. */
+/* ---------- Enquiry form builder ----------
+   A form is one ordered list. Core items map onto real booking columns so they
+   can be relabelled, reordered and hidden but not invented; name and email are
+   locked, because an enquiry nobody can reply to isn't a lead. */
+const CORE=[
+  ['name','Your name','text',true],
+  ['email','Email','email',true],
+  ['phone','Phone','tel',false],
+  ['event_type','What kind of event?','select',false],
+  ['event_date','Date','date',false],
+  ['venue','Venue','venue',false],
+  ['partners','Names of the couple','partners',false],
+  ['message','Tell us about your event','textarea',false],
+];
+const DEFAULT_EVENT_TYPES=['Wedding','Corporate event','Birthday party','Anniversary',
+                           'Christmas party','School prom','Other'];
+const Q_TYPES=[['text','Short answer'],['textarea','Long answer'],['dropdown','Choose one'],
+               ['checkbox','Yes / no tickbox'],['date','Date'],['time','Time'],
+               ['address','Address (map lookup)'],['number','Number']];
+
+let EDIT_ITEMS=[];
+
+function coreMeta(key){ return CORE.find(c=>c[0]===key); }
+
+/* Forms built before the ordered list get one derived from what they had, so
+   nothing has to be rebuilt by hand. */
+function defaultItems(t){
+  const items=CORE.map(([key,label,,locked])=>({
+    kind:'core',key,label,show:true,required:!!locked,
+    options:key==='event_type'?DEFAULT_EVENT_TYPES.slice():undefined,
+  }));
+  ((t&&t.form_fields)||[]).forEach(key=>items.push({kind:'field',key,label:'',required:false}));
+  ((t&&t.questions)||[]).forEach(q=>items.push({kind:'question',key:q.key,label:q.label,
+    type:q.type,options:q.options||[],required:!!q.required}));
+  return items;
+}
+
 function questionnaireFormHtml(t){
-  const chosen=(t&&t.form_fields)||[];
-  const askable=FIELDS.filter(f=>f.public);
-  const hidden=FIELDS.length-askable.length;
+  EDIT_ITEMS=(t&&Array.isArray(t.form_items)&&t.form_items.length)
+    ? JSON.parse(JSON.stringify(t.form_items)) : defaultItems(t);
 
   return `
     <label class="check-row" style="display:flex;gap:9px;align-items:center;cursor:pointer;margin:6px 0 18px">
@@ -421,81 +455,142 @@ function questionnaireFormHtml(t){
     <label class="field"><span>Message shown after they send it</span>
       <textarea id="t-thanks" rows="2" placeholder="Thanks — I'll come back to you within 24 hours.">${esc(t?t.thanks||'':'')}</textarea></label>
 
-    <div style="margin:18px 0 8px">
-      <h2 style="font-size:1rem;margin:0">What this form asks</h2>
-      <p class="muted" style="font-size:.82rem;margin:4px 0 0">Name, email, phone, event type, date and venue are always asked. Tick anything extra.</p>
+    <div style="margin:22px 0 8px">
+      <h2 style="font-size:1rem;margin:0">The form</h2>
+      <p class="muted" style="font-size:.82rem;margin:4px 0 0">Everything it asks, in the order it's asked. Rename anything, turn off what you don't want, reorder with the arrows.</p>
     </div>
-    <div id="t-fields">
-      ${askable.length?askable.map(f=>`
-        <label class="bk" style="display:flex;gap:10px;align-items:center;cursor:pointer">
-          <input type="checkbox" class="t-f" value="${esc(f.key)}" ${chosen.includes(f.key)?'checked':''}>
-          <span class="who"><b>${esc(f.name)}</b>
-            <span class="muted" style="font-size:.84rem">${esc(f.type)}</span></span>
-        </label>`).join('')
-        :'<p class="muted" style="font-size:.9rem">No fields are marked askable yet. Edit a custom field and tick &ldquo;Ask this on the public enquiry form&rdquo;.</p>'}
+    <div id="t-items"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="addItem('question')">+ Question</button>
+      <button class="btn btn-ghost btn-sm" onclick="addItem('field')">+ One of your fields</button>
+      <button class="btn btn-ghost btn-sm" onclick="addItem('heading')">+ Section heading</button>
     </div>
-    ${hidden>0?`<p class="muted" style="font-size:.82rem;margin-top:8px">${hidden} internal field${hidden===1?'':'s'} not shown — internal fields can&rsquo;t be added to a public form.</p>`:''}
 
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 4px">
-      <div>
-        <h2 style="font-size:1rem;margin:0">Your own questions</h2>
-        <p class="muted" style="font-size:.82rem;margin:4px 0 0">Just for this form. Answers show on the lead but can&rsquo;t be used in contract {{tokens}} &mdash; use a custom field for anything you&rsquo;ll reuse.</p>
-      </div>
-      <button class="btn btn-ghost btn-sm" style="flex:none" onclick="addQuestion()">+ Add</button>
-    </div>
-    <div id="t-questions">${((t&&t.questions)||[]).map((q,i)=>questionRow(q,i)).join('')}</div>
-
-    ${t?`<div style="margin-top:18px">
+    ${t?`<div style="margin-top:20px">
       <button class="btn btn-ghost btn-sm" onclick="showFormLink('${esc(t.id)}')">Get the embed code</button>
       <div id="t-link" style="margin-top:10px"></div>
     </div>`:'<p class="muted" style="font-size:.82rem;margin-top:16px">Create it, then come back for the embed code.</p>'}
   `;
 }
 
-const Q_TYPES=[['text','Short answer'],['textarea','Long answer'],['dropdown','Choose one'],
-               ['checkbox','Yes / no tickbox'],['date','Date'],['time','Time'],
-               ['address','Address (map lookup)'],['number','Number']];
+function renderItems(){
+  const box=$('t-items');
+  if(!box) return;
+  box.innerHTML=EDIT_ITEMS.map((it,i)=>itemRow(it,i)).join('')
+    ||'<p class="muted" style="font-size:.9rem">Nothing on the form yet.</p>';
+}
 
-function questionRow(q,i){
-  q=q||{label:'',type:'text',options:[],required:false};
-  return `<div class="bk t-q" style="display:block">
-    <div style="display:flex;gap:8px;align-items:flex-start">
-      <input class="q-label" value="${esc(q.label||'')}" placeholder="e.g. How did you hear about us?" style="flex:1">
-      <select class="q-type" onchange="syncQuestionRow(this)" style="flex:none;width:150px">
-        ${Q_TYPES.map(([v,l])=>`<option value="${v}" ${q.type===v?'selected':''}>${l}</option>`).join('')}
-      </select>
-      <button onclick="this.closest('.t-q').remove()" title="Remove"
-        style="background:none;border:0;color:var(--muted);font-size:1.2rem;cursor:pointer;line-height:1;flex:none">×</button>
-    </div>
-    <textarea class="q-options" rows="2" placeholder="One choice per line" style="margin-top:8px;${q.type==='dropdown'?'':'display:none'}">${esc((q.options||[]).join('\n'))}</textarea>
-    <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:.84rem;cursor:pointer">
-      <input type="checkbox" class="q-req" ${q.required?'checked':''}> They must answer this
-    </label>
-  </div>`;
+function itemRow(it,i){
+  const last=i===EDIT_ITEMS.length-1;
+  const locked=it.kind==='core'&&(coreMeta(it.key)||[])[3];
+  const move=`
+    <div style="display:flex;flex-direction:column;gap:2px;flex:none">
+      <button onclick="moveItem(${i},-1)" ${i===0?'disabled':''} title="Move up"
+        style="background:none;border:0;cursor:pointer;color:var(--muted);line-height:1;padding:0 4px">&#9650;</button>
+      <button onclick="moveItem(${i},1)" ${last?'disabled':''} title="Move down"
+        style="background:none;border:0;cursor:pointer;color:var(--muted);line-height:1;padding:0 4px">&#9660;</button>
+    </div>`;
+
+  if(it.kind==='heading') return `
+    <div class="bk" style="display:flex;gap:8px;align-items:center">
+      ${move}
+      <input value="${esc(it.label||'')}" oninput="setItem(${i},'label',this.value)"
+        placeholder="Section heading" style="flex:1;font-weight:700">
+      <span class="muted" style="font-size:.78rem;flex:none">heading</span>
+      <button onclick="removeItem(${i})" title="Remove"
+        style="background:none;border:0;color:var(--muted);font-size:1.2rem;cursor:pointer;line-height:1;flex:none">&times;</button>
+    </div>`;
+
+  const kindLabel=it.kind==='core'?'standard'
+    :it.kind==='field'?'your field'
+    :(Q_TYPES.find(q=>q[0]===it.type)||['','question'])[1].toLowerCase();
+
+  const fieldDef=it.kind==='field'?FIELDS.find(f=>f.key===it.key):null;
+  const placeholder=it.kind==='core'?(coreMeta(it.key)||[])[1]:(fieldDef?fieldDef.name:'Question');
+  const showOpts=(it.kind==='question'&&it.type==='dropdown')||(it.kind==='core'&&it.key==='event_type');
+
+  return `
+    <div class="bk" style="display:block">
+      <div style="display:flex;gap:8px;align-items:center">
+        ${move}
+        <input value="${esc(it.label||'')}" oninput="setItem(${i},'label',this.value)"
+          placeholder="${esc(placeholder||'')}" style="flex:1">
+        ${it.kind==='question'?`
+          <select onchange="setItem(${i},'type',this.value)" style="flex:none;width:150px">
+            ${Q_TYPES.map(([v,l])=>`<option value="${v}" ${it.type===v?'selected':''}>${l}</option>`).join('')}
+          </select>`
+          :`<span class="muted" style="font-size:.78rem;flex:none;width:80px;text-align:right">${esc(kindLabel)}</span>`}
+        ${locked?'<span style="width:22px;flex:none"></span>'
+          :`<button onclick="removeItem(${i})" title="Remove"
+             style="background:none;border:0;color:var(--muted);font-size:1.2rem;cursor:pointer;line-height:1;flex:none">&times;</button>`}
+      </div>
+
+      ${showOpts?`<textarea rows="3" placeholder="One choice per line"
+          oninput="setItemOptions(${i},this.value)" style="margin-top:8px">${esc((it.options||[]).join('\n'))}</textarea>`:''}
+
+      <div style="display:flex;gap:16px;margin-top:8px;font-size:.84rem;flex-wrap:wrap">
+        ${it.kind==='core'&&!locked?`
+          <label style="display:flex;gap:7px;align-items:center;cursor:pointer">
+            <input type="checkbox" ${it.show!==false?'checked':''} onchange="setItem(${i},'show',this.checked)"> Ask this
+          </label>`:''}
+        ${locked?'<span class="muted">Always asked &mdash; you need a name and an email to reply.</span>':`
+          <label style="display:flex;gap:7px;align-items:center;cursor:pointer">
+            <input type="checkbox" ${it.required?'checked':''} onchange="setItem(${i},'required',this.checked)"> Must answer
+          </label>`}
+      </div>
+    </div>`;
 }
-function syncQuestionRow(sel){
-  const row=sel.closest('.t-q');
-  row.querySelector('.q-options').style.display = sel.value==='dropdown' ? '' : 'none';
+
+function setItem(i,k,v){ if(EDIT_ITEMS[i]){ EDIT_ITEMS[i][k]=v; if(k==='type')renderItems(); } }
+function setItemOptions(i,v){
+  if(EDIT_ITEMS[i]) EDIT_ITEMS[i].options=v.split('\n').map(x=>x.trim()).filter(Boolean);
 }
-function addQuestion(){
-  const box=$('t-questions');
-  box.insertAdjacentHTML('beforeend',questionRow(null,box.children.length));
+function moveItem(i,d){
+  const j=i+d;
+  if(j<0||j>=EDIT_ITEMS.length) return;
+  const tmp=EDIT_ITEMS[i]; EDIT_ITEMS[i]=EDIT_ITEMS[j]; EDIT_ITEMS[j]=tmp;
+  renderItems();
 }
-function readQuestions(){
-  return [...document.querySelectorAll('#t-questions .t-q')].map(row=>{
-    const label=row.querySelector('.q-label').value.trim();
-    const type=row.querySelector('.q-type').value;
-    return {
-      // The key is derived from the wording, which is how the answer is matched
-      // back on submission. Blank labels are dropped.
-      key:label.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40),
-      label, type,
-      options:type==='dropdown'
-        ? row.querySelector('.q-options').value.split('\n').map(x=>x.trim()).filter(Boolean)
-        : [],
-      required:row.querySelector('.q-req').checked,
-    };
-  }).filter(q=>q.label && q.key);
+function removeItem(i){
+  const it=EDIT_ITEMS[i];
+  if(it&&it.kind==='core'&&(coreMeta(it.key)||[])[3]) return;   // name and email stay
+  EDIT_ITEMS.splice(i,1);
+  renderItems();
+}
+function addItem(kind){
+  if(kind==='heading'){ EDIT_ITEMS.push({kind:'heading',label:''}); }
+  else if(kind==='question'){ EDIT_ITEMS.push({kind:'question',key:'',label:'',type:'text',options:[],required:false}); }
+  else {
+    const used=EDIT_ITEMS.filter(i=>i.kind==='field').map(i=>i.key);
+    const spare=FIELDS.filter(f=>f.public&&!used.includes(f.key));
+    if(!spare.length){
+      alert(FIELDS.some(f=>f.public)
+        ? 'All your askable fields are already on this form.'
+        : 'No fields are marked askable yet. Edit a custom field and tick "Ask this on the public enquiry form".');
+      return;
+    }
+    EDIT_ITEMS.push({kind:'field',key:spare[0].key,label:spare[0].name,required:false});
+  }
+  renderItems();
+}
+
+/* Keys are derived from the wording, which is how an answer is matched back on
+   submission. Items with no label are dropped rather than saved half-made. */
+function readItems(){
+  return EDIT_ITEMS.map(it=>{
+    if(it.kind==='heading') return (it.label||'').trim()?{kind:'heading',label:it.label.trim()}:null;
+    if(it.kind==='core'){
+      const o={kind:'core',key:it.key,label:(it.label||'').trim(),
+               show:it.show!==false,required:!!it.required};
+      if(it.key==='event_type') o.options=it.options||[];
+      return o;
+    }
+    if(it.kind==='field') return {kind:'field',key:it.key,label:(it.label||'').trim(),required:!!it.required};
+    const label=(it.label||'').trim();
+    const key=label.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40);
+    return (label&&key)?{kind:'question',key,label,type:it.type||'text',
+      options:it.type==='dropdown'?(it.options||[]):[],required:!!it.required}:null;
+  }).filter(Boolean);
 }
 
 async function showFormLink(id){
@@ -543,7 +638,7 @@ async function saveTemplate(id,kind){
     body.intro=$('t-intro').value.trim();
     body.thanks=$('t-thanks').value.trim();
     body.form_active=$('t-active').checked;
-    body.questions=readQuestions();
+    body.form_items=readItems();
     body.sections=[];
   }
   if(!body.name){ alert('Give it a name.'); return; }

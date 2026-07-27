@@ -3013,19 +3013,36 @@ function resolveEnquiryForm(token) {
     // is later marked internal, it drops off every form that referenced it.
     const publishable = db.listPublicFields(owner.id);
     const wanted = Array.isArray(tpl.form_fields) ? tpl.form_fields : [];
+    /* One ordered layout. Field items are resolved against the publishable list
+       here, so an item pointing at a field that's since been made internal
+       simply drops out — the allow-list is always derived, never trusted. */
+    const byKey = {};
+    publishable.forEach(f => { byKey[f.key] = f; });
+    const items = db.formItems(tpl).map(it => {
+      if (it.kind !== 'field') return it;
+      const f = byKey[it.key];
+      if (!f) return null;
+      return { kind: 'field', key: f.key, label: it.label || f.name,
+               type: f.type, options: f.options || [], required: !!it.required };
+    }).filter(Boolean);
+
     return {
       owner,
       form: { id: tpl.id, name: tpl.name || '', intro: tpl.intro || '', thanks: tpl.thanks || '' },
-      fields: publishable.filter(f => wanted.includes(f.key)),
-      // The form's own questions, written by the DJ for this form only. Unlike
-      // custom fields these aren't account-wide, so they can't be merged into a
-      // contract — they're recorded on the lead instead.
-      questions: (Array.isArray(tpl.questions) ? tpl.questions : []).filter(q => q.label && q.key),
+      items,
     };
   }
   const owner = db.getUserByEnquiryToken(token);
   if (!owner) return null;
-  return { owner, form: null, fields: db.listPublicFields(owner.id), questions: [] };
+  // The account-level default form: standard questions plus every published field.
+  return { owner, form: null, items: db.formItems({
+    form_fields: db.listPublicFields(owner.id).map(f => f.key),
+  }).map(it => {
+    if (it.kind !== 'field') return it;
+    const f = db.listPublicFields(owner.id).find(x => x.key === it.key);
+    return f ? { kind: 'field', key: f.key, label: f.name, type: f.type,
+                 options: f.options || [], required: false } : null;
+  }).filter(Boolean) };
 }
 
 // What the form should show — publicly readable by form token only (never the
@@ -3036,8 +3053,7 @@ app.get('/api/enquire/:token/form', (req, res) => {
   res.json({
     dj: { name: r.owner.name || '', company: r.owner.company || r.owner.name || '' },
     form: r.form,
-    fields: r.fields.map(f => ({ key: f.key, name: f.name, type: f.type, options: f.options })),
-    questions: r.questions.map(q => ({ key: q.key, label: q.label, type: q.type, options: q.options, required: !!q.required })),
+    items: r.items.filter(it => it.kind !== 'core' || it.show !== false),
     roles: db.bookingRoles(),
     sessionTypes: db.sessionTypes(),
   });
@@ -3059,24 +3075,64 @@ app.post('/api/enquire/:token', async (req, res) => {
   if (!name || !email) return res.status(400).json({ error: 'Please give your name and email.' });
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'That email doesn\'t look right.' });
 
+  /* Everything the form actually asked. A hidden item is not merely invisible:
+     nothing is read from the request for it, so hiding a question also stops it
+     being answered by anyone crafting their own POST. */
+  const shown = resolved.items.filter(it => it.kind !== 'core' || it.show !== false);
+  const coreShown = {};
+  shown.forEach(it => { if (it.kind === 'core') coreShown[it.key] = it; });
+
+  const coreValue = (key) => {
+    if (key === 'phone')      return (b.phone || '').toString().trim();
+    if (key === 'event_type') return (b.event_type || '').toString().trim();
+    if (key === 'event_date') return (b.event_date || '').toString().trim();
+    if (key === 'venue')      return `${(b.venue_name || '').toString().trim()}${(b.venue_address || '').toString().trim()}`;
+    if (key === 'partners')   return `${(b.partner_a_name || '').toString().trim()}${(b.partner_b_name || '').toString().trim()}`;
+    if (key === 'message')    return (b.message || '').toString().trim();
+    return '';
+  };
+
+  // Required answers, checked server-side. The page checks too, but a form is
+  // only as strict as its server.
+  for (const it of shown) {
+    if (!it.required) continue;
+    let v;
+    if (it.kind === 'core') { if (it.key === 'name' || it.key === 'email') continue; v = coreValue(it.key); }
+    else if (it.kind === 'field') v = (b.custom || {})[it.key];
+    else if (it.kind === 'question') v = (b.answers || {})[it.key];
+    else continue;
+    if (v === undefined || v === null || v === '' || v === false) {
+      return res.status(400).json({ error: `Please answer: ${it.label}` });
+    }
+  }
+
+  const evType = coreShown.event_type ? (b.event_type || '').toString() : '';
+  const evDate = coreShown.event_date ? (b.event_date || '').toString() : '';
+  const venName = coreShown.venue ? (b.venue_name || '').toString() : '';
+  const venAddr = coreShown.venue ? (b.venue_address || '').toString() : '';
+
   const booking = db.createBooking(owner.id, {
-    title: (b.event_title || `${b.event_type || 'Enquiry'} — ${name}`).toString(),
-    type: (b.event_type || 'Wedding').toString(),
-    event_date: b.event_date ? new Date(b.event_date + 'T12:00:00').getTime() : null,
-    venue: (b.venue_name || '').toString(),
-    notes: (b.message || '').toString(),
+    title: (b.event_title || `${evType || 'Enquiry'} — ${name}`).toString(),
+    type: (evType || 'Wedding').toString(),
+    event_date: evDate ? new Date(evDate + 'T12:00:00').getTime() : null,
+    venue: venName,
+    notes: coreShown.message ? (b.message || '').toString() : '',
     status: 'enquiry',
   });
 
   // The person enquiring is the primary contact.
-  db.setBookingContact(booking.id, 'primary_contact', { name, email, phone: b.phone });
-  if (b.partner_a_name) db.setBookingContact(booking.id, 'partner_a', { name: b.partner_a_name });
-  if (b.partner_b_name) db.setBookingContact(booking.id, 'partner_b', { name: b.partner_b_name });
-  if (b.venue_name || b.venue_address) {
-    db.setBookingContact(booking.id, 'venue', { name: b.venue_name, address: b.venue_address });
+  db.setBookingContact(booking.id, 'primary_contact', {
+    name, email, phone: coreShown.phone ? b.phone : '',
+  });
+  if (coreShown.partners) {
+    if (b.partner_a_name) db.setBookingContact(booking.id, 'partner_a', { name: b.partner_a_name });
+    if (b.partner_b_name) db.setBookingContact(booking.id, 'partner_b', { name: b.partner_b_name });
+  }
+  if (venName || venAddr) {
+    db.setBookingContact(booking.id, 'venue', { name: venName, address: venAddr });
   }
   // Custom field answers.
-  const known = resolved.fields.map(f => f.key);
+  const known = shown.filter(it => it.kind === 'field').map(it => it.key);
   for (const [k, v] of Object.entries(b.custom || {})) {
     if (known.includes(k)) db.setBookingField(booking.id, k, v);
   }
@@ -3084,9 +3140,10 @@ app.post('/api/enquire/:token', async (req, res) => {
 
   /* Form-specific answers. Only questions the form actually declares are
      recorded, so a submission can't invent its own. */
-  if (resolved.questions.length) {
+  const formQuestions = shown.filter(it => it.kind === 'question');
+  if (formQuestions.length) {
     const given = (b.answers && typeof b.answers === 'object') ? b.answers : {};
-    const answered = resolved.questions
+    const answered = formQuestions
       .map(q => ({ label: q.label, type: q.type, answer: given[q.key] }))
       .filter(q => q.answer !== undefined && q.answer !== null && q.answer !== '');
     if (answered.length) {
@@ -3113,11 +3170,11 @@ app.post('/api/enquire/:token', async (req, res) => {
             <h2 style="margin:0 0 8px">New enquiry</h2>
             <p style="margin:0 0 12px;color:#555">${escapeHtml(name)} &lt;${escapeHtml(email)}&gt;${b.phone ? ' · ' + escapeHtml(String(b.phone)) : ''}</p>
             <table style="border-collapse:collapse;font-size:14px">
-              <tr><td style="padding:2px 10px 2px 0;color:#777">Event</td><td>${escapeHtml(String(b.event_type || ''))}</td></tr>
-              <tr><td style="padding:2px 10px 2px 0;color:#777">Date</td><td>${escapeHtml(String(b.event_date || 'not given'))}</td></tr>
-              <tr><td style="padding:2px 10px 2px 0;color:#777">Venue</td><td>${escapeHtml(String(b.venue_name || ''))} ${escapeHtml(String(b.venue_address || ''))}</td></tr>
+              ${coreShown.event_type ? `<tr><td style="padding:2px 10px 2px 0;color:#777">Event</td><td>${escapeHtml(String(evType))}</td></tr>` : ''}
+              ${coreShown.event_date ? `<tr><td style="padding:2px 10px 2px 0;color:#777">Date</td><td>${escapeHtml(String(evDate || 'not given'))}</td></tr>` : ''}
+              ${coreShown.venue ? `<tr><td style="padding:2px 10px 2px 0;color:#777">Venue</td><td>${escapeHtml(String(venName))} ${escapeHtml(String(venAddr))}</td></tr>` : ''}
             </table>
-            ${b.message ? `<p style="margin-top:14px;white-space:pre-wrap">${escapeHtml(String(b.message))}</p>` : ''}
+            ${coreShown.message && b.message ? `<p style="margin-top:14px;white-space:pre-wrap">${escapeHtml(String(b.message))}</p>` : ''}
             <p style="margin-top:18px"><a href="${BASE_URL}/bookings.html">Open in Bookings →</a></p>
           </div>`,
         }
