@@ -315,6 +315,7 @@ function settingsHtml(){
       </div>
       <div style="margin-top:12px">${PRODUCTS.map(p=>`
         <div class="bk">
+          ${p.image?`<img src="${esc(p.image)}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex:none">`:''}
           <div class="who"><b>${esc(p.name)}</b>
             ${p.description?`<span class="muted" style="font-size:.84rem">${esc(p.description)}</span>`:''}</div>
           <div class="money"><b>${money(p.price_pence)}</b></div>
@@ -483,10 +484,10 @@ function renderQuotesModal(bookingId){
   const box=document.createElement('div');
   box.className='modal';
   box.innerHTML=`
-    <div class="sheet">
-      <div class="sheet-head">
+    <div class="card" style="width:min(720px,100%)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
         <h2>Quotes</h2>
-        <button class="x" onclick="closeModal()">&times;</button>
+        <button onclick="closeModal()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;cursor:pointer;line-height:1">&times;</button>
       </div>
       <p class="muted" style="font-size:.86rem;margin:0 0 14px">
         ${esc(QUOTE_BOOKING?QUOTE_BOOKING.title||'This booking':'This booking')}
@@ -509,10 +510,10 @@ function editQuote(bookingId,quoteId){
   const box=document.createElement('div');
   box.className='modal';
   box.innerHTML=`
-    <div class="sheet">
-      <div class="sheet-head">
+    <div class="card" style="width:min(720px,100%)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
         <h2>${q?'Edit quote':'New quote'}</h2>
-        <button class="x" onclick="closeModal()">&times;</button>
+        <button onclick="closeModal()" style="background:none;border:0;color:var(--muted);font-size:1.4rem;cursor:pointer;line-height:1">&times;</button>
       </div>
 
       <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 8px">
@@ -567,6 +568,9 @@ function renderQuoteItems(){
   box.innerHTML=QUOTE_ITEMS.map((it,i)=>`
     <div class="bk" style="display:block">
       <div style="display:flex;gap:8px;align-items:center">
+        ${it.image
+          ? `<img src="${esc(it.image)}" alt="" style="width:38px;height:38px;object-fit:cover;border-radius:7px;border:1px solid var(--line);flex:none">`
+          : `<span style="width:38px;height:38px;border-radius:7px;border:1px dashed var(--line);flex:none" aria-hidden="true"></span>`}
         <input value="${esc(it.name||'')}" placeholder="What it is"
           oninput="setQuoteItem(${i},'name',this.value)" style="flex:1">
         <input type="number" min="1" value="${it.qty||1}" title="Quantity"
@@ -604,9 +608,11 @@ function removeQuoteItem(i){ QUOTE_ITEMS.splice(i,1); renderQuoteItems(); }
 
 function addQuoteItem(productId){
   const p=productId?PRODUCTS.find(x=>x.id===productId):null;
+  // The picture is snapshotted onto the line, like the price: changing a
+  // package later must not alter a quote already sent.
   QUOTE_ITEMS.push(p
-    ? {name:p.name,description:p.description||'',qty:1,unit_pence:p.price_pence||0}
-    : {name:'',description:'',qty:1,unit_pence:0});
+    ? {name:p.name,description:p.description||'',qty:1,unit_pence:p.price_pence||0,image:p.image||''}
+    : {name:'',description:'',qty:1,unit_pence:0,image:''});
   renderQuoteItems();
 }
 
@@ -933,6 +939,21 @@ function editProduct(id){
       <input id="p-price" inputmode="decimal" value="${p&&p.price_pence?(p.price_pence/100).toFixed(2):''}" placeholder="750.00"></label>
     <label class="field"><span>Description (shown on the quote)</span>
       <textarea id="p-desc" rows="3" placeholder="What's included">${esc(p?p.description:'')}</textarea></label>
+
+    <div class="field">
+      <span>Picture</span>
+      ${p?`
+        <div id="p-image-box" style="display:flex;gap:12px;align-items:center;margin-top:6px">
+          ${p.image?`<img src="${esc(p.image)}" alt="" style="width:84px;height:84px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">`:''}
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <input type="file" id="p-image" accept="image/jpeg,image/png,image/webp"
+              onchange="uploadProductImage('${esc(p.id)}')" style="font-size:.84rem">
+            ${p.image?`<button class="btn btn-ghost btn-sm" style="align-self:flex-start" onclick="removeProductImage('${esc(p.id)}')">Remove picture</button>`:''}
+          </div>
+        </div>
+        <span class="muted" style="font-size:.82rem">JPG, PNG or WebP, up to 4MB. Shown on quotes.</span>`
+      :'<p class="muted" style="font-size:.86rem;margin:6px 0 0">Add the package first, then come back to give it a picture.</p>'}
+    </div>
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
       <button class="btn btn-neon" onclick="saveProduct('${esc(p?p.id:'')}')">${p?'Save':'Add package'}</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -941,6 +962,35 @@ function editProduct(id){
   </div>`;
   document.body.appendChild(box);
 }
+/* Uploaded on selection rather than on save: it's a multipart request to its
+   own route, so it doesn't ride along with the rest of the form. */
+async function uploadProductImage(id){
+  const input=$('p-image');
+  if(!input||!input.files||!input.files[0]) return;
+  const fd=new FormData();
+  fd.append('image',input.files[0]);
+  const box=$('p-image-box');
+  if(box) box.style.opacity='.5';
+  try{
+    const r=await fetch('/api/crm/products/'+encodeURIComponent(id)+'/image',{method:'POST',body:fd});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||'Upload failed.');
+    await loadSettings();
+    editProduct(id);            // reopen so the new picture shows
+  }catch(e){
+    if(box) box.style.opacity='1';
+    alert(e.message);
+  }
+}
+
+async function removeProductImage(id){
+  try{
+    await api('/api/crm/products/'+encodeURIComponent(id)+'/image',{method:'DELETE'});
+    await loadSettings();
+    editProduct(id);
+  }catch(e){ alert(e.message); }
+}
+
 async function saveProduct(id){
   const body={name:$('p-name').value.trim(),description:$('p-desc').value,price_pence:toPence($('p-price').value)};
   if(!body.name){ alert('Give the package a name.'); return; }

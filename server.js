@@ -115,6 +115,25 @@ const weddingPhotoUpload = multer({
   },
 });
 
+/* Package pictures. Same storage and limits as wedding photos, named
+   distinctly so cleanup can tell the three kinds apart. No SVG: it carries
+   script risk and makes no sense for a photograph of a dancefloor. */
+const productImageUpload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (req, file, cb) => {
+      const ext = ALLOWED_LOGO_TYPES[file.mimetype] || 'bin';
+      cb(null, `prod_${(req.params.id || 'x').slice(0, 12)}_${crypto.randomBytes(6).toString('hex')}.${ext}`);
+    },
+  }),
+  limits: { fileSize: 4 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'image/svg+xml') return cb(new Error('Please upload a photo (JPG, PNG or WebP).'));
+    if (ALLOWED_LOGO_TYPES[file.mimetype]) cb(null, true);
+    else cb(new Error('Unsupported file type. Use JPG, PNG or WebP.'));
+  },
+});
+
 /* ---------- Spotify config ---------- */
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
@@ -3825,10 +3844,33 @@ app.put('/api/crm/products/:id', auth.requireAuth, requireCrm, (req, res) => {
   res.json({ product: db.updateProduct(p.id, req.body || {}) });
 });
 
+// A picture for a package — shown when building a quote and on the quote itself.
+app.post('/api/crm/products/:id/image', auth.requireAuth, requireCrm, (req, res) => {
+  productImageUpload.single('image')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Upload failed.' });
+    const p = db.getProduct(req.params.id);
+    if (!p || p.owner_id !== req.user.id) {
+      if (req.file) safeUnlink('/uploads/' + req.file.filename);
+      return res.status(404).json({ error: 'Package not found.' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No image received.' });
+    if (p.image) safeUnlink(p.image);                    // replace, don't orphan
+    res.json({ product: db.updateProduct(p.id, { image: '/uploads/' + req.file.filename }) });
+  });
+});
+
+app.delete('/api/crm/products/:id/image', auth.requireAuth, requireCrm, (req, res) => {
+  const p = db.getProduct(req.params.id);
+  if (!p || p.owner_id !== req.user.id) return res.status(404).json({ error: 'Package not found.' });
+  if (p.image) safeUnlink(p.image);
+  res.json({ product: db.updateProduct(p.id, { image: '' }) });
+});
+
 app.delete('/api/crm/products/:id', auth.requireAuth, requireCrm, (req, res) => {
   const p = db.getProduct(req.params.id);
   if (!p) return res.status(404).json({ error: 'Package not found.' });
   if (p.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your package.' });
+  if (p.image) safeUnlink(p.image);          // don't orphan the uploaded file
   db.deleteProduct(p.id);
   res.json({ ok: true });
 });
