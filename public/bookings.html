@@ -28,7 +28,20 @@
   .muted{color:var(--muted)}
   .field{display:block;margin-bottom:14px}
   .field span{display:block;font-size:.82rem;color:var(--muted);margin-bottom:6px;font-weight:700}
-  input,select,textarea{width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)}
+  /* Tickboxes and radios are NOT text boxes: the blanket rule below sizes every
+   input to 100% width with 11px of padding, which turned a checkbox into a
+   261px block and shoved its label off the row. */
+input[type=checkbox],input[type=radio]{
+  width:auto;
+  flex:none;
+  margin:0;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:none;
+  accent-color:var(--plum);
+}
+input,select,textarea{width:100%;font:inherit;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)}
   textarea{resize:vertical;min-height:70px}
   .cols{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
   @media(max-width:620px){.cols{grid-template-columns:1fr}}
@@ -399,6 +412,256 @@ function editTemplate(id,kind){
   </div>`;
   document.body.appendChild(box);
   if(k==='questionnaire') renderItems();
+}
+
+/* ---------- Quotes ----------
+   A quote belongs to a booking: the balance due date is worked out from the
+   event date, so quoting is always done from inside a booking rather than in
+   the abstract. Drafts are editable; once sent the figures are frozen server
+   side, because the client may already be reading them. */
+let QUOTES=[], QUOTE_ITEMS=[], QUOTE_BOOKING=null;
+
+const QUOTE_STATUS={
+  draft:    ['Draft','#6b7280'],
+  sent:     ['Sent','#5B8CFF'],
+  accepted: ['Accepted','#1a8a4a'],
+  declined: ['Declined','#c0392b'],
+  expired:  ['Expired','#a06000'],
+};
+
+function quoteTotals(){
+  const subtotal=QUOTE_ITEMS.reduce((s,it)=>s+(it.qty||1)*(it.unit_pence||0),0);
+  const type=$('q-dep-type')?$('q-dep-type').value:'percent';
+  const raw=$('q-dep-value')?$('q-dep-value').value:'0';
+  let deposit=type==='fixed'?toPence(raw):Math.round(subtotal*((parseFloat(raw)||0)/100));
+  deposit=Math.max(0,Math.min(deposit,subtotal));
+  return {subtotal,deposit,balance:Math.max(0,subtotal-deposit)};
+}
+
+/* The date the client will actually see, worked out the same way the server
+   does it — so the builder can't promise a date the quote won't show. */
+function balanceDueLabel(){
+  const days=parseInt($('q-days')?$('q-days').value:'',10);
+  if(!QUOTE_BOOKING||!QUOTE_BOOKING.event_date||!days&&days!==0) return '';
+  return 'Balance due '+fmtDate(QUOTE_BOOKING.event_date-days*864e5);
+}
+
+async function openQuotes(bookingId){
+  QUOTE_BOOKING=BOOKINGS.find(b=>b.id===bookingId)||null;
+  try{
+    const d=await api('/api/crm/quotes?booking_id='+encodeURIComponent(bookingId));
+    QUOTES=d.quotes||[];
+  }catch(e){ alert(e.message); return; }
+  renderQuotesModal(bookingId);
+}
+
+function renderQuotesModal(bookingId){
+  closeModal();
+  const rows=QUOTES.map(q=>{
+    const [label,colour]=QUOTE_STATUS[q.status]||['?','#666'];
+    const editable=q.status==='draft';
+    return `
+      <div class="bk">
+        <div class="who">
+          <b>${money(q.total)}</b>
+          <span style="color:${colour};font-size:.8rem;font-weight:700;margin-left:8px">${label}</span>
+          <span class="muted" style="display:block;font-size:.84rem">
+            ${q.items.length} item${q.items.length===1?'':'s'} ·
+            ${q.deposit?money(q.deposit)+' deposit':'no deposit'}${q.sent_at?' · sent '+esc(fmtDate(q.sent_at)):''}
+          </span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${editable
+            ? `<button class="btn btn-ghost btn-sm" onclick="editQuote('${esc(bookingId)}','${esc(q.id)}')">Edit</button>
+               <button class="btn btn-neon btn-sm" onclick="sendQuote('${esc(q.id)}')">Send</button>`
+            : `<button class="btn btn-ghost btn-sm" onclick="copyQuoteLink('${esc(q.token)}')">Copy link</button>`}
+          ${editable?`<button class="btn btn-ghost btn-sm" onclick="removeQuote('${esc(q.id)}')">Delete</button>`:''}
+        </div>
+      </div>`;
+  }).join('');
+
+  const box=document.createElement('div');
+  box.className='modal';
+  box.innerHTML=`
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>Quotes</h2>
+        <button class="x" onclick="closeModal()">&times;</button>
+      </div>
+      <p class="muted" style="font-size:.86rem;margin:0 0 14px">
+        ${esc(QUOTE_BOOKING?QUOTE_BOOKING.title||'This booking':'This booking')}
+      </p>
+      ${rows||'<p class="muted" style="font-size:.9rem">No quotes yet.</p>'}
+      <div style="margin-top:16px">
+        <button class="btn btn-neon" onclick="editQuote('${esc(bookingId)}','')">+ New quote</button>
+      </div>
+    </div>`;
+  document.body.appendChild(box);
+  box.addEventListener('click',e=>{ if(e.target===box) closeModal(); });
+}
+
+function editQuote(bookingId,quoteId){
+  const q=quoteId?QUOTES.find(x=>x.id===quoteId):null;
+  QUOTE_BOOKING=BOOKINGS.find(b=>b.id===bookingId)||QUOTE_BOOKING;
+  QUOTE_ITEMS=q?JSON.parse(JSON.stringify(q.items||[])):[];
+
+  closeModal();
+  const box=document.createElement('div');
+  box.className='modal';
+  box.innerHTML=`
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>${q?'Edit quote':'New quote'}</h2>
+        <button class="x" onclick="closeModal()">&times;</button>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 8px">
+        <h3 style="font-size:1rem;margin:0">What they're getting</h3>
+        <div style="display:flex;gap:6px">
+          <select id="q-preset" onchange="addQuoteItem(this.value);this.value=''" style="width:auto">
+            <option value="">Add a package…</option>
+            ${PRODUCTS.filter(p=>p.active!==false).map(p=>
+              `<option value="${esc(p.id)}">${esc(p.name)} — ${money(p.price_pence)}</option>`).join('')}
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="addQuoteItem('')">+ Blank line</button>
+        </div>
+      </div>
+      <div id="q-items"></div>
+      <div id="q-totals" style="margin-top:12px"></div>
+
+      <h3 style="font-size:1rem;margin:22px 0 4px">Payment terms</h3>
+      <div class="two" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <label class="field"><span>Deposit</span>
+          <select id="q-dep-type" onchange="renderQuoteTotals()">
+            <option value="percent" ${!q||q.deposit_type!=='fixed'?'selected':''}>Percentage</option>
+            <option value="fixed" ${q&&q.deposit_type==='fixed'?'selected':''}>Fixed amount</option>
+          </select></label>
+        <label class="field"><span id="q-dep-label">Amount</span>
+          <input id="q-dep-value" oninput="renderQuoteTotals()"
+            value="${q?(q.deposit_type==='fixed'?(q.deposit_value/100).toFixed(2):q.deposit_value):'25'}"></label>
+      </div>
+      <label class="field"><span>Balance due this many days before the event</span>
+        <input id="q-days" type="number" min="0" value="${q?q.balance_days_before:28}" oninput="renderQuoteTotals()">
+        <span class="muted" id="q-due" style="font-size:.82rem"></span></label>
+
+      <label class="field"><span>Message to the client</span>
+        <textarea id="q-message" rows="4" placeholder="Anything you'd like to say alongside the numbers.">${esc(q?q.message||'':'')}</textarea></label>
+
+      <label class="field"><span>Quote valid until</span>
+        <input id="q-expires" type="date" value="${q&&q.expires_at?new Date(q.expires_at).toISOString().slice(0,10):new Date(Date.now()+30*864e5).toISOString().slice(0,10)}"></label>
+
+      <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap">
+        <button class="btn btn-neon" onclick="saveQuote('${esc(bookingId)}','${esc(quoteId||'')}',false)">Save draft</button>
+        <button class="btn btn-ghost" onclick="saveQuote('${esc(bookingId)}','${esc(quoteId||'')}',true)">Save &amp; send</button>
+        <button class="btn btn-ghost" onclick="openQuotes('${esc(bookingId)}')">Back</button>
+      </div>
+    </div>`;
+  document.body.appendChild(box);
+  box.addEventListener('click',e=>{ if(e.target===box) closeModal(); });
+  renderQuoteItems();
+}
+
+function renderQuoteItems(){
+  const box=$('q-items');
+  if(!box) return;
+  box.innerHTML=QUOTE_ITEMS.map((it,i)=>`
+    <div class="bk" style="display:block">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input value="${esc(it.name||'')}" placeholder="What it is"
+          oninput="setQuoteItem(${i},'name',this.value)" style="flex:1">
+        <input type="number" min="1" value="${it.qty||1}" title="Quantity"
+          oninput="setQuoteItem(${i},'qty',parseInt(this.value,10)||1)" style="width:70px;flex:none">
+        <input value="${((it.unit_pence||0)/100).toFixed(2)}" title="Price each"
+          oninput="setQuoteItemPrice(${i},this.value)" style="width:100px;flex:none">
+        <button onclick="removeQuoteItem(${i})" title="Remove"
+          style="background:none;border:0;color:var(--muted);font-size:1.2rem;cursor:pointer;line-height:1;flex:none">&times;</button>
+      </div>
+      <textarea rows="2" placeholder="Description (optional — the client sees this)"
+        oninput="setQuoteItem(${i},'description',this.value)" style="margin-top:8px">${esc(it.description||'')}</textarea>
+      <div class="muted" style="font-size:.82rem;margin-top:6px">Line total ${money((it.qty||1)*(it.unit_pence||0))}</div>
+    </div>`).join('')||'<p class="muted" style="font-size:.9rem">Nothing on the quote yet.</p>';
+  renderQuoteTotals();
+}
+
+function renderQuoteTotals(){
+  const el=$('q-totals');
+  if(!el) return;
+  const t=quoteTotals();
+  const type=$('q-dep-type')?$('q-dep-type').value:'percent';
+  if($('q-dep-label')) $('q-dep-label').textContent=type==='fixed'?'Amount (£)':'Percentage (%)';
+  if($('q-due')) $('q-due').textContent=balanceDueLabel();
+  el.innerHTML=`
+    <div style="border-top:1px solid var(--line);padding-top:10px;font-size:.92rem">
+      <div style="display:flex;justify-content:space-between"><span>Total</span><b>${money(t.subtotal)}</b></div>
+      <div style="display:flex;justify-content:space-between;color:var(--muted)"><span>Deposit</span><span>${money(t.deposit)}</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--muted)"><span>Balance</span><span>${money(t.balance)}</span></div>
+    </div>`;
+}
+
+function setQuoteItem(i,k,v){ if(QUOTE_ITEMS[i]){ QUOTE_ITEMS[i][k]=v; if(k==='qty') renderQuoteItems(); else renderQuoteTotals(); } }
+function setQuoteItemPrice(i,v){ if(QUOTE_ITEMS[i]){ QUOTE_ITEMS[i].unit_pence=toPence(v); renderQuoteTotals(); } }
+function removeQuoteItem(i){ QUOTE_ITEMS.splice(i,1); renderQuoteItems(); }
+
+function addQuoteItem(productId){
+  const p=productId?PRODUCTS.find(x=>x.id===productId):null;
+  QUOTE_ITEMS.push(p
+    ? {name:p.name,description:p.description||'',qty:1,unit_pence:p.price_pence||0}
+    : {name:'',description:'',qty:1,unit_pence:0});
+  renderQuoteItems();
+}
+
+function quoteBody(){
+  const t=$('q-dep-type').value;
+  return {
+    items:QUOTE_ITEMS.filter(it=>(it.name||'').trim()),
+    deposit_type:t,
+    deposit_value:t==='fixed'?toPence($('q-dep-value').value):(parseInt($('q-dep-value').value,10)||0),
+    balance_days_before:parseInt($('q-days').value,10)||0,
+    message:$('q-message').value,
+    expires_at:$('q-expires').value?new Date($('q-expires').value+'T23:59:59').getTime():null,
+  };
+}
+
+async function saveQuote(bookingId,quoteId,thenSend){
+  const body=quoteBody();
+  if(!body.items.length){ alert('Add at least one item first — a quote with nothing on it isn\'t much use.'); return; }
+  try{
+    let id=quoteId;
+    if(id) await api('/api/crm/quotes/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
+    else {
+      const r=await api('/api/crm/quotes',{method:'POST',body:JSON.stringify(Object.assign({booking_id:bookingId},body))});
+      id=r.quote&&r.quote.id;
+    }
+    if(thenSend&&id) return sendQuote(id,bookingId);
+    await openQuotes(bookingId);
+  }catch(e){ alert(e.message); }
+}
+
+async function sendQuote(id,bookingId){
+  const q=QUOTES.find(x=>x.id===id);
+  const to=(QUOTE_BOOKING&&QUOTE_BOOKING.contacts&&QUOTE_BOOKING.contacts.primary_contact&&QUOTE_BOOKING.contacts.primary_contact.email)||'';
+  const addr=prompt('Send this quote to:',to);
+  if(addr===null) return;
+  if(!addr.trim()){ alert('Please give an email address.'); return; }
+  try{
+    await api('/api/crm/quotes/'+encodeURIComponent(id)+'/send',{method:'POST',body:JSON.stringify({to:addr.trim()})});
+    await openQuotes(bookingId||(q&&q.booking_id)||(QUOTE_BOOKING&&QUOTE_BOOKING.id));
+    alert('Sent. The figures are locked now — make a new quote if anything changes.');
+  }catch(e){ alert(e.message); }
+}
+
+async function removeQuote(id){
+  if(!confirm('Delete this draft quote?')) return;
+  try{
+    await api('/api/crm/quotes/'+encodeURIComponent(id),{method:'DELETE'});
+    await openQuotes(QUOTE_BOOKING&&QUOTE_BOOKING.id);
+  }catch(e){ alert(e.message); }
+}
+
+function copyQuoteLink(token){
+  const url=location.origin+'/quote.html?q='+token;
+  if(navigator.clipboard) navigator.clipboard.writeText(url).then(()=>alert('Link copied:\n'+url),()=>prompt('Copy this link:',url));
+  else prompt('Copy this link:',url);
 }
 
 /* ---------- Enquiry form builder ----------
@@ -814,6 +1077,10 @@ function editBooking(id){
       <label class="field"><span>Deposit (£)</span>
         <input id="f-dep" inputmode="decimal" value="${b&&b.deposit_pence?(b.deposit_pence/100).toFixed(2):''}" placeholder="150.00"></label>
     </div>
+
+    ${b?`<div style="display:flex;gap:8px;margin:0 0 16px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="openQuotes('${esc(b.id)}')">Quotes</button>
+    </div>`:''}
 
     <label class="field"><span>Notes</span>
       <textarea id="f-notes" placeholder="Anything worth remembering — access, timings, special requests…">${esc(b?b.notes:'')}</textarea></label>
