@@ -3139,10 +3139,17 @@ app.post('/api/enquire/:token', async (req, res) => {
     status: 'enquiry',
   });
 
-  // The person enquiring is the primary contact.
+  // The person enquiring is the primary contact — AND a client record. Without
+  // this an enquiry produced a booking with contact details attached but nobody
+  // in the Clients list, so the same couple enquiring twice looked like two
+  // unrelated jobs.
   db.setBookingContact(booking.id, 'primary_contact', {
     name, email, phone: coreShown.phone ? b.phone : '',
   });
+  const client = db.findOrCreateClient(owner.id, {
+    name, email, phone: coreShown.phone ? (b.phone || '') : '',
+  });
+  if (client) db.updateBooking(booking.id, { client_id: client.id });
   if (coreShown.partners) {
     if (b.partner_a_name) db.setBookingContact(booking.id, 'partner_a', { name: b.partner_a_name });
     if (b.partner_b_name) db.setBookingContact(booking.id, 'partner_b', { name: b.partner_b_name });

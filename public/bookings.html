@@ -1115,6 +1115,8 @@ function editBooking(id){
         <input id="f-date" type="date" value="${b?dateInput(b.event_date):''}" onchange="checkClash(this.value,'${esc(b?b.id:'')}')"></label>
       <label class="field"><span>Client</span>
         <select id="f-client"><option value="">— none —</option>${opts}</select></label>
+      <button class="btn btn-ghost btn-sm" style="flex:none;align-self:end;margin-bottom:14px"
+        onclick="newClientInline()">+ New</button>
     </div>
     <p id="clash" class="muted" style="font-size:.82rem;margin:-6px 0 12px;min-height:16px"></p>
 
@@ -1238,6 +1240,29 @@ async function saveBookingFields(id){
   }
 }
 
+/* Taking a booking over the phone shouldn't mean leaving the booking to go and
+   create a client first — that's the step everyone skips, which is why bookings
+   ended up with no client attached. */
+async function newClientInline(){
+  const name=prompt('Client name');
+  if(name===null) return;
+  if(!name.trim()){ alert('A name is needed.'); return; }
+  const email=prompt('Email (optional — but it\'s how repeat clients get matched up)','')||'';
+  const phone=prompt('Phone (optional)','')||'';
+  try{
+    const r=await api('/api/crm/clients',{method:'POST',
+      body:JSON.stringify({name:name.trim(),email:email.trim(),phone:phone.trim()})});
+    const c=r.client;
+    CLIENTS.push(c);
+    CLIENTS.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    const sel=$('f-client');
+    const opt=document.createElement('option');
+    opt.value=c.id; opt.textContent=c.name;
+    sel.appendChild(opt);
+    sel.value=c.id;
+  }catch(e){ alert(e.message); }
+}
+
 async function saveBooking(id){
   const body={
     title:$('f-title').value.trim(),
@@ -1251,6 +1276,7 @@ async function saveBooking(id){
     deposit_pence:toPence($('f-dep').value),
   };
   if(!body.title){ alert('Give the booking a title.'); return; }
+  if(!body.client_id && !confirm('No client is attached to this booking. Save it anyway?')) return;
   try{
     if(id){
       await api('/api/crm/bookings/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});
