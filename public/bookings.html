@@ -469,6 +469,7 @@ function renderQuotesModal(bookingId){
           <span class="muted" style="display:block;font-size:.84rem">
             ${q.items.length} item${q.items.length===1?'':'s'} ·
             ${q.deposit?money(q.deposit)+' deposit':'no deposit'}${q.sent_at?' · sent '+esc(fmtDate(q.sent_at)):''}
+            ${q.template_id?` · ${q.status==='accepted'?'agreement raised':'agreement on acceptance'}`:''}
           </span>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -548,6 +549,14 @@ function editQuote(bookingId,quoteId){
       <label class="field"><span>Message to the client</span>
         <textarea id="q-message" rows="4" placeholder="Anything you'd like to say alongside the numbers.">${esc(q?q.message||'':'')}</textarea></label>
 
+      <label class="field"><span>Agreement to sign on acceptance</span>
+        <select id="q-template">
+          <option value="">— none —</option>
+          ${TEMPLATES.filter(t=>t.kind==='contract').map(t=>
+            `<option value="${esc(t.id)}" ${q&&q.template_id===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
+        </select>
+        <span class="muted" style="font-size:.82rem">Raised automatically when they accept, with this quote's figures merged in. Decline it and no agreement is created.</span></label>
+
       <label class="field"><span>Quote valid until</span>
         <input id="q-expires" type="date" value="${q&&q.expires_at?new Date(q.expires_at).toISOString().slice(0,10):new Date(Date.now()+30*864e5).toISOString().slice(0,10)}"></label>
 
@@ -624,6 +633,7 @@ function quoteBody(){
     deposit_value:t==='fixed'?toPence($('q-dep-value').value):(parseInt($('q-dep-value').value,10)||0),
     balance_days_before:parseInt($('q-days').value,10)||0,
     message:$('q-message').value,
+    template_id:$('q-template').value||null,
     expires_at:$('q-expires').value?new Date($('q-expires').value+'T23:59:59').getTime():null,
   };
 }

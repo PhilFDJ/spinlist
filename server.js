@@ -3500,6 +3500,13 @@ app.get('/api/quote/:token', (req, res) => {
       balance_due_at: m.balance_due_at,
       schedule_text: paymentScheduleText(q, booking),
       responded_at: q.responded_at,
+      // So the page can say "you'll be asked to sign an agreement" up front,
+      // rather than springing it on them after they've accepted.
+      has_contract: !!q.template_id,
+      contract_link: (function () {
+        const c = db.getContractByQuote(q.id);
+        return c ? `${BASE_URL}/contract.html?c=${c.token}` : null;
+      })(),
     },
     booking: booking ? {
       title: booking.title,
@@ -3513,7 +3520,7 @@ app.get('/api/quote/:token', (req, res) => {
 
 // Accept or decline. Deliberately one-way: once answered it can't be flipped,
 // so there's no ambiguity about what was agreed.
-app.post('/api/quote/:token/respond', (req, res) => {
+app.post('/api/quote/:token/respond', async (req, res) => {
   const q = db.getQuoteByToken(req.params.token);
   if (!q) return res.status(404).json({ error: 'That quote could not be found.' });
   if (q.status !== 'sent') {
@@ -3537,6 +3544,31 @@ app.post('/api/quote/:token/respond', (req, res) => {
     }
   }
 
+  /* Raise the agreement they've just agreed to. Only on acceptance, only once,
+     and never in a way that can undo the acceptance itself: if the contract
+     can't be raised the quote is still accepted, and the DJ can send it by
+     hand. Silently losing a client's "yes" would be far worse than a missing
+     contract. */
+  let contractLink = null;
+  if (accept && q.template_id && q.booking_id) {
+    try {
+      const existing = db.getContractByQuote(q.id);
+      if (existing) {
+        contractLink = `${BASE_URL}/contract.html?c=${existing.token}`;
+      } else {
+        const owner = db.getUserById(q.owner_id);
+        const booking = db.getBooking(q.booking_id);
+        const tpl = db.getTemplate(q.template_id);
+        if (owner && booking && tpl && tpl.owner_id === q.owner_id) {
+          const to = (booking.contacts && booking.contacts.primary_contact
+                      && booking.contacts.primary_contact.email) || '';
+          const issued = await issueContract(owner, booking, tpl, q, to);
+          contractLink = issued.link;
+        }
+      }
+    } catch (e) { console.error('[quote contract]', e.message); }
+  }
+
   // Tell the DJ. A failure here must not undo the client's decision.
   try {
     const owner = db.getUserById(q.owner_id);
@@ -3557,7 +3589,9 @@ app.post('/api/quote/:token/respond', (req, res) => {
     }
   } catch (e) { /* never block the response */ }
 
-  res.json({ ok: true, status: accept ? 'accepted' : 'declined' });
+  // The link goes back so the quote page can send them straight on to signing
+  // rather than making them wait for an email to arrive.
+  res.json({ ok: true, status: accept ? 'accepted' : 'declined', contract_link: contractLink });
 });
 
 /* ================================================================
@@ -3696,21 +3730,17 @@ app.get('/api/crm/contracts', auth.requireAuth, requireCrm, (req, res) => {
 });
 
 // Issue a contract for a booking, filled from a template.
-app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) => {
-  const body = req.body || {};
-  const booking = db.getBooking(body.booking_id);
-  if (!booking || !ownsBooking(req, booking)) return res.status(404).json({ error: 'Booking not found.' });
-  const tpl = db.getTemplate(body.template_id);
-  if (!tpl || tpl.owner_id !== req.user.id) return res.status(404).json({ error: 'Template not found.' });
-
-  const quote = body.quote_id ? db.getQuote(body.quote_id) : null;
-  const tokens = mergeTokens(booking, req.user, quote);
+/* Raise a contract from a template, frozen at issue. Extracted so a quote
+   acceptance and the manual "send a contract" button can't drift apart — one
+   of them would eventually merge tokens differently from the other. */
+async function issueContract(owner, booking, tpl, quote, to) {
+  const tokens = mergeTokens(booking, owner, quote);
   const sections = (tpl.sections || []).map(s => ({
     heading: applyMerge(s.heading, tokens),
     body_html: renderBody(applyMerge(s.body, tokens)),
   }));
 
-  const contract = db.createContract(req.user.id, {
+  const contract = db.createContract(owner.id, {
     booking_id: booking.id,
     quote_id: quote ? quote.id : null,
     template_id: tpl.id,
@@ -3719,17 +3749,13 @@ app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) =>
   });
 
   const link = `${BASE_URL}/contract.html?c=${contract.token}`;
-  const to = ((body.to || '').toString().trim())
-    || (booking.contacts && booking.contacts.primary_contact && booking.contacts.primary_contact.email)
-    || '';
-
   if (to && CONTACT_RESEND_KEY && CONTACT_FROM) {
     try {
       await sendViaResend(
-        { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: req.user.name || CONTACT_FROM_NAME },
+        { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: owner.name || CONTACT_FROM_NAME },
         {
           to,
-          replyTo: req.user.email,
+          replyTo: owner.email,
           subject: `Please sign — ${contract.title}`,
           html: `<div style="font-family:system-ui,sans-serif;color:#0a1228">
             <h2 style="margin:0 0 8px">Your agreement</h2>
@@ -3741,7 +3767,22 @@ app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) =>
       );
     } catch (e) { console.error('[contract email]', e.message); }
   }
+  return { contract, link };
+}
 
+app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) => {
+  const body = req.body || {};
+  const booking = db.getBooking(body.booking_id);
+  if (!booking || !ownsBooking(req, booking)) return res.status(404).json({ error: 'Booking not found.' });
+  const tpl = db.getTemplate(body.template_id);
+  if (!tpl || tpl.owner_id !== req.user.id) return res.status(404).json({ error: 'Template not found.' });
+
+  const quote = body.quote_id ? db.getQuote(body.quote_id) : null;
+  const to = ((body.to || '').toString().trim())
+    || (booking.contacts && booking.contacts.primary_contact && booking.contacts.primary_contact.email)
+    || '';
+
+  const { contract, link } = await issueContract(req.user, booking, tpl, quote, to);
   res.json({ contract, link, sent_to: to || null });
 });
 
