@@ -1213,7 +1213,7 @@ function publicWedding(w, viewerId) {
     inviteCode: (isDjSide ? w.invite_code : undefined),   // the DJ (or sub-DJ) sees the code
     coupleJoined: !!w.couple_id,
     coupleMembers: isDjSide ? db.weddingCoupleMembers(w) : undefined,   // DJ/sub-DJ sees who's joined
-    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0, noteCouple: s.note_couple || '', noteDj: s.note_dj || '' })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label, note: t.note || '' })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
     answers: w.answers || {},
@@ -1372,6 +1372,39 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
   const blk = (updated.blocks || []).find(b => b.id === req.params.blockId);
   logWedding(w, req.user, 'songs', describeSongChange(before, songs, blk ? blk.name : ''));
   notifyCoupleActivity(w, req.user, 'songs', `updated songs${blk ? ' in “' + blk.name + '”' : ''}`);
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+/* A note on one song. The couple and the DJ each have their own, so neither can
+   overwrite the other's, and who wrote what is never in doubt.
+
+   Deliberately NOT blocked by the song-choice deadline: after the lock the
+   couple can no longer change their songs, but "please play this one early" is
+   a message, not a change of mind, and that's exactly when they most need to
+   send it. */
+app.post('/api/weddings/:id/song-note', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+
+  const isDj = req.user.id === w.host_id || w.assigned_dj === req.user.id;
+  const isCouple = db.isCoupleMember(w, req.user.id);
+  if (!isDj && !isCouple) return res.status(403).json({ error: 'Not your wedding plan.' });
+
+  const b = req.body || {};
+  // The server decides whose note this is from who is asking — a client can't
+  // choose to write in the other side's box.
+  const which = isDj ? 'dj' : 'couple';
+  const note = (b.note || '').toString().slice(0, 500);
+
+  const updated = db.setWeddingSongNote(w.id, b.blockId, b.songId, which, note);
+  if (!updated) return res.status(404).json({ error: 'That song is no longer in the plan.' });
+
+  const blk = (updated.blocks || []).find(x => x.id === b.blockId);
+  const song = blk && (blk.songs || []).find(x => x.id === b.songId);
+  const label = song ? `${song.title} — ${song.artist}` : 'a song';
+  logWedding(w, req.user, 'songs', note ? `noted on ${label}: ${note}` : `removed their note on ${label}`);
+  if (isCouple) notifyCoupleActivity(w, req.user, 'songs', `left a note on ${label}`);
+
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
