@@ -1378,10 +1378,9 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
 /* A note on one song. The couple and the DJ each have their own, so neither can
    overwrite the other's, and who wrote what is never in doubt.
 
-   Deliberately NOT blocked by the song-choice deadline: after the lock the
-   couple can no longer change their songs, but "please play this one early" is
-   a message, not a change of mind, and that's exactly when they most need to
-   send it. */
+   Locked by the song-choice deadline, same as the songs themselves — once the
+   plan is locked the couple can't add to it at all, and everything the DJ
+   prepares from is fixed on one date. The DJ is never locked out. */
 app.post('/api/weddings/:id/song-note', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
@@ -1389,6 +1388,9 @@ app.post('/api/weddings/:id/song-note', auth.requireAuth, (req, res) => {
   const isDj = req.user.id === w.host_id || w.assigned_dj === req.user.id;
   const isCouple = db.isCoupleMember(w, req.user.id);
   if (!isDj && !isCouple) return res.status(403).json({ error: 'Not your wedding plan.' });
+  if (coupleEditLocked(w, req.user.id)) {
+    return res.status(423).json({ error: 'Notes are locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
+  }
 
   const b = req.body || {};
   // The server decides whose note this is from who is asking — a client can't

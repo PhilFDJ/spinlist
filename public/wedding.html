@@ -119,7 +119,7 @@ let PREVIEW_COUPLE=false;       // DJ previewing the couple's view
 // True when the current viewer should see the DJ view (false = couple view).
 // The account holder can preview the couple view via PREVIEW_COUPLE.
 function isDjView(){ return ME && ME.role!=='couple' && !PREVIEW_COUPLE; }
-function toggleCouplePreview(){ PREVIEW_COUPLE=!PREVIEW_COUPLE; renderPlan(); window.scrollTo(0,0); }
+function toggleCouplePreview(){ PREVIEW_COUPLE=!PREVIEW_COUPLE; NOTE_EDIT=null; renderPlan(); window.scrollTo(0,0); }
 
 /* ---------- Notification centre (DJ only) ---------- */
 let NOTIFS=[], NOTIF_SEEN=null;
@@ -1713,23 +1713,56 @@ function songRow(blockId,s,i,canEdit,isDJ){
 
 /* Notes are NOT gated on canEdit. After the lock date the couple can no longer
    change their songs, but "please play this early" is a message rather than a
-   change of mind — and that's exactly when they most need to send it. */
-function canNote(){ return !DEMO && !PREVIEW_COUPLE; }
+   change of mind — and that's exactly when they most need to send it.
+
+   Couple preview DOES show the button. Hiding it made the preview lie about
+   what the couple actually sees, which is the one thing a preview must not do.
+   It's inert there instead: the server decides whose note it is from who's
+   logged in, so a DJ pressing it in preview would file a DJ note under the
+   couple's heading. */
+function planLocked(){
+  const d = CURRENT && CURRENT.lockDate;
+  return !!(d && Date.now() > d);
+}
+function noteLocked(){
+  /* In couple preview, judge it by the DEADLINE rather than canEdit: canEdit is
+     computed for whoever is asking, and it's always true for the DJ, so using it
+     would show an open note box in a preview of a locked couple. */
+  if (PREVIEW_COUPLE) return planLocked();
+  return !!(CURRENT && CURRENT.canEdit === false);
+}
+function canNote(){ return !DEMO && !noteLocked(); }
 
 function noteButton(blockId,s,isDJ){
-  if(!canNote()) return '';
+  if(DEMO) return '';
+  if(noteLocked()) return `<button class="mini-btn" style="opacity:.5"
+    title="Notes are locked — the deadline has passed" onclick="lockedNoteHint()">Notes locked</button>`;
   const mine=isDJ?(s.noteDj||''):(s.noteCouple||'');
   const open=NOTE_EDIT&&NOTE_EDIT.blockId===blockId&&NOTE_EDIT.songId===s.id;
   if(open) return '';
+  if(PREVIEW_COUPLE) return `<button class="mini-btn" style="opacity:.6"
+    title="The couple adds their own note here" onclick="previewNoteHint()">+ Note</button>`;
   return `<button class="mini-btn ${mine?'done':''}" title="${mine?'Edit your note':'Add a note about this song'}"
     onclick="openSongNote('${blockId}','${esc(s.id)}')">${mine?'✎ Note':'+ Note'}</button>`;
 }
+function previewNoteHint(){
+  toast('Preview only — this is where the couple adds their note');
+}
+function lockedNoteHint(){
+  toast('Your song choices and notes are locked — please contact your DJ');
+}
 
 function notesHtml(blockId,s,isDJ){
+  /* isDJ is false in couple preview, so the labels flip automatically and the
+     DJ sees their own note the way the couple will read it. */
   const theirs=isDJ?(s.noteCouple||''):(s.noteDj||'');
   const theirLabel=isDJ?'From the couple':'From your DJ';
   const mine=isDJ?(s.noteDj||''):(s.noteCouple||'');
-  const open=NOTE_EDIT&&NOTE_EDIT.blockId===blockId&&NOTE_EDIT.songId===s.id;
+  /* Gated the same way as the button. Without this, opening the editor and then
+     switching to couple preview left a live, savable editor sitting inside a
+     preview — the DJ could file a note as though they were the couple. */
+  const open=canNote()&&!PREVIEW_COUPLE
+    &&NOTE_EDIT&&NOTE_EDIT.blockId===blockId&&NOTE_EDIT.songId===s.id;
 
   let out='';
   if(theirs) out+=noteBubble(theirLabel,theirs,'var(--plum)');
@@ -1757,6 +1790,8 @@ function noteBubble(label,text,colour){
 }
 
 function openSongNote(blockId,songId){
+  if(noteLocked()) return lockedNoteHint();
+  if(DEMO||PREVIEW_COUPLE) return previewNoteHint();
   NOTE_EDIT={blockId,songId};
   renderBlocks();
   const box=document.getElementById('note-box');

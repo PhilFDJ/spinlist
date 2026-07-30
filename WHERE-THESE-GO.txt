@@ -1,0 +1,47 @@
+Spinlist — notes lock on the deadline
+====================================
+
+  server.js            -> replaces server.js  (repo root)
+  public/wedding.html  -> replaces public/wedding.html
+  lib/db.js            -> unchanged since last upload
+  other public/*.html  -> unchanged
+
+Upload server.js and wedding.html.
+
+WHAT CHANGED
+------------
+Song notes now lock on the same date as song choices. One deadline, one
+rule, nothing for a couple to argue about.
+
+For the couple, once the date passes:
+  - the "+ Note" button becomes "Notes locked"
+  - tapping it says "Your song choices and notes are locked — please
+    contact your DJ"
+  - notes ALREADY written stay fully readable, theirs and yours
+
+The DJ and the assigned sub-DJ are never locked out — you can still note
+against any song right up to and during the gig.
+
+ENFORCED IN BOTH PLACES
+-----------------------
+The page hides the control; the server refuses the request with 423 and
+the same wording. A hidden button is not a lock — a stale page left open
+in a tab could otherwise still post after the deadline.
+
+COUPLE PREVIEW
+--------------
+Previewing a locked couple now correctly shows "Notes locked".
+
+That needed a different test from the couple's own view: canEdit is
+computed for whoever is asking and is always true for the DJ, so using it
+would have shown an open note box in a preview of a locked couple. Preview
+judges by the deadline itself instead.
+
+CONFIRMED BY TEST
+-----------------
+  couple before the lock : + Note, editor opens, saves
+  couple after the lock  : Notes locked, editor refused, explains itself,
+                           existing notes still readable
+  DJ after the lock      : + Note, editor opens as normal
+  preview of a locked    : Notes locked
+  preview of an open     : + Note
