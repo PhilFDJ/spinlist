@@ -1213,7 +1213,7 @@ function publicWedding(w, viewerId) {
     inviteCode: (isDjSide ? w.invite_code : undefined),   // the DJ (or sub-DJ) sees the code
     coupleJoined: !!w.couple_id,
     coupleMembers: isDjSide ? db.weddingCoupleMembers(w) : undefined,   // DJ/sub-DJ sees who's joined
-    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0, noteCouple: s.note_couple || '', noteDj: s.note_dj || '' })) })),
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, live: !!b.live, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0, noteCouple: s.note_couple || '', noteDj: s.note_dj || '' })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label, note: t.note || '' })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
     answers: w.answers || {},
@@ -1523,15 +1523,22 @@ app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   const blockId = (req.body || {}).blockId || null;
+  let liveName = '';
   if (blockId) {
     const block = (w.blocks || []).find(b => b.id === blockId);
-    if (!block || !/play if possible/i.test(block.name || '')) {
-      return res.status(400).json({ error: 'Only the "Play If Possible" block can be set to live requests.' });
+    /* Was a hard-coded name test for "Play If Possible", which meant renaming
+       the block broke live requests with a confusing error. Now it's the block's
+       own `live` flag — the name test stays only so blocks created before this
+       existed keep working. */
+    const eligible = block && (block.live === true || /play if possible/i.test(block.name || ''));
+    if (!eligible) {
+      return res.status(400).json({ error: 'That block isn\'t set up for guest requests. Mark it as the request block first.' });
     }
+    liveName = block.name || '';
   }
   const updated = db.setWeddingLiveBlock(w.id, blockId);
   logWedding(w, req.user, 'live', blockId
-    ? 'turned on live guest requests for “Play If Possible”'
+    ? `turned on live guest requests for “${liveName}”`
     : 'turned off live guest requests');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
@@ -1579,9 +1586,26 @@ app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
         id: blk.id || ('b' + (i + 1) + '_' + auth.newId().slice(0, 4)),
         name: (blk.name || 'Block').toString().slice(0, 60),
         capacity: Math.max(1, Math.min(parseInt(blk.capacity, 10) || 1, 100)),
+        // Carried from the template, or set by hand. Falls back to whatever the
+        // block already had so a structure edit that omits it doesn't clear it.
+        live: blk.live === undefined ? !!(existing && existing.live) : !!blk.live,
         songs: existing ? (existing.songs || []).slice(0, Math.max(1, parseInt(blk.capacity, 10) || 1)) : [],
       };
     });
+    // One request block per wedding, for the same reason as per template.
+    let seenLive = false;
+    for (let i = fields.blocks.length - 1; i >= 0; i--) {
+      if (!fields.blocks[i].live) continue;
+      if (seenLive) fields.blocks[i].live = false;
+      seenLive = true;
+    }
+    /* If the block currently taking live requests has just been deleted or
+       un-flagged, requests must stop pointing at it. Leaving live_block_id
+       dangling would show guests a request screen feeding nothing. */
+    if (w.live_block_id) {
+      const still = fields.blocks.find(x => x.id === w.live_block_id);
+      if (!still || !still.live) db.setWeddingLiveBlock(w.id, null);
+    }
   }
   const updated = db.updateWedding(w.id, fields);
   // If the wedding date changed and a live-requests event is linked, keep its
