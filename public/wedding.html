@@ -563,12 +563,12 @@ function fmtWeddingDate(ts){
 /* ---------------- CREATE WEDDING (DJ) ---------------- */
 const DEFAULT_BLOCKS=[
   {name:'First Dance',capacity:1},{name:'Cake Cutting',capacity:1},
-  {name:"Couple's Top 15",capacity:15},{name:'Play If Possible',capacity:30},
+  {name:"Couple's Top 15",capacity:15},{name:'Play If Possible',capacity:30,live:true},
   {name:'Last Dance',capacity:1},{name:'Do Not Play',capacity:5}
 ];
 let draftBlocks=[];
 async function openCreate(){
-  draftBlocks=DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity}));
+  draftBlocks=DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live}));
   try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
   try{ BLOCK_TEMPLATES=(await api('/api/block-templates')).templates||[]; }catch(e){ BLOCK_TEMPLATES=[]; }
   const root=document.getElementById('root');
@@ -615,12 +615,12 @@ function loadBlockTemplate(id){
   if(!id)return;
   const t=BLOCK_TEMPLATES.find(x=>x.id===id);
   if(!t)return;
-  draftBlocks=t.blocks.map(b=>({name:b.name,capacity:b.capacity}));
+  draftBlocks=t.blocks.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live}));
   renderDraftBlocks();
   toast('Loaded "'+t.name+'"');
 }
 async function saveBlocksAsTemplate(){
-  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1)}));
+  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live}));
   if(!blocks.length){toast('Add some blocks first');return;}
   const name=prompt('Name this music template:','My Wedding Set');
   if(!name||!name.trim())return;
@@ -639,15 +639,16 @@ function renderDraftBlocks(){
       <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'draft')">⠿</span>
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="draftBlocks[${i}].name=this.value">
       <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="draftBlocks[${i}].capacity=+this.value" title="Number of songs">
+      ${liveToggleHtml(draftBlocks,i,'draft')}
       <button class="iconbtn" onclick="draftBlocks.splice(${i},1);renderDraftBlocks()">🗑</button>
     </div>`).join('');
 }
-function addDraftBlock(){draftBlocks.push({name:'New block',capacity:5});renderDraftBlocks();}
+function addDraftBlock(){draftBlocks.push({name:'New block',capacity:5,live:false});renderDraftBlocks();}
 async function createWedding(){
   const name=val('w-name'),coupleNames=val('w-couple');
   const msg=document.getElementById('w-msg');msg.textContent='';
   if(!name){msg.textContent='Please give the wedding a name.';return;}
-  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1)}));
+  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live}));
   if(!blocks.length){msg.textContent='Add at least one block.';return;}
   try{
     const templateId=val('w-template');
@@ -717,7 +718,7 @@ function handleTouchStart(e,i,ctx){touchFrom=i;touchCtx=ctx;}
 // Persist a new block order from the Music tab (preserves songs — sends ids).
 async function saveBlockOrder(){
   try{
-    const blocks=CURRENT.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity}));
+    const blocks=CURRENT.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live}));
     const d=await api('/api/weddings/'+CURRENT.id+'/update',{method:'POST',body:JSON.stringify({name:CURRENT.name,coupleNames:CURRENT.coupleNames,blocks})});
     CURRENT=d.wedding;
     toast('Order saved');
@@ -729,7 +730,7 @@ let editBlocks=[];
 async function openEditWedding(){
   const w=CURRENT;
   // editable copy of blocks (keep ids so songs are preserved on save)
-  editBlocks=w.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,songCount:(b.songs||[]).length}));
+  editBlocks=w.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live,songCount:(b.songs||[]).length}));
   try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
   const curTplName=w.questionnaire?w.questionnaire.name:'';
   const root=document.getElementById('root');
@@ -773,10 +774,11 @@ function renderEditBlocks(){
       <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'edit')">⠿</span>
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editBlocks[${i}].name=this.value">
       <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editBlocks[${i}].capacity=+this.value" title="Songs">
+      ${liveToggleHtml(editBlocks,i,'edit')}
       <button class="iconbtn" onclick="removeEditBlock(${i})" title="${b.songCount?('Has '+b.songCount+' song(s)'):'Remove'}">🗑</button>
     </div>`).join('');
 }
-function addEditBlock(){editBlocks.push({name:'New block',capacity:5,songCount:0});renderEditBlocks();}
+function addEditBlock(){editBlocks.push({name:'New block',capacity:5,songCount:0,live:false});renderEditBlocks();}
 function removeEditBlock(i){
   const b=editBlocks[i];
   if(b.songCount&&!confirm('This block has '+b.songCount+' song(s). Remove it and its songs?'))return;
@@ -786,7 +788,7 @@ async function saveEditWedding(){
   const name=val('ew-name'),coupleNames=val('ew-couple');
   const msg=document.getElementById('ew-msg');msg.textContent='';
   if(!name.trim()){msg.textContent='Please give the wedding a name.';return;}
-  const blocks=editBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({id:b.id,name:b.name,capacity:Math.max(1,b.capacity||1)}));
+  const blocks=editBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({id:b.id,name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live}));
   if(!blocks.length){msg.textContent='Add at least one block.';return;}
   const body={name,coupleNames,blocks};
   const dateStr=val('ew-date');
@@ -834,7 +836,7 @@ async function deleteBlockTemplate(id){
   openBlockTemplates();
 }
 function editBlockTemplate(id){
-  editingBTpl=id?JSON.parse(JSON.stringify(BLOCK_TEMPLATES.find(t=>t.id===id))):{name:'',blocks:DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity}))};
+  editingBTpl=id?JSON.parse(JSON.stringify(BLOCK_TEMPLATES.find(t=>t.id===id))):{name:'',blocks:DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live}))};
   if(!editingBTpl.blocks)editingBTpl.blocks=[];
   renderBlockTemplateEditor();
 }
@@ -846,9 +848,9 @@ function renderBlockTemplateEditor(){
     <div class="panel" style="max-width:680px">
       <div class="field"><span>Template name</span><input id="btpl-name" value="${esc(t.name||'')}" placeholder="e.g. Standard Wedding Set"></div>
       <h2 style="font-size:1.1rem;margin:10px 0 4px">Blocks</h2>
-      <p class="muted" style="margin-bottom:12px">Name each block and how many songs it holds.</p>
+      <p class="muted" style="margin-bottom:12px">Name each block and how many songs it holds. Mark one as <b>Requests</b> and guests can request into it on the night — that choice is saved with the template.</p>
       <div id="btpl-blocks"></div>
-      <button class="addbtn" onclick="editingBTpl.blocks.push({name:'New block',capacity:5});renderBTplBlocks()">+ Add a block</button>
+      <button class="addbtn" onclick="editingBTpl.blocks.push({name:'New block',capacity:5,live:false});renderBTplBlocks()">+ Add a block</button>
       <div style="margin-top:18px;display:flex;gap:10px">
         <button class="btn btn-neon" onclick="saveBlockTemplate()">Save template</button>
         <button class="btn btn-ghost" onclick="openBlockTemplates()">Cancel</button>
@@ -857,6 +859,24 @@ function renderBlockTemplateEditor(){
     </div>`;
   renderBTplBlocks();
 }
+/* Marks which block guest requests land in. Radio-like rather than a plain
+   checkbox: only one block can take requests, so ticking one must untick the
+   rest — otherwise you'd save two and the server would silently drop one. */
+function liveToggleHtml(list,i,fn){
+  const on=!!list[i].live;
+  return `<button class="mini-btn ${on?'done':''}" title="Guest requests land in this block"
+    onclick="setLiveBlockFlag('${fn}',${i})">${on?'★ Requests':'Requests'}</button>`;
+}
+function setLiveBlockFlag(which,i){
+  const list = which==='btpl' ? editingBTpl.blocks : which==='draft' ? draftBlocks : editBlocks;
+  const turningOn = !list[i].live;
+  list.forEach(b=>{ b.live=false; });
+  list[i].live = turningOn;
+  if(which==='btpl') renderBTplBlocks();
+  else if(which==='draft') renderDraftBlocks();
+  else renderEditBlocks();
+}
+
 function renderBTplBlocks(){
   const el=document.getElementById('btpl-blocks');
   el.innerHTML=editingBTpl.blocks.map((b,i)=>`
@@ -865,6 +885,7 @@ function renderBTplBlocks(){
       <span class="drag-handle" title="Drag to reorder" ontouchstart="handleTouchStart(event,${i},'btpl')">⠿</span>
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editingBTpl.blocks[${i}].name=this.value">
       <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editingBTpl.blocks[${i}].capacity=+this.value" title="Songs">
+      ${liveToggleHtml(editingBTpl.blocks,i,'btpl')}
       <button class="iconbtn" onclick="editingBTpl.blocks.splice(${i},1);renderBTplBlocks()">🗑</button>
     </div>`).join('')||'<p class="muted" style="margin-bottom:8px">No blocks yet.</p>';
 }
@@ -1503,8 +1524,10 @@ function renderBlocks(){
     const isLive=w.liveBlockId===b.id;
     const full=b.songs.length>=b.capacity;
     const dragAttrs=(isDJ&&canEdit&&!isLive)?`draggable="true" data-i="${i}" ondragstart="dragStart(event,${i},'music')" ondragover="dragOver(event)" ondrop="dropRow(event,${i},'music')" ondragend="dragEnd(event)"`:'';
-    // Live requests can only be enabled on the "Play If Possible" block.
-    const canBeLive=/play if possible/i.test(b.name||'');
+    /* Was name-matched on "Play If Possible", so renaming the block quietly
+       killed live requests. Now it's the block's own flag; the name test stays
+       only for blocks created before the flag existed. */
+    const canBeLive=b.live===true||/play if possible/i.test(b.name||'');
     const liveToggle=(canEdit&&(canBeLive||isLive))?`<button class="mini-btn ${isLive?'done':''}" onclick="toggleLiveBlock('${b.id}')">${isLive?'★ Live requests on':'Make live requests'}</button>`:'';
     if(isLive){
       return `<div class="block" style="border:1.5px solid var(--neon)">
@@ -1669,6 +1692,9 @@ function copyLiveSong(title,artist){
   const text=title+' – '+artist;
   navigator.clipboard?.writeText(text).then(()=>toast('Copied: '+text),()=>toast(text));
 }
+/* Which song's note is open for editing, if any. */
+let NOTE_EDIT=null;
+
 function songRow(blockId,s,i,canEdit,isDJ){
   const played=!!s.played;
   // DJ (not in demo) gets Copy + Mark-played controls for use on the day.
@@ -1678,9 +1704,81 @@ function songRow(blockId,s,i,canEdit,isDJ){
   return `<div class="song-row" style="${played?'opacity:.55':''}">
     <img src="${esc(s.art||'')}" alt="" onerror="this.style.visibility='hidden'">
     <div class="meta"><div class="t">${esc(s.title)}${played?' · <span style="color:var(--neon)">played</span>':''}</div><div class="a">${esc(s.artist)}</div></div>
+    ${noteButton(blockId,s,isDJ)}
     ${djTools}
     ${canEdit===false?'':`<button class="iconbtn" title="Remove" onclick="removeSong('${blockId}',${i})">×</button>`}
+    ${notesHtml(blockId,s,isDJ)}
   </div>`;
+}
+
+/* Notes are NOT gated on canEdit. After the lock date the couple can no longer
+   change their songs, but "please play this early" is a message rather than a
+   change of mind — and that's exactly when they most need to send it. */
+function canNote(){ return !DEMO && !PREVIEW_COUPLE; }
+
+function noteButton(blockId,s,isDJ){
+  if(!canNote()) return '';
+  const mine=isDJ?(s.noteDj||''):(s.noteCouple||'');
+  const open=NOTE_EDIT&&NOTE_EDIT.blockId===blockId&&NOTE_EDIT.songId===s.id;
+  if(open) return '';
+  return `<button class="mini-btn ${mine?'done':''}" title="${mine?'Edit your note':'Add a note about this song'}"
+    onclick="openSongNote('${blockId}','${esc(s.id)}')">${mine?'✎ Note':'+ Note'}</button>`;
+}
+
+function notesHtml(blockId,s,isDJ){
+  const theirs=isDJ?(s.noteCouple||''):(s.noteDj||'');
+  const theirLabel=isDJ?'From the couple':'From your DJ';
+  const mine=isDJ?(s.noteDj||''):(s.noteCouple||'');
+  const open=NOTE_EDIT&&NOTE_EDIT.blockId===blockId&&NOTE_EDIT.songId===s.id;
+
+  let out='';
+  if(theirs) out+=noteBubble(theirLabel,theirs,'var(--plum)');
+  if(mine&&!open) out+=noteBubble('Your note',mine,'var(--line)');
+
+  if(open){
+    out+=`<div style="flex-basis:100%;margin:6px 0 2px">
+      <textarea id="note-box" rows="2" maxlength="500" placeholder="e.g. please play this straight after the speeches"
+        style="width:100%;font:inherit;font-size:.88rem;padding:9px 11px;border:1.5px solid var(--plum);border-radius:9px;background:var(--paper-2);color:var(--ink)">${esc(mine)}</textarea>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <button class="mini-btn done" onclick="saveSongNote('${blockId}','${esc(s.id)}')">Save note</button>
+        <button class="mini-btn" onclick="NOTE_EDIT=null;renderBlocks()">Cancel</button>
+        ${mine?`<button class="mini-btn" onclick="clearSongNote('${blockId}','${esc(s.id)}')">Delete note</button>`:''}
+      </div>
+    </div>`;
+  }
+  return out;
+}
+
+function noteBubble(label,text,colour){
+  return `<div style="flex-basis:100%;margin:4px 0 0;padding:7px 10px;border-left:3px solid ${colour};background:var(--paper-2);border-radius:0 8px 8px 0">
+    <div style="font-size:.7rem;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:700">${esc(label)}</div>
+    <div style="font-size:.86rem;white-space:pre-wrap">${esc(text)}</div>
+  </div>`;
+}
+
+function openSongNote(blockId,songId){
+  NOTE_EDIT={blockId,songId};
+  renderBlocks();
+  const box=document.getElementById('note-box');
+  if(box){ box.focus(); box.setSelectionRange(box.value.length,box.value.length); }
+}
+
+async function saveSongNote(blockId,songId){
+  const box=document.getElementById('note-box');
+  await putSongNote(blockId,songId,box?box.value:'');
+}
+async function clearSongNote(blockId,songId){
+  await putSongNote(blockId,songId,'');
+}
+async function putSongNote(blockId,songId,note){
+  try{
+    const d=await api('/api/weddings/'+CURRENT.id+'/song-note',
+      {method:'POST',body:JSON.stringify({blockId,songId,note})});
+    CURRENT=d.wedding;
+    NOTE_EDIT=null;
+    renderBlocks();
+    toast(note.trim()?'Note saved':'Note removed');
+  }catch(e){ toast(e.message); }
 }
 function copyWedSong(blockId,songId){
   const b=CURRENT.blocks.find(x=>x.id===blockId);if(!b)return;
