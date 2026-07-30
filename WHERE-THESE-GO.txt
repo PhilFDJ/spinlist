@@ -1,5 +1,5 @@
-Spinlist — notes lock on the deadline
-====================================
+Spinlist — live requests run to the end of the event
+===================================================
 
   server.js            -> replaces server.js  (repo root)
   public/wedding.html  -> replaces public/wedding.html
@@ -8,40 +8,46 @@ Spinlist — notes lock on the deadline
 
 Upload server.js and wedding.html.
 
-WHAT CHANGED
-------------
-Song notes now lock on the same date as song choices. One deadline, one
-rule, nothing for a couple to argue about.
+WHAT WAS ACTUALLY WRONG
+-----------------------
+The requests EVENT already expired at the end of the wedding day, which was
+right. What was wrong was the button that opens requests: it was gated on
+canEdit, which is the COUPLE'S EDIT LOCK.
 
-For the couple, once the date passes:
-  - the "+ Note" button becomes "Notes locked"
-  - tapping it says "Your song choices and notes are locked — please
-    contact your DJ"
-  - notes ALREADY written stay fully readable, theirs and yours
+So once the couple's lock date passed, "Make live requests" disappeared —
+even though the requests themselves were meant to run on the night. Set a
+lock two weeks out and the control for the gig was gone before the gig.
 
-The DJ and the assigned sub-DJ are never locked out — you can still note
-against any song right up to and during the gig.
+Now gated on its own rule: guest requests can be opened by the DJ side or
+the couple right up to the end of the wedding day, and not after. The
+couple's edit lock has nothing to do with it — that exists so you can
+prepare a fixed set list a fortnight out, which is a different job.
+
+A SECOND BUG, SAME LINE
+-----------------------
+canEdit is false for an ASSIGNED SUB-DJ entirely — they aren't the host and
+aren't the couple. So a sub-DJ running the wedding could never open guest
+requests, on the page or through the API.
+
+Both now allow the host, the assigned sub-DJ, and the couple.
+
+TURNING REQUESTS OFF
+--------------------
+Always allowed, including after the event — tidying up shouldn't be blocked
+because the day has passed. Only turning them ON closes at end of day.
+The page and the server agree on this; previously the page hid the toggle
+after the event while the server would still have accepted it.
 
 ENFORCED IN BOTH PLACES
 -----------------------
-The page hides the control; the server refuses the request with 423 and
-the same wording. A hidden button is not a lock — a stale page left open
-in a tab could otherwise still post after the deadline.
+The page hides the control and the API refuses with 423. A hidden button is
+not a lock.
 
-COUPLE PREVIEW
---------------
-Previewing a locked couple now correctly shows "Notes locked".
-
-That needed a different test from the couple's own view: canEdit is
-computed for whoever is asking and is always true for the DJ, so using it
-would have shown an open note box in a preview of a locked couple. Preview
-judges by the deadline itself instead.
-
-CONFIRMED BY TEST
------------------
-  couple before the lock : + Note, editor opens, saves
-  couple after the lock  : Notes locked, editor refused, explains itself,
-                           existing notes still readable
-  DJ after the lock      : + Note, editor opens as normal
-  preview of a locked    : Notes locked
-  preview of an open     : + Note
+CHECKED ACROSS THE TIMELINE
+---------------------------
+  upcoming wedding, couple's lock already passed
+    DJ / sub-DJ / couple  -> can open requests
+  on the wedding day
+    DJ / sub-DJ / couple  -> can open requests
+  after the wedding
+    nobody can open       -> but an already-live block can still be closed

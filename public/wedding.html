@@ -1528,7 +1528,15 @@ function renderBlocks(){
        killed live requests. Now it's the block's own flag; the name test stays
        only for blocks created before the flag existed. */
     const canBeLive=b.live===true||/play if possible/i.test(b.name||'');
-    const liveToggle=(canEdit&&(canBeLive||isLive))?`<button class="mini-btn ${isLive?'done':''}" onclick="toggleLiveBlock('${b.id}')">${isLive?'★ Live requests on':'Make live requests'}</button>`:'';
+    /* Gated on canLive, NOT canEdit. canEdit goes false for the couple at their
+       lock date and is false for an assigned sub-DJ altogether — neither of
+       which should stop guest requests running on the night. */
+    const canLive=!DEMO&&!PREVIEW_COUPLE&&CURRENT.canLive!==false;
+    /* Turning requests OFF is always allowed, matching the server: tidying up
+       after the event shouldn't be blocked just because it's over. Only turning
+       them ON closes at the end of the wedding day. */
+    const canTurnOff=!DEMO&&!PREVIEW_COUPLE&&isLive;
+    const liveToggle=((canLive&&canBeLive)||canTurnOff)?`<button class="mini-btn ${isLive?'done':''}" onclick="toggleLiveBlock('${b.id}')">${isLive?'★ Live requests on':'Make live requests'}</button>`:'';
     if(isLive){
       return `<div class="block" style="border:1.5px solid var(--neon)">
         <div class="block-head">

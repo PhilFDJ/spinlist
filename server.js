@@ -1013,6 +1013,22 @@ function effectiveLockDate(w) {
 }
 // True if the couple's editing is locked (the effective lock date has passed). The
 // DJ/host is never locked out — they can still adjust after the couple's deadline.
+/* Live requests run until the END OF THE WEDDING DAY, which is also the
+   deadline put on the requests event itself. Deliberately nothing to do with
+   the couple's edit lock: that exists so the DJ can prepare a fixed set list a
+   fortnight out, whereas guest requests are a thing that happens on the night
+   and must stay open right through it. */
+function weddingDayEnd(w) {
+  if (!w || !w.wedding_date) return null;
+  const d = new Date(w.wedding_date);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+function weddingEnded(w) {
+  const end = weddingDayEnd(w);
+  return !!(end && Date.now() > end);
+}
+
 function coupleEditLocked(w, userId) {
   const lock = effectiveLockDate(w);
   if (!lock) return false;
@@ -1265,6 +1281,10 @@ function publicWedding(w, viewerId) {
     lockIsDefault: (typeof w.lock_date !== 'number') && !!w.wedding_date,  // showing the 14-day default
     coupleLocked: coupleEditLocked(w, viewerId),   // true only for a locked-out couple
     canEdit: !!((isHost || isCouple) && !coupleEditLocked(w, viewerId)),
+    /* Separate from canEdit on purpose. The assigned sub-DJ runs the gig and so
+       must be able to open requests even though they can't edit the plan, and
+       the couple's edit lock must not close requests on the night. */
+    canLive: !!((isDjSide || isCouple) && !weddingEnded(w)),
     createdAt: w.created_at,
   };
 }
@@ -1483,12 +1503,7 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
   db.recordEvent(id, w.host_id);
   // Keep requests open through the wedding day: deadline = end of the wedding date
   // (23:59). If no date is set, leave it open indefinitely (null).
-  let liveDeadline = null;
-  if (w.wedding_date) {
-    const d = new Date(w.wedding_date);
-    d.setHours(23, 59, 59, 999);
-    liveDeadline = d.getTime();
-  }
+  const liveDeadline = weddingDayEnd(w);
   const bb = req.body || {};
   db.createEvent({
     id,
@@ -1521,10 +1536,16 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
 app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id)) {
+  const isDjSide = req.user.id === w.host_id || w.assigned_dj === req.user.id;
+  if (!isDjSide && !db.isCoupleMember(w, req.user.id)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   const blockId = (req.body || {}).blockId || null;
+  /* Turning requests OFF stays possible forever — tidying up after the event
+     shouldn't be blocked. Only turning them ON is closed once the day is over. */
+  if (blockId && weddingEnded(w)) {
+    return res.status(423).json({ error: 'This wedding has finished — guest requests are closed.' });
+  }
   let liveName = '';
   if (blockId) {
     const block = (w.blocks || []).find(b => b.id === blockId);
