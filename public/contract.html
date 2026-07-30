@@ -1,145 +1,289 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-GB">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
 <title>Your agreement</title>
-<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png">
 <style>
-  :root{--ink:#0f1626;--ink-2:#3d4759;--paper:#f6f7fb;--surface:#fff;--line:#e3e7f0;--neon:#7aa116;--good:#1f9d55;--muted:#77809a}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6}
-  .wrap{max-width:760px;margin:0 auto;padding:0 20px 70px}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:30px;margin-top:20px;box-shadow:0 10px 30px -22px rgba(20,30,60,.35)}
-  h1{font-size:1.6rem;margin-bottom:4px}
-  .eyebrow{font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:800}
-  .muted{color:var(--muted)}
+/* ------------------------------------------------------------------
+   A legal document someone is about to sign. It must be readable at
+   length on a phone, and it must print properly — people keep copies of
+   contracts, and one that prints badly undermines confidence in it.
+   ------------------------------------------------------------------ */
+:root{
+  --fg:#16181d; --muted:#666b75; --line:#dfe2e8; --paper:#fff; --page:#f4f5f7;
+  --accent:#0A1228; --accent-fg:#fff; --good:#1a8a4a; --bad:#b4322a;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color:var(--fg); background:var(--page); line-height:1.6;
+  padding:26px 16px 60px; -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:720px;margin:0 auto}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:30px 30px 34px}
 
-  /* Contract body — deliberately plain and predictable, so what's on screen
-     matches what's archived. */
-  .doc h3{font-size:1.02rem;margin:26px 0 8px;padding-top:4px}
-  .doc h3:first-child{margin-top:6px}
-  .doc p{margin:0 0 10px;color:var(--ink-2)}
-  .doc ul{margin:0 0 12px 20px;color:var(--ink-2)}
-  .doc li{margin-bottom:5px}
-  .doc hr{border:0;border-top:1px solid var(--line);margin:20px 0}
-  .doc strong{color:var(--ink)}
+.head{border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:20px}
+.head h1{margin:0;font-size:1.35rem;letter-spacing:-.01em}
+.head .sub{color:var(--muted);font-size:.9rem;margin-top:4px}
 
-  .sign{background:#f0f4ff;border:1px solid #dde5ff;border-radius:14px;padding:22px;margin-top:26px}
-  label.f{display:block;margin-bottom:14px}
-  label.f span{display:block;font-size:.82rem;font-weight:700;color:var(--ink-2);margin-bottom:6px}
-  input[type=text]{width:100%;font:inherit;padding:12px 14px;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
-  .sig{font-family:"Snell Roundhand","Apple Chancery","Segoe Script",cursive;font-size:1.6rem;padding:14px}
-  .agree{display:flex;gap:10px;align-items:flex-start;margin:6px 0 16px;cursor:pointer;font-size:.92rem}
-  .agree input{width:20px;height:20px;flex:none;margin-top:2px}
-  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:14px 26px;cursor:pointer;font-size:1rem;width:100%}
-  .btn-sign{background:var(--neon);color:#fff}
-  .btn-sign:disabled{background:#c3cbd8;cursor:not-allowed}
-  .done{text-align:center;padding:26px 10px}
-  .done .big{font-size:2.6rem;line-height:1}
-  .foot{text-align:center;color:var(--muted);font-size:.8rem;margin-top:22px}
-  @media print{ .sign,.foot{display:none} .card{box-shadow:none;border:0} }
-  @media(max-width:520px){ .card{padding:20px} }
+.pill{
+  display:inline-block;padding:3px 11px;border-radius:100px;
+  font-size:.74rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+}
+.pill.sent{background:#eaf0ff;color:#2a4fbf}
+.pill.signed{background:#e6f5ec;color:var(--good)}
+.pill.void{background:#fdecea;color:var(--bad)}
+
+.facts{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.92rem;margin:0 0 6px}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0}
+
+/* Contract body. The server has already rendered and sanitised this HTML. */
+section.clause{margin:26px 0 0}
+section.clause h2{font-size:1.02rem;margin:0 0 8px}
+section.clause p{margin:0 0 11px}
+section.clause ul,section.clause ol{margin:0 0 11px;padding-left:22px}
+section.clause li{margin:0 0 5px}
+section.clause strong{font-weight:650}
+section.clause :last-child{margin-bottom:0}
+
+.sign{
+  margin-top:32px;padding:22px;border:1px solid var(--line);
+  border-radius:var(--radius);background:#fafbfc;
+}
+.sign h2{margin:0 0 4px;font-size:1.05rem}
+.sign .why{color:var(--muted);font-size:.88rem;margin:0 0 16px}
+label.f{display:block;margin:0 0 14px;font-size:.88rem;font-weight:600}
+label.f input{
+  display:block;width:100%;font:inherit;font-weight:400;margin-top:5px;
+  padding:10px 12px;border:1px solid #b6bcc6;border-radius:var(--radius);background:#fff;color:inherit;
+}
+/* The typed signature reads as a signature, not as another form field. */
+label.f input.autograph{font-family:"Snell Roundhand","Segoe Script","Brush Script MT",cursive;font-size:1.4rem;padding:8px 12px}
+.agree{display:flex;gap:10px;align-items:flex-start;font-size:.9rem;margin:4px 0 18px;cursor:pointer}
+.agree input{margin:4px 0 0;flex:none;width:auto}
+input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+button{font:inherit;font-weight:650;padding:13px 26px;border:0;border-radius:var(--radius);cursor:pointer}
+button:disabled{opacity:.55;cursor:default}
+.primary{background:var(--accent);color:var(--accent-fg)}
+.primary:hover:not(:disabled){opacity:.9}
+.ghost{background:none;color:var(--muted);border:1px solid var(--line)}
+
+.msg{padding:12px 14px;border-radius:var(--radius);font-size:.92rem;margin:0 0 18px;border:1px solid var(--line)}
+.msg.bad{border-color:#e6b5b0;background:#fdf3f2;color:var(--bad)}
+.msg.good{border-color:#bfe3cd;background:#f1f9f4;color:var(--good)}
+.msg[hidden]{display:none}
+
+.done{margin-top:30px;padding:20px 22px;border:1px solid #bfe3cd;background:#f1f9f4;border-radius:var(--radius)}
+.done h2{margin:0 0 6px;font-size:1.05rem;color:var(--good)}
+.done p{margin:0;font-size:.92rem}
+.done .auto{font-family:"Snell Roundhand","Segoe Script","Brush Script MT",cursive;font-size:1.5rem;margin:10px 0 2px}
+
+.loading{color:var(--muted);font-size:.92rem}
+.foot{text-align:center;color:var(--muted);font-size:.82rem;margin-top:20px}
+[hidden]{display:none !important}
+
+@media (max-width:460px){
+  body{padding:14px 10px 40px}
+  .card{padding:20px 17px 24px}
+  .sign{padding:16px}
+  .actions button{width:100%}
+}
+@media print{
+  body{background:#fff;padding:0;font-size:11.5pt}
+  .card{border:0;border-radius:0;padding:0}
+  .sign,.foot,.msg{display:none}
+  .done{border:1px solid #999;background:none}
+  section.clause{break-inside:avoid}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
-<div class="wrap" id="root"><p class="muted" style="margin-top:50px;text-align:center">Loading…</p></div>
+<div class="wrap">
+  <div class="card">
+    <p class="loading" id="loading">Loading your agreement…</p>
+    <div class="msg bad" id="fatal" hidden></div>
+    <div id="doc" hidden></div>
+  </div>
+  <p class="foot" id="foot" hidden></p>
+</div>
 
 <script>
-const $=id=>document.getElementById(id);
-function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function fmtDate(ts){return ts?new Date(ts).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'';}
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+var TOKEN = new URLSearchParams(location.search).get('c') || '';
+var DATA = null;
 
-const TOKEN=new URLSearchParams(location.search).get('c')||'';
-let DATA=null;
-
-async function load(){
-  if(!TOKEN){ $('root').innerHTML='<div class="card done"><p>No agreement reference in that link.</p></div>'; return; }
-  try{
-    const r=await fetch('/api/contract/'+encodeURIComponent(TOKEN));
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||'Not found');
-    DATA=d; render();
-  }catch(e){
-    $('root').innerHTML='<div class="card done"><p>'+esc(e.message)+'</p><p class="muted" style="margin-top:8px">Please check the link, or ask for a new one.</p></div>';
-  }
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
 }
+function longDate(ts){
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+}
+function stamp(ts){
+  if (!ts) return '';
+  var d = new Date(ts);
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' }) +
+         ' at ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+}
+function fatal(m){
+  $('loading').hidden = true;
+  $('doc').hidden = true;
+  $('fatal').textContent = m;
+  $('fatal').hidden = false;
+}
+function showErr(m){
+  var e = $('err');
+  if (!e) return alert(m);
+  e.textContent = m;
+  e.hidden = false;
+  e.scrollIntoView({ block:'nearest' });
+}
+
+var STATUS_WORD = { sent:'Awaiting signature', signed:'Signed', void:'No longer valid' };
 
 function render(){
-  const c=DATA.contract, b=DATA.booking, dj=DATA.dj;
+  var c = DATA.contract, b = DATA.booking, dj = DATA.dj || {};
+  var who = dj.company || dj.name || '';
+  document.title = c.title + (who ? ' — ' + who : '');
 
-  /* Section bodies arrive as HTML that the SERVER built and escaped — client
-     data was neutralised there. We don't re-escape here or the markup the DJ
-     wrote (bold, lists) would show as literal tags. */
-  const doc=(c.sections||[]).map(s=>`
-    ${s.heading?`<h3>${esc(s.heading)}</h3>`:''}
-    ${s.body_html||''}`).join('');
-
-  let signBlock='';
-  if(c.status==='signed'){
-    signBlock=`<div class="done">
-      <div class="big" style="color:var(--good)">✓</div>
-      <p style="font-weight:700;margin-top:8px">Signed${c.signed_by?' by '+esc(c.signed_by):''}</p>
-      <p class="muted">${esc(new Date(c.signed_at).toLocaleString('en-GB'))}</p>
-      <p class="muted" style="margin-top:14px;font-size:.85rem">Keep this link for your records. You can print this page.</p>
-    </div>`;
-  }else if(c.status==='void'){
-    signBlock=`<div class="done"><p class="muted">This agreement is no longer valid.</p></div>`;
-  }else{
-    signBlock=`<div class="sign">
-      <h3 style="font-size:1.05rem;margin-bottom:12px">Sign this agreement</h3>
-      <label class="f"><span>Your full name</span>
-        <input type="text" id="s-name" autocomplete="name" placeholder="e.g. Janet Mitchell" oninput="syncSig()"></label>
-      <label class="f"><span>Type your name to sign</span>
-        <input type="text" id="s-typed" class="sig" placeholder="Your signature" oninput="checkReady()"></label>
-      <label class="agree">
-        <input type="checkbox" id="s-agree" onchange="checkReady()">
-        <span>I have read and agree to the terms of this agreement.</span></label>
-      <button class="btn btn-sign" id="s-btn" disabled onclick="sign(this)">Sign agreement</button>
-      <p class="muted" style="font-size:.78rem;margin-top:10px">Signing records your name, the date and time, and your device details.</p>
-    </div>`;
+  var facts = '';
+  if (who) facts += '<dt>Between</dt><dd>' + esc(who) + ' and yourself</dd>';
+  if (b){
+    if (b.title)      facts += '<dt>Event</dt><dd>' + esc(b.title) + '</dd>';
+    if (b.event_date) facts += '<dt>Date</dt><dd>' + esc(longDate(b.event_date)) + '</dd>';
+    if (b.venue)      facts += '<dt>Venue</dt><dd>' + esc(b.venue) + '</dd>';
   }
 
-  $('root').innerHTML=`
-    <div class="card" style="margin-top:34px">
-      <p class="eyebrow">${esc((dj&&dj.company)||'Agreement')}</p>
-      <h1>${esc(c.title||'Agreement')}</h1>
-      ${b?`<p class="muted">${esc(b.title||'')}${b.event_date?' · '+esc(fmtDate(b.event_date)):''}</p>`:''}
-      <div class="doc" style="margin-top:22px">${doc}</div>
-      ${signBlock}
-    </div>
-    <p class="foot">${esc((dj&&dj.company)||'')}</p>
-  `;
+  /* body_html is rendered and sanitised server side at issue and frozen there.
+     Headings are escaped here because they're stored as plain text. */
+  var clauses = (c.sections || []).map(function(s){
+    return '<section class="clause">' +
+      (s.heading ? '<h2>' + esc(s.heading) + '</h2>' : '') +
+      (s.body_html || '') +
+      '</section>';
+  }).join('');
+
+  $('doc').innerHTML =
+    '<div class="head">' +
+      '<h1>' + esc(c.title) + '</h1>' +
+      '<div class="sub"><span class="pill ' + esc(c.status) + '">' +
+        esc(STATUS_WORD[c.status] || c.status) + '</span></div>' +
+    '</div>' +
+    '<div class="msg bad" id="err" hidden></div>' +
+    (facts ? '<dl class="facts">' + facts + '</dl>' : '') +
+    clauses +
+    tailHtml(c);
+
+  $('loading').hidden = true;
+  $('doc').hidden = false;
+  $('foot').textContent = c.status === 'signed'
+    ? 'A copy has been emailed to you. You can also print this page for your records.'
+    : 'Any questions before you sign, just reply to the email this came from.';
+  $('foot').hidden = false;
 }
 
-// Typing the name into the signature box is a deliberate act, so we prompt it
-// rather than auto-filling.
-function syncSig(){ checkReady(); }
+function tailHtml(c){
+  if (c.status === 'void')
+    return '<div class="sign"><h2>This agreement is no longer valid</h2>' +
+      '<p class="why">It\u2019s been withdrawn. Please get in touch for an up-to-date one.</p></div>';
 
-function checkReady(){
-  const n=($('s-name')||{}).value||'', t=($('s-typed')||{}).value||'', a=($('s-agree')||{}).checked;
-  const btn=$('s-btn'); if(!btn) return;
-  btn.disabled=!(n.trim() && a && t.trim().toLowerCase()===n.trim().toLowerCase());
+  if (c.status === 'signed')
+    return '<div class="done"><h2>Signed &amp; agreed</h2>' +
+      (c.signed_by ? '<p class="auto">' + esc(c.signed_by) + '</p>' : '') +
+      '<p>' + esc(c.signed_by || 'Signed') +
+      (c.signed_at ? ' on ' + esc(stamp(c.signed_at)) : '') + '</p></div>' +
+      '<div class="actions" style="margin-top:18px">' +
+      '<button class="ghost" onclick="window.print()">Print or save a copy</button></div>';
+
+  return '<div class="sign">' +
+    '<h2>Sign the agreement</h2>' +
+    '<p class="why">Please read the terms above before signing. Typing your name below has the same effect as signing on paper.</p>' +
+    '<label class="f">Your full name' +
+      '<input id="s-name" type="text" autocomplete="name" autocapitalize="words"></label>' +
+    '<label class="f">Sign by typing your name again' +
+      '<input id="s-typed" class="autograph" type="text" autocomplete="off" autocapitalize="words"></label>' +
+    '<label class="agree"><input id="s-agree" type="checkbox">' +
+      '<span>I have read and agree to the terms set out above.</span></label>' +
+    '<div class="actions"><button class="primary" id="sign">Sign agreement</button></div>' +
+    '</div>';
 }
 
-async function sign(btn){
-  const name=$('s-name').value.trim(), typed=$('s-typed').value.trim();
-  btn.disabled=true; btn.textContent='Signing…';
-  try{
-    const r=await fetch('/api/contract/'+encodeURIComponent(TOKEN)+'/sign',
-      {method:'POST',headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({name,typed,agreed:true})});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||'Could not sign');
-    await load();
-    window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
-  }catch(e){
-    alert(e.message);
-    btn.disabled=false; btn.textContent='Sign agreement';
+function wire(){
+  var btn = $('sign');
+  if (!btn) return;
+  btn.addEventListener('click', submit);
+  // Enter in either box shouldn't submit by surprise on a legal document.
+  ['s-name','s-typed'].forEach(function(id){
+    var el = $(id);
+    if (el) el.addEventListener('keydown', function(e){ if (e.key === 'Enter') e.preventDefault(); });
+  });
+}
+
+function submit(){
+  var name = $('s-name').value.trim();
+  var typed = $('s-typed').value.trim();
+  var agreed = $('s-agree').checked;
+
+  if (!name){ showErr('Please enter your full name.'); $('s-name').focus(); return; }
+  if (!typed){ showErr('Please sign by typing your name again.'); $('s-typed').focus(); return; }
+  /* Checked here as well as on the server so the mismatch is caught before a
+     round trip — it's the commonest slip, usually a middle name in one box. */
+  if (typed.toLowerCase() !== name.toLowerCase()){
+    showErr('Your signature should match the name you entered.');
+    $('s-typed').focus();
+    return;
   }
+  if (!agreed){ showErr('Please confirm you agree to the terms.'); $('s-agree').focus(); return; }
+
+  var btn = $('sign');
+  btn.disabled = true;
+  btn.textContent = 'Signing…';
+
+  fetch('/api/contract/' + encodeURIComponent(TOKEN) + '/sign', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify({ name: name, typed: typed, agreed: true })
+  })
+    .then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if (!r.ok) throw new Error(d.error || 'That didn\u2019t go through. Please try again.');
+        return d;
+      });
+    })
+    .then(function(){ load(); window.scrollTo({ top:0, behavior:'smooth' }); })
+    .catch(function(e){
+      btn.disabled = false;
+      btn.textContent = 'Sign agreement';
+      showErr(e.message);
+    });
 }
 
-load();
+function load(){
+  fetch('/api/contract/' + encodeURIComponent(TOKEN))
+    .then(function(r){
+      return r.json().then(function(d){
+        if (!r.ok) throw new Error(d.error || 'That agreement could not be loaded.');
+        return d;
+      });
+    })
+    .then(function(d){ DATA = d; render(); wire(); })
+    .catch(function(e){ fatal(e.message || 'That agreement could not be loaded.'); });
+}
+
+if (!TOKEN) fatal('This link is incomplete. Please use the full link from your email.');
+else load();
+})();
 </script>
 </body>
 </html>

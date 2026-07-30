@@ -1,147 +1,333 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-GB">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
 <title>Your quote</title>
-<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png">
 <style>
-  :root{--ink:#0f1626;--ink-2:#4a5568;--paper:#f6f7fb;--surface:#fff;--line:#e3e7f0;--neon:#7aa116;--good:#1f9d55;--bad:#c53030;--muted:#77809a}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:"Helvetica Neue",Inter,system-ui,sans-serif;background:var(--paper);color:var(--ink);line-height:1.5}
-  .wrap{max-width:660px;margin:0 auto;padding:0 20px 60px}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:26px;margin-top:20px;box-shadow:0 10px 30px -22px rgba(20,30,60,.35)}
-  h1{font-size:1.7rem;margin-bottom:4px}
-  h2{font-size:1.05rem;margin-bottom:10px}
-  .muted{color:var(--muted)}
-  .eyebrow{font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:800}
-  .row{display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-top:1px solid var(--line)}
-  .row:first-of-type{border-top:0}
-  .row .qty{color:var(--muted);font-size:.85rem}
-  .total{display:flex;justify-content:space-between;gap:14px;padding-top:14px;margin-top:6px;border-top:2px solid var(--ink);font-size:1.25rem;font-weight:800}
-  .terms{background:#f0f4ff;border:1px solid #dde5ff;border-radius:12px;padding:14px 16px;margin-top:18px;font-size:.94rem}
-  .btn{font:inherit;font-weight:700;border:0;border-radius:100px;padding:14px 26px;cursor:pointer;font-size:1rem;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px}
-  .btn-accept{background:var(--neon);color:#fff;width:100%}
-  .btn-pay{background:var(--ink);color:#fff;width:100%}
-  .btn-decline{background:transparent;color:var(--muted);border:1px solid var(--line);width:100%;margin-top:10px;font-size:.9rem;padding:11px 20px}
-  .state{text-align:center;padding:28px 20px}
-  .state .big{font-size:2.4rem;line-height:1}
-  .foot{text-align:center;color:var(--muted);font-size:.8rem;margin-top:22px}
-  @media(max-width:520px){ .card{padding:20px} h1{font-size:1.4rem} }
+/* ------------------------------------------------------------------
+   A client-facing document. Two things matter more than styling: it has
+   to be legible on a phone, and it has to print sensibly, because some
+   people will print a quote before agreeing to it.
+   ------------------------------------------------------------------ */
+:root{
+  --fg:#16181d; --muted:#666b75; --line:#dfe2e8; --paper:#fff; --page:#f4f5f7;
+  --accent:#0A1228; --accent-fg:#fff; --good:#1a8a4a; --bad:#b4322a; --warn:#8a6100;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color:var(--fg); background:var(--page); line-height:1.55;
+  padding:26px 16px 60px; -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:660px;margin:0 auto}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:26px 24px}
+
+.head{border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:18px}
+.head h1{margin:0;font-size:1.3rem;letter-spacing:-.01em}
+.head .sub{color:var(--muted);font-size:.9rem;margin-top:4px}
+
+.pill{
+  display:inline-block;padding:3px 11px;border-radius:100px;
+  font-size:.74rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+}
+.pill.sent{background:#eaf0ff;color:#2a4fbf}
+.pill.accepted{background:#e6f5ec;color:var(--good)}
+.pill.declined{background:#fdecea;color:var(--bad)}
+.pill.expired{background:#fdf3e0;color:var(--warn)}
+
+.facts{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.92rem;margin:0 0 22px}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0}
+
+h2.sec{
+  font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);margin:24px 0 10px;
+}
+
+.item{display:flex;gap:14px;padding:14px 0;border-top:1px solid var(--line)}
+.item:last-of-type{border-bottom:1px solid var(--line)}
+.item img{width:62px;height:62px;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex:none}
+.item .body{flex:1;min-width:0}
+.item .name{font-weight:650}
+.item .desc{color:var(--muted);font-size:.88rem;margin-top:2px;white-space:pre-wrap}
+.item .amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.item .qty{color:var(--muted);font-size:.82rem}
+
+.totals{margin-top:16px;font-variant-numeric:tabular-nums}
+.totals .row{display:flex;justify-content:space-between;padding:5px 0}
+.totals .grand{border-top:2px solid var(--fg);margin-top:8px;padding-top:10px;font-size:1.1rem;font-weight:700}
+.totals .small{color:var(--muted);font-size:.9rem}
+
+.note{background:#f7f8fa;border-radius:var(--radius);padding:14px 16px;font-size:.92rem;white-space:pre-wrap;margin:18px 0 0}
+.sched{font-size:.9rem;color:var(--muted);margin-top:10px}
+
+.actions{margin-top:26px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button{font:inherit;font-weight:650;padding:12px 22px;border:0;border-radius:var(--radius);cursor:pointer}
+button:disabled{opacity:.55;cursor:default}
+.primary{background:var(--accent);color:var(--accent-fg)}
+.primary:hover:not(:disabled){opacity:.9}
+.ghost{background:none;color:var(--muted);border:1px solid var(--line)}
+.ghost:hover:not(:disabled){color:var(--fg)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.msg{padding:12px 14px;border-radius:var(--radius);font-size:.92rem;margin:0 0 18px;border:1px solid var(--line)}
+.msg.bad{border-color:#e6b5b0;background:#fdf3f2;color:var(--bad)}
+.msg.good{border-color:#bfe3cd;background:#f1f9f4;color:var(--good)}
+.msg[hidden]{display:none}
+
+.after{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+.after h3{margin:0 0 6px;font-size:1rem}
+.after p{margin:0 0 12px;color:var(--muted);font-size:.92rem}
+
+.loading{color:var(--muted);font-size:.92rem}
+.foot{text-align:center;color:var(--muted);font-size:.82rem;margin-top:20px}
+[hidden]{display:none !important}
+
+@media (max-width:460px){
+  body{padding:14px 10px 40px}
+  .card{padding:18px 16px}
+  .item img{width:48px;height:48px}
+  .actions button{width:100%}
+}
+@media print{
+  body{background:#fff;padding:0}
+  .card{border:0;padding:0}
+  .actions,.after,.foot{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
-<div class="wrap" id="root"><p class="muted" style="margin-top:50px;text-align:center">Loading…</p></div>
+<div class="wrap">
+  <div class="card">
+    <p class="loading" id="loading">Loading your quote…</p>
+    <div class="msg bad" id="fatal" hidden></div>
+    <div id="doc" hidden></div>
+  </div>
+  <p class="foot" id="foot" hidden></p>
+</div>
 
 <script>
-const $=id=>document.getElementById(id);
-function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function money(p){return '£'+((p||0)/100).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function fmtDate(ts){return ts?new Date(ts).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'';}
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+var params = new URLSearchParams(location.search);
+var TOKEN = params.get('q') || '';
+var JUST_PAID = params.get('paid') === '1';
+var DATA = null;
 
-const TOKEN=new URLSearchParams(location.search).get('q')||'';
-const JUST_PAID=new URLSearchParams(location.search).get('paid')==='1';
-let DATA=null;
-
-async function load(){
-  if(!TOKEN){ $('root').innerHTML='<div class="card state"><p>No quote reference in that link.</p></div>'; return; }
-  try{
-    const r=await fetch('/api/quote/'+encodeURIComponent(TOKEN));
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||'Not found');
-    DATA=d; render();
-  }catch(e){
-    $('root').innerHTML='<div class="card state"><p>'+esc(e.message)+'</p><p class="muted" style="margin-top:8px">Please check the link, or ask for a new one.</p></div>';
-  }
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
 }
+function money(p){
+  return '£' + ((p || 0) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function longDate(ts){
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+}
+function shortDate(ts){
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+}
+function fatal(m){
+  $('loading').hidden = true;
+  $('doc').hidden = true;
+  $('fatal').textContent = m;
+  $('fatal').hidden = false;
+}
+
+var STATUS_WORD = { sent:'Awaiting your reply', accepted:'Accepted', declined:'Declined', expired:'Expired' };
 
 function render(){
-  const q=DATA.quote, b=DATA.booking, dj=DATA.dj;
-  const items=(q.items||[]).map(it=>`
-    <div class="row">
-      <div>${esc(it.name)}${it.description?`<div class="muted" style="font-size:.85rem">${esc(it.description)}</div>`:''}
-        ${it.qty>1?`<div class="qty">${it.qty} × ${money(it.unit_pence)}</div>`:''}</div>
-      <div style="font-weight:700;white-space:nowrap">${money(it.qty*it.unit_pence)}</div>
-    </div>`).join('');
+  var q = DATA.quote, b = DATA.booking, dj = DATA.dj || {};
+  var who = dj.company || dj.name || 'Your DJ';
+  document.title = 'Quote — ' + who;
 
-  // What the client can do depends on where the quote is.
-  let action='';
-  if(q.status==='sent'){
-    action=`
-      <div style="margin-top:22px">
-        <button class="btn btn-accept" onclick="respond(true)">Accept this quote</button>
-        <button class="btn btn-decline" onclick="respond(false)">No thanks</button>
-      </div>`;
-  }else if(q.status==='accepted'){
-    action=`
-      <div style="margin-top:22px">
-        <div class="state" style="padding:14px 0">
-          <div class="big">✓</div>
-          <p style="font-weight:700;margin-top:6px">Accepted${q.responded_at?' on '+new Date(q.responded_at).toLocaleDateString('en-GB'):''}</p>
-        </div>
-        ${JUST_PAID
-          ? '<p style="text-align:center;color:var(--good);font-weight:700">Thank you — your deposit has been received.</p>'
-          : (q.deposit_pence
-              ? `<button class="btn btn-pay" onclick="payDeposit(this)">Pay ${money(q.deposit_pence)} deposit</button>
-                 <p class="muted" style="font-size:.82rem;text-align:center;margin-top:10px">Secure payment. Your card details go straight to the payment provider.</p>`
-              : '')}
-      </div>`;
-  }else if(q.status==='declined'){
-    action=`<div class="state"><div class="big">—</div><p style="margin-top:6px">You declined this quote.</p>
-            <p class="muted" style="margin-top:6px">If that was a mistake, just reply to the email.</p></div>`;
-  }else if(q.status==='expired'){
-    action=`<div class="state"><div class="big">⏳</div><p style="margin-top:6px">This quote has expired.</p>
-            <p class="muted" style="margin-top:6px">Please ask for an up-to-date one.</p></div>`;
-  }else{
-    action=`<div class="state"><p class="muted">This quote isn't ready yet.</p></div>`;
+  var facts = '';
+  if (b){
+    if (b.title)      facts += '<dt>Event</dt><dd>' + esc(b.title) + '</dd>';
+    if (b.type)       facts += '<dt>Type</dt><dd>' + esc(b.type) + '</dd>';
+    if (b.event_date) facts += '<dt>Date</dt><dd>' + esc(longDate(b.event_date)) + '</dd>';
+    if (b.venue)      facts += '<dt>Venue</dt><dd>' + esc(b.venue) + '</dd>';
   }
 
-  $('root').innerHTML=`
-    <div class="card" style="margin-top:34px">
-      <p class="eyebrow">${esc((dj&&dj.company)||'Your quote')}</p>
-      <h1>${esc(b&&b.title||'Your quote')}</h1>
-      ${b&&b.event_date?`<p class="muted">${esc(fmtDate(b.event_date))}${b.venue?' · '+esc(b.venue):''}</p>`:''}
-      ${q.message?`<p style="margin-top:16px;white-space:pre-wrap">${esc(q.message)}</p>`:''}
+  var items = (q.items || []).map(function(it){
+    var line = (it.qty || 1) * (it.unit_pence || 0);
+    return '<div class="item">' +
+      (it.image ? '<img src="' + esc(it.image) + '" alt="">' : '') +
+      '<div class="body"><div class="name">' + esc(it.name) + '</div>' +
+      (it.description ? '<div class="desc">' + esc(it.description) + '</div>' : '') +
+      ((it.qty || 1) > 1 ? '<div class="qty">' + it.qty + ' × ' + money(it.unit_pence) + '</div>' : '') +
+      '</div>' +
+      '<div class="amt">' + money(line) + '</div></div>';
+  }).join('');
 
-      <div style="margin-top:22px">
-        <h2>What's included</h2>
-        ${items||'<p class="muted">No items listed.</p>'}
-        <div class="total"><span>Total</span><span>${money(q.total_pence)}</span></div>
-      </div>
+  var totals =
+    '<div class="totals">' +
+      '<div class="row grand"><span>Total</span><span>' + money(q.total_pence) + '</span></div>' +
+      (q.deposit_pence ? '<div class="row small"><span>Deposit to secure the date</span><span>' + money(q.deposit_pence) + '</span></div>' : '') +
+      (q.balance_pence ? '<div class="row small"><span>Balance' +
+        (q.balance_due_at ? ', due ' + esc(shortDate(q.balance_due_at)) : '') +
+        '</span><span>' + money(q.balance_pence) + '</span></div>' : '') +
+    '</div>' +
+    (q.schedule_text ? '<p class="sched">' + esc(q.schedule_text) + '</p>' : '');
 
-      ${q.schedule_text?`<div class="terms">${esc(q.schedule_text)}</div>`:''}
-      ${action}
-    </div>
-    <p class="foot">${esc((dj&&dj.company)||'')}${dj&&dj.email?' · '+esc(dj.email):''}</p>
-  `;
+  $('doc').innerHTML =
+    '<div class="head">' +
+      '<h1>' + esc(who) + '</h1>' +
+      '<div class="sub">Quote · <span class="pill ' + esc(q.status) + '">' +
+        esc(STATUS_WORD[q.status] || q.status) + '</span></div>' +
+    '</div>' +
+    '<div class="msg good" id="paid" ' + (JUST_PAID ? '' : 'hidden') + '>' +
+      'Thanks — your deposit has been received. Your date is secured.</div>' +
+    '<div class="msg bad" id="err" hidden></div>' +
+    (facts ? '<dl class="facts">' + facts + '</dl>' : '') +
+    '<h2 class="sec">What\u2019s included</h2>' +
+    items +
+    totals +
+    (q.message ? '<div class="note">' + esc(q.message) + '</div>' : '') +
+    (q.expires_at && q.status === 'sent'
+      ? '<p class="sched">This quote is valid until ' + esc(shortDate(q.expires_at)) + '.</p>' : '') +
+    actionsHtml(q) +
+    afterHtml(q);
+
+  $('loading').hidden = true;
+  $('doc').hidden = false;
+  $('foot').textContent = 'Any questions, just reply to the email this came from'
+    + (dj.email ? ' or write to ' + dj.email + '.' : '.');
+  $('foot').hidden = false;
 }
 
-async function respond(accept){
-  if(!accept && !confirm('Decline this quote?')) return;
-  if(accept && !confirm('Accept this quote?')) return;
-  try{
-    const r=await fetch('/api/quote/'+encodeURIComponent(TOKEN)+'/respond',
-      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accept})});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||'Could not save that');
-    await load();
-  }catch(e){ alert(e.message); }
+function actionsHtml(q){
+  if (q.status !== 'sent') return '';
+  return '<div class="actions" id="actions">' +
+    '<button class="primary" id="accept">Accept this quote</button>' +
+    '<button class="ghost" id="decline">Decline</button>' +
+    '</div>' +
+    (q.has_contract
+      ? '<p class="sched">Accepting will bring up a short agreement to read and sign.</p>'
+      : '');
 }
 
-async function payDeposit(btn){
-  btn.disabled=true; btn.textContent='Opening secure payment…';
-  try{
-    const r=await fetch('/api/quote/'+encodeURIComponent(TOKEN)+'/pay',{method:'POST'});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||'Could not start the payment');
-    location.href=d.url;
-  }catch(e){
-    alert(e.message);
-    btn.disabled=false; btn.textContent='Pay deposit';
+/* Shown once a quote is accepted: the two things left to do. Rendered from the
+   server's view of the world rather than from what just happened in the
+   browser, so a reload shows the same state. */
+function afterHtml(q){
+  if (q.status === 'declined')
+    return '<div class="after"><h3>Quote declined</h3>' +
+      '<p>You\u2019ve let us know this one isn\u2019t for you. If that was a mistake, just get in touch.</p></div>';
+  if (q.status === 'expired')
+    return '<div class="after"><h3>This quote has expired</h3>' +
+      '<p>Get in touch and we\u2019ll happily put together a fresh one.</p></div>';
+  if (q.status !== 'accepted') return '';
+
+  var h = '<div class="after"><h3>Next steps</h3>';
+  if (q.contract_link){
+    h += '<p>Please read and sign the agreement.</p>' +
+         '<div class="actions"><a href="' + esc(q.contract_link) + '">' +
+         '<button class="primary">Read &amp; sign the agreement</button></a></div>';
   }
+  if (q.deposit_pence && !JUST_PAID){
+    h += '<p style="margin-top:14px">Pay the deposit of ' + money(q.deposit_pence) + ' to secure your date.</p>' +
+         '<div class="actions"><button class="primary" id="pay">Pay deposit</button></div>';
+  }
+  if (!q.contract_link && (!q.deposit_pence || JUST_PAID)){
+    h += '<p>All done — we\u2019ll be in touch shortly.</p>';
+  }
+  return h + '</div>';
 }
 
-load();
+function showErr(m){
+  var e = $('err');
+  if (!e) return alert(m);
+  e.textContent = m;
+  e.hidden = false;
+  e.scrollIntoView({ block:'nearest' });
+}
+
+function wire(){
+  var a = $('accept'), d = $('decline'), p = $('pay');
+  if (a) a.addEventListener('click', function(){ respond(true); });
+  if (d) d.addEventListener('click', function(){
+    if (confirm('Decline this quote? This can\u2019t be undone.')) respond(false);
+  });
+  if (p) p.addEventListener('click', pay);
+}
+
+function respond(accept){
+  var btns = document.querySelectorAll('#actions button');
+  Array.prototype.forEach.call(btns, function(b){ b.disabled = true; });
+  var a = $('accept');
+  if (a && accept) a.textContent = 'Accepting…';
+
+  fetch('/api/quote/' + encodeURIComponent(TOKEN) + '/respond', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify({ accept: !!accept })
+  })
+    .then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if (!r.ok) throw new Error(d.error || 'That didn\u2019t go through. Please try again.');
+        return d;
+      });
+    })
+    .then(function(d){
+      /* Straight to signing if there's something to sign — one fewer step, and
+         they're already in the moment of saying yes. */
+      if (accept && d.contract_link){ location.href = d.contract_link; return; }
+      load();          // otherwise re-read the quote so the page matches the server
+    })
+    .catch(function(e){
+      Array.prototype.forEach.call(btns, function(b){ b.disabled = false; });
+      if (a) a.textContent = 'Accept this quote';
+      showErr(e.message);
+    });
+}
+
+function pay(){
+  var p = $('pay');
+  p.disabled = true;
+  p.textContent = 'Opening secure payment…';
+  fetch('/api/quote/' + encodeURIComponent(TOKEN) + '/pay', { method:'POST' })
+    .then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if (!r.ok) throw new Error(d.error || 'Could not start the payment.');
+        return d;
+      });
+    })
+    .then(function(d){
+      if (d.url) location.href = d.url;
+      else throw new Error('Could not start the payment.');
+    })
+    .catch(function(e){
+      p.disabled = false;
+      p.textContent = 'Pay deposit';
+      showErr(e.message);
+    });
+}
+
+function load(){
+  fetch('/api/quote/' + encodeURIComponent(TOKEN))
+    .then(function(r){
+      return r.json().then(function(d){
+        if (!r.ok) throw new Error(d.error || 'That quote could not be loaded.');
+        return d;
+      });
+    })
+    .then(function(d){ DATA = d; render(); wire(); })
+    .catch(function(e){ fatal(e.message || 'That quote could not be loaded.'); });
+}
+
+if (!TOKEN) fatal('This link is incomplete. Please use the full link from your email.');
+else load();
+})();
 </script>
 </body>
 </html>
