@@ -1966,6 +1966,18 @@ async function exportWeddingPDF(){
     y+=10;doc.setTextColor(INK[0],INK[1],INK[2]);
   }
 
+  /* Wraps to the page width and paginates like everything else — a note that
+     ran off the bottom of a page would be worse than no note at all. */
+  function songNote(who,text){
+    const t=(text||'').trim();
+    if(!t) return;
+    doc.setFont('helvetica','italic');doc.setFontSize(9);doc.setTextColor(90,96,112);
+    const lines=doc.splitTextToSize(who+' '+t,PW-M*2-14);
+    lines.forEach(ln=>{ need(5); doc.text(ln,M+10,y); y+=4.6; });
+    y+=1.5;
+    doc.setTextColor(INK[0],INK[1],INK[2]);
+  }
+
   // ---- Song blocks ----
   sectionTitle('Song blocks');
   (w.blocks||[]).forEach(b=>{
@@ -1985,6 +1997,11 @@ async function exportWeddingPDF(){
         const played=s.played?'  ✓ played':'';
         doc.text(`${i+1}.  ${clip(s.title,46)} — ${clip(s.artist,34)}${played}`,M+4,y);
         y+=6;
+        /* Notes on the song, styled to match the timeline notes above so the
+           sheet reads consistently. Attributed, because on the night it matters
+           whether "start this quiet" came from the couple or from you. */
+        songNote('Couple:',s.noteCouple);
+        songNote('DJ:',s.noteDj);
       });
     }
     y+=4;
