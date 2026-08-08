@@ -115,6 +115,25 @@ const weddingPhotoUpload = multer({
   },
 });
 
+/* Package pictures. Same storage and limits as wedding photos, named
+   distinctly so cleanup can tell the three kinds apart. No SVG: it carries
+   script risk and makes no sense for a photograph of a dancefloor. */
+const productImageUpload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (req, file, cb) => {
+      const ext = ALLOWED_LOGO_TYPES[file.mimetype] || 'bin';
+      cb(null, `prod_${(req.params.id || 'x').slice(0, 12)}_${crypto.randomBytes(6).toString('hex')}.${ext}`);
+    },
+  }),
+  limits: { fileSize: 4 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'image/svg+xml') return cb(new Error('Please upload a photo (JPG, PNG or WebP).'));
+    if (ALLOWED_LOGO_TYPES[file.mimetype]) cb(null, true);
+    else cb(new Error('Unsupported file type. Use JPG, PNG or WebP.'));
+  },
+});
+
 /* ---------- Spotify config ---------- */
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
@@ -951,7 +970,7 @@ const DEFAULT_WEDDING_BLOCKS = [
   { name: "Couple's Top 15", capacity: 15 },
   { name: 'Play If Possible', capacity: 30 },
   { name: 'Last Dance', capacity: 1 },
-  { name: 'Do Not Play', capacity: 5 },
+  { name: 'Do Not Play', capacity: 5, noplay: true },
 ];
 
 // Which plans can create wedding plans. (Available to PRO for now.)
@@ -994,6 +1013,110 @@ function effectiveLockDate(w) {
 }
 // True if the couple's editing is locked (the effective lock date has passed). The
 // DJ/host is never locked out — they can still adjust after the couple's deadline.
+/* Live requests run until the END OF THE WEDDING DAY, which is also the
+   deadline put on the requests event itself. Deliberately nothing to do with
+   the couple's edit lock: that exists so the DJ can prepare a fixed set list a
+   fortnight out, whereas guest requests are a thing that happens on the night
+   and must stay open right through it. */
+function weddingDayEnd(w) {
+  if (!w || !w.wedding_date) return null;
+  const d = new Date(w.wedding_date);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+function weddingEnded(w) {
+  const end = weddingDayEnd(w);
+  return !!(end && Date.now() > end);
+}
+
+/* ================================================================
+   NOW PLAYING — matching what came off the deck against the plan
+
+   Serato has no official API. Music Manager reads the binary history session
+   file and posts the track here. Two deliberately different thresholds:
+
+     STRICT  — used to auto-tick "played". A wrong tick is worse than no tick,
+               because it makes the whole run-sheet untrustworthy.
+     LOOSE   — used for the do-not-play alarm. A false alarm costs a glance; a
+               missed one costs you the banned song at the wedding.
+   ================================================================ */
+
+/* Strips everything DJs and tag editors disagree about: bracketed suffixes
+   ("(Radio Edit)", "[Extended Mix]"), featured artists, punctuation, leading
+   articles. What's left is the bit that identifies the record. */
+/* A block is a do-not-play block if it's FLAGGED, or if it's simply named that.
+   The name fallback matters more than it looks: every wedding created before the
+   flag existed has a "Do Not Play" block with no flag on it, so without this the
+   ban list comes back empty for every gig already in the diary — and an empty
+   ban list looks exactly like a working one until the wrong song plays. */
+function blockIsNoPlay(b) {
+  if (!b) return false;
+  if (b.noplay === true) return true;
+  return /\bdo\s*[-_ ]?\s*not\s*[-_ ]?\s*play\b|\bdon'?t\s*[-_ ]?\s*play\b|\bbanned\b|\bnever\s*[-_ ]?\s*play\b/i.test(b.name || '');
+}
+
+function normaliseTrack(s) {
+  return (s || '')
+    .toString()
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\b(feat|ft|featuring|with)\b.*$/g, ' ')
+    .replace(/\b(radio|extended|club|original|dirty|clean|explicit|instrumental)\s+(edit|mix|version)\b/g, ' ')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/^\s*the\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/* Compares one planned song against what was played.
+   Returns 'isrc' | 'strict' | 'loose' | null, strongest first. */
+function trackMatch(planned, played) {
+  const pIsrc = (planned.isrc || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  const xIsrc = (played.isrc || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  if (pIsrc && xIsrc && pIsrc === xIsrc) return 'isrc';
+
+  const pt = normaliseTrack(planned.title), xt = normaliseTrack(played.title);
+  if (!pt || !xt) return null;
+  const pa = normaliseTrack(planned.artist), xa = normaliseTrack(played.artist);
+
+  if (pt === xt && pa && xa && pa === xa) return 'strict';
+
+  // Loose: same title, and the artists overlap on at least one real word.
+  if (pt === xt) {
+    if (!pa || !xa) return 'loose';
+    const words = new Set(pa.split(' ').filter(w => w.length > 2));
+    if (xa.split(' ').some(w => w.length > 2 && words.has(w))) return 'loose';
+    return 'loose';   // same title, different artist — still worth flagging
+  }
+  return null;
+}
+
+/* Scans a wedding's plan for the played track. Do-not-play blocks are searched
+   FIRST and on the loose threshold, so a ban is never missed because the tags
+   didn't quite line up. */
+function findPlayedSong(w, played) {
+  const blocks = w.blocks || [];
+  for (const b of blocks) {
+    if (!blockIsNoPlay(b)) continue;
+    for (const s of (b.songs || [])) {
+      const m = trackMatch(s, played);
+      if (m) return { verdict: 'noplay', confidence: m, block: b, song: s };
+    }
+  }
+  let weak = null;
+  for (const b of blocks) {
+    if (blockIsNoPlay(b)) continue;
+    for (const s of (b.songs || [])) {
+      const m = trackMatch(s, played);
+      if (m === 'isrc' || m === 'strict') return { verdict: 'planned', confidence: m, block: b, song: s };
+      if (m && !weak) weak = { verdict: 'maybe', confidence: m, block: b, song: s };
+    }
+  }
+  return weak || { verdict: 'unknown', confidence: null, block: null, song: null };
+}
+
 function coupleEditLocked(w, userId) {
   const lock = effectiveLockDate(w);
   if (!lock) return false;
@@ -1194,7 +1317,7 @@ function publicWedding(w, viewerId) {
     inviteCode: (isDjSide ? w.invite_code : undefined),   // the DJ (or sub-DJ) sees the code
     coupleJoined: !!w.couple_id,
     coupleMembers: isDjSide ? db.weddingCoupleMembers(w) : undefined,   // DJ/sub-DJ sees who's joined
-    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0 })) })),
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, live: !!b.live, noplay: blockIsNoPlay(b), songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0, noteCouple: s.note_couple || '', noteDj: s.note_dj || '' })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label, note: t.note || '' })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
     answers: w.answers || {},
@@ -1246,6 +1369,10 @@ function publicWedding(w, viewerId) {
     lockIsDefault: (typeof w.lock_date !== 'number') && !!w.wedding_date,  // showing the 14-day default
     coupleLocked: coupleEditLocked(w, viewerId),   // true only for a locked-out couple
     canEdit: !!((isHost || isCouple) && !coupleEditLocked(w, viewerId)),
+    /* Separate from canEdit on purpose. The assigned sub-DJ runs the gig and so
+       must be able to open requests even though they can't edit the plan, and
+       the couple's edit lock must not close requests on the night. */
+    canLive: !!((isDjSide || isCouple) && !weddingEnded(w)),
     createdAt: w.created_at,
   };
 }
@@ -1356,6 +1483,135 @@ app.post('/api/weddings/:id/block/:blockId', auth.requireAuth, (req, res) => {
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
+/* A note on one song. The couple and the DJ each have their own, so neither can
+   overwrite the other's, and who wrote what is never in doubt.
+
+   Locked by the song-choice deadline, same as the songs themselves — once the
+   plan is locked the couple can't add to it at all, and everything the DJ
+   prepares from is fixed on one date. The DJ is never locked out. */
+app.post('/api/weddings/:id/song-note', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+
+  const isDj = req.user.id === w.host_id || w.assigned_dj === req.user.id;
+  const isCouple = db.isCoupleMember(w, req.user.id);
+  if (!isDj && !isCouple) return res.status(403).json({ error: 'Not your wedding plan.' });
+  if (coupleEditLocked(w, req.user.id)) {
+    return res.status(423).json({ error: 'Notes are locked — the deadline set by your DJ has passed. Contact your DJ if you need a change.' });
+  }
+
+  const b = req.body || {};
+  // The server decides whose note this is from who is asking — a client can't
+  // choose to write in the other side's box.
+  const which = isDj ? 'dj' : 'couple';
+  const note = (b.note || '').toString().slice(0, 500);
+
+  const updated = db.setWeddingSongNote(w.id, b.blockId, b.songId, which, note);
+  if (!updated) return res.status(404).json({ error: 'That song is no longer in the plan.' });
+
+  const blk = (updated.blocks || []).find(x => x.id === b.blockId);
+  const song = blk && (blk.songs || []).find(x => x.id === b.songId);
+  const label = song ? `${song.title} — ${song.artist}` : 'a song';
+  logWedding(w, req.user, 'songs', note ? `noted on ${label}: ${note}` : `removed their note on ${label}`);
+  if (isCouple) notifyCoupleActivity(w, req.user, 'songs', `left a note on ${label}`);
+
+  res.json({ wedding: publicWedding(updated, req.user.id) });
+});
+
+/* The do-not-play list on its own, for Music Manager to CACHE LOCALLY.
+   The whole point is that the alarm works when the venue wifi doesn't, so this
+   is fetched once when the gig is loaded and checked on the laptop thereafter. */
+app.get('/api/weddings/:id/noplay', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding.' });
+  }
+  const songs = [];
+  (w.blocks || []).forEach(b => {
+    if (!blockIsNoPlay(b)) return;
+    (b.songs || []).forEach(s => songs.push({
+      title: s.title || '', artist: s.artist || '', isrc: s.isrc || '',
+      block: b.name || '', note_couple: s.note_couple || '',
+    }));
+  });
+  res.json({
+    wedding: { id: w.id, name: w.name || '', date: w.wedding_date || null },
+    songs,
+    // So the laptop can normalise identically to the server.
+    matching: { strip_brackets: true, strip_featured: true, ignore_case: true },
+  });
+});
+
+/* What just came off the deck. Music Manager posts here; the reply says what to
+   do about it. Nothing is written unless the caller asks for it, so the gig
+   window can check a track without committing to anything. */
+app.post('/api/weddings/:id/now-playing', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding.' });
+  }
+  const b = req.body || {};
+  const played = {
+    title: (b.title || '').toString().slice(0, 300),
+    artist: (b.artist || '').toString().slice(0, 300),
+    isrc: (b.isrc || '').toString().slice(0, 40),
+  };
+  if (!played.title) return res.status(400).json({ error: 'A title is needed.' });
+
+  const hit = findPlayedSong(w, played);
+
+  /* Auto-ticking only on a strong match, and never for a banned track — ticking
+     "played" on the do-not-play list would be nonsense. Weak matches come back
+     as 'maybe' for the DJ to confirm with one tap. */
+  let marked = false;
+  if (b.mark !== false && hit.verdict === 'planned') {
+    db.setWeddingSongPlayed(w.id, hit.block.id, hit.song.id, true);
+    marked = true;
+  }
+
+  const result = {
+    verdict: hit.verdict,            // noplay | planned | maybe | unknown
+    confidence: hit.confidence,      // isrc | strict | loose | null
+    marked,
+    block: hit.block ? { id: hit.block.id, name: hit.block.name } : null,
+    song: hit.song
+      ? { id: hit.song.id, title: hit.song.title, artist: hit.song.artist,
+          note_couple: hit.song.note_couple || '', note_dj: hit.song.note_dj || '' }
+      : null,
+    played,
+  };
+
+  // Remembered so the gig window can poll for it rather than being pushed to.
+  db.setWeddingNowPlaying(w.id, result);
+  res.json(result);
+});
+
+/* What the gig window polls. Deliberately tiny and separate from the full
+   wedding fetch: this runs every few seconds on venue wifi, the full one every
+   thirty. */
+app.get('/api/weddings/:id/now-playing', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding.' });
+  }
+  res.json({ now_playing: w.now_playing || null });
+});
+
+/* Clears the banner. The DJ dismissing an alert is a real decision — it stops
+   the same track nagging every four seconds. */
+app.delete('/api/weddings/:id/now-playing', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding.' });
+  }
+  db.setWeddingNowPlaying(w.id, null);
+  res.json({ ok: true });
+});
+
 // Mark a song played/unplayed (DJ or assigned sub-DJ — used on the day)
 app.post('/api/weddings/:id/played', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
@@ -1429,12 +1685,7 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
   db.recordEvent(id, w.host_id);
   // Keep requests open through the wedding day: deadline = end of the wedding date
   // (23:59). If no date is set, leave it open indefinitely (null).
-  let liveDeadline = null;
-  if (w.wedding_date) {
-    const d = new Date(w.wedding_date);
-    d.setHours(23, 59, 59, 999);
-    liveDeadline = d.getTime();
-  }
+  const liveDeadline = weddingDayEnd(w);
   const bb = req.body || {};
   db.createEvent({
     id,
@@ -1467,19 +1718,32 @@ app.post('/api/weddings/:id/live-event', auth.requireAuth, (req, res) => {
 app.post('/api/weddings/:id/live-block', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
   if (!w) return res.status(404).json({ error: 'Wedding not found.' });
-  if (req.user.id !== w.host_id && !db.isCoupleMember(w, req.user.id)) {
+  const isDjSide = req.user.id === w.host_id || w.assigned_dj === req.user.id;
+  if (!isDjSide && !db.isCoupleMember(w, req.user.id)) {
     return res.status(403).json({ error: 'Not your wedding plan.' });
   }
   const blockId = (req.body || {}).blockId || null;
+  /* Turning requests OFF stays possible forever — tidying up after the event
+     shouldn't be blocked. Only turning them ON is closed once the day is over. */
+  if (blockId && weddingEnded(w)) {
+    return res.status(423).json({ error: 'This wedding has finished — guest requests are closed.' });
+  }
+  let liveName = '';
   if (blockId) {
     const block = (w.blocks || []).find(b => b.id === blockId);
-    if (!block || !/play if possible/i.test(block.name || '')) {
-      return res.status(400).json({ error: 'Only the "Play If Possible" block can be set to live requests.' });
+    /* Was a hard-coded name test for "Play If Possible", which meant renaming
+       the block broke live requests with a confusing error. Now it's the block's
+       own `live` flag — the name test stays only so blocks created before this
+       existed keep working. */
+    const eligible = block && (block.live === true || /play if possible/i.test(block.name || ''));
+    if (!eligible) {
+      return res.status(400).json({ error: 'That block isn\'t set up for guest requests. Mark it as the request block first.' });
     }
+    liveName = block.name || '';
   }
   const updated = db.setWeddingLiveBlock(w.id, blockId);
   logWedding(w, req.user, 'live', blockId
-    ? 'turned on live guest requests for “Play If Possible”'
+    ? `turned on live guest requests for “${liveName}”`
     : 'turned off live guest requests');
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
@@ -1527,9 +1791,28 @@ app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
         id: blk.id || ('b' + (i + 1) + '_' + auth.newId().slice(0, 4)),
         name: (blk.name || 'Block').toString().slice(0, 60),
         capacity: Math.max(1, Math.min(parseInt(blk.capacity, 10) || 1, 100)),
+        // Carried from the template, or set by hand. Falls back to whatever the
+        // block already had so a structure edit that omits it doesn't clear it.
+        live: blk.live === undefined ? !!(existing && existing.live) : !!blk.live,
+        noplay: blk.noplay === undefined ? !!(existing && existing.noplay) : !!blk.noplay,
         songs: existing ? (existing.songs || []).slice(0, Math.max(1, parseInt(blk.capacity, 10) || 1)) : [],
       };
     });
+    // One request block per wedding, for the same reason as per template.
+    let seenLive = false;
+    for (let i = fields.blocks.length - 1; i >= 0; i--) {
+      if (blockIsNoPlay(fields.blocks[i])) fields.blocks[i].live = false;   // can't be both
+      if (!fields.blocks[i].live) continue;
+      if (seenLive) fields.blocks[i].live = false;
+      seenLive = true;
+    }
+    /* If the block currently taking live requests has just been deleted or
+       un-flagged, requests must stop pointing at it. Leaving live_block_id
+       dangling would show guests a request screen feeding nothing. */
+    if (w.live_block_id) {
+      const still = fields.blocks.find(x => x.id === w.live_block_id);
+      if (!still || !still.live) db.setWeddingLiveBlock(w.id, null);
+    }
   }
   const updated = db.updateWedding(w.id, fields);
   // If the wedding date changed and a live-requests event is linked, keep its
@@ -2999,14 +3282,61 @@ app.get('/api/places/details', async (req, res) => {
    to qualify an enquiry before it enters the pipeline.
    ================================================================ */
 
-// What the form should show — the DJ's custom fields, publicly readable by
-// enquiry token only (never the whole account).
+/* A token identifies EITHER the account's default form or one specific
+   questionnaire. Resolving both here keeps the two public endpoints honest
+   about which fields they'll accept — the allow-list is derived from the form,
+   never from the request. */
+function resolveEnquiryForm(token) {
+  const tpl = db.getTemplateByFormToken(token);
+  if (tpl) {
+    if (tpl.form_active === false) return null;
+    const owner = db.getUserById(tpl.owner_id);
+    if (!owner) return null;
+    // A form may only ask what the DJ has published. Belt and braces: if a field
+    // is later marked internal, it drops off every form that referenced it.
+    const publishable = db.listPublicFields(owner.id);
+    const wanted = Array.isArray(tpl.form_fields) ? tpl.form_fields : [];
+    /* One ordered layout. Field items are resolved against the publishable list
+       here, so an item pointing at a field that's since been made internal
+       simply drops out — the allow-list is always derived, never trusted. */
+    const byKey = {};
+    publishable.forEach(f => { byKey[f.key] = f; });
+    const items = db.formItems(tpl).map(it => {
+      if (it.kind !== 'field') return it;
+      const f = byKey[it.key];
+      if (!f) return null;
+      return { kind: 'field', key: f.key, label: it.label || f.name,
+               type: f.type, options: f.options || [], required: !!it.required };
+    }).filter(Boolean);
+
+    return {
+      owner,
+      form: { id: tpl.id, name: tpl.name || '', intro: tpl.intro || '', thanks: tpl.thanks || '' },
+      items,
+    };
+  }
+  const owner = db.getUserByEnquiryToken(token);
+  if (!owner) return null;
+  // The account-level default form: standard questions plus every published field.
+  return { owner, form: null, items: db.formItems({
+    form_fields: db.listPublicFields(owner.id).map(f => f.key),
+  }).map(it => {
+    if (it.kind !== 'field') return it;
+    const f = db.listPublicFields(owner.id).find(x => x.key === it.key);
+    return f ? { kind: 'field', key: f.key, label: f.name, type: f.type,
+                 options: f.options || [], required: false } : null;
+  }).filter(Boolean) };
+}
+
+// What the form should show — publicly readable by form token only (never the
+// whole account).
 app.get('/api/enquire/:token/form', (req, res) => {
-  const owner = db.getUserByEnquiryToken(req.params.token);
-  if (!owner) return res.status(404).json({ error: 'That enquiry form was not found.' });
+  const r = resolveEnquiryForm(req.params.token);
+  if (!r) return res.status(404).json({ error: 'That enquiry form was not found.' });
   res.json({
-    dj: { name: owner.name || '', company: owner.company || owner.name || '' },
-    fields: db.listFields(owner.id).map(f => ({ key: f.key, name: f.name, type: f.type, options: f.options })),
+    dj: { name: r.owner.name || '', company: r.owner.company || r.owner.name || '' },
+    form: r.form,
+    items: r.items.filter(it => it.kind !== 'core' || it.show !== false),
     roles: db.bookingRoles(),
     sessionTypes: db.sessionTypes(),
   });
@@ -3015,8 +3345,9 @@ app.get('/api/enquire/:token/form', (req, res) => {
 // Submit an enquiry. Deliberately forgiving about what's filled in — a client
 // who can't complete a field shouldn't be blocked from making contact.
 app.post('/api/enquire/:token', async (req, res) => {
-  const owner = db.getUserByEnquiryToken(req.params.token);
-  if (!owner) return res.status(404).json({ error: 'That enquiry form was not found.' });
+  const resolved = resolveEnquiryForm(req.params.token);
+  if (!resolved) return res.status(404).json({ error: 'That enquiry form was not found.' });
+  const owner = resolved.owner;
   const b = req.body || {};
 
   // Basic spam guard: a hidden field real people never fill in.
@@ -3027,26 +3358,91 @@ app.post('/api/enquire/:token', async (req, res) => {
   if (!name || !email) return res.status(400).json({ error: 'Please give your name and email.' });
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'That email doesn\'t look right.' });
 
+  /* Everything the form actually asked. A hidden item is not merely invisible:
+     nothing is read from the request for it, so hiding a question also stops it
+     being answered by anyone crafting their own POST. */
+  const shown = resolved.items.filter(it => it.kind !== 'core' || it.show !== false);
+  const coreShown = {};
+  shown.forEach(it => { if (it.kind === 'core') coreShown[it.key] = it; });
+
+  const coreValue = (key) => {
+    if (key === 'phone')      return (b.phone || '').toString().trim();
+    if (key === 'event_type') return (b.event_type || '').toString().trim();
+    if (key === 'event_date') return (b.event_date || '').toString().trim();
+    if (key === 'venue')      return `${(b.venue_name || '').toString().trim()}${(b.venue_address || '').toString().trim()}`;
+    if (key === 'partners')   return `${(b.partner_a_name || '').toString().trim()}${(b.partner_b_name || '').toString().trim()}`;
+    if (key === 'message')    return (b.message || '').toString().trim();
+    return '';
+  };
+
+  // Required answers, checked server-side. The page checks too, but a form is
+  // only as strict as its server.
+  for (const it of shown) {
+    if (!it.required) continue;
+    let v;
+    if (it.kind === 'core') { if (it.key === 'name' || it.key === 'email') continue; v = coreValue(it.key); }
+    else if (it.kind === 'field') v = (b.custom || {})[it.key];
+    else if (it.kind === 'question') v = (b.answers || {})[it.key];
+    else continue;
+    if (v === undefined || v === null || v === '' || v === false) {
+      return res.status(400).json({ error: `Please answer: ${it.label}` });
+    }
+  }
+
+  const evType = coreShown.event_type ? (b.event_type || '').toString() : '';
+  const evDate = coreShown.event_date ? (b.event_date || '').toString() : '';
+  const venName = coreShown.venue ? (b.venue_name || '').toString() : '';
+  const venAddr = coreShown.venue ? (b.venue_address || '').toString() : '';
+
   const booking = db.createBooking(owner.id, {
-    title: (b.event_title || `${b.event_type || 'Enquiry'} — ${name}`).toString(),
-    type: (b.event_type || 'Wedding').toString(),
-    event_date: b.event_date ? new Date(b.event_date + 'T12:00:00').getTime() : null,
-    venue: (b.venue_name || '').toString(),
-    notes: (b.message || '').toString(),
+    title: (b.event_title || `${evType || 'Enquiry'} — ${name}`).toString(),
+    type: (evType || 'Wedding').toString(),
+    event_date: evDate ? new Date(evDate + 'T12:00:00').getTime() : null,
+    venue: venName,
+    notes: coreShown.message ? (b.message || '').toString() : '',
     status: 'enquiry',
   });
 
-  // The person enquiring is the primary contact.
-  db.setBookingContact(booking.id, 'primary_contact', { name, email, phone: b.phone });
-  if (b.partner_a_name) db.setBookingContact(booking.id, 'partner_a', { name: b.partner_a_name });
-  if (b.partner_b_name) db.setBookingContact(booking.id, 'partner_b', { name: b.partner_b_name });
-  if (b.venue_name || b.venue_address) {
-    db.setBookingContact(booking.id, 'venue', { name: b.venue_name, address: b.venue_address });
+  // The person enquiring is the primary contact — AND a client record. Without
+  // this an enquiry produced a booking with contact details attached but nobody
+  // in the Clients list, so the same couple enquiring twice looked like two
+  // unrelated jobs.
+  db.setBookingContact(booking.id, 'primary_contact', {
+    name, email, phone: coreShown.phone ? b.phone : '',
+  });
+  const client = db.findOrCreateClient(owner.id, {
+    name, email, phone: coreShown.phone ? (b.phone || '') : '',
+  });
+  if (client) db.updateBooking(booking.id, { client_id: client.id });
+  if (coreShown.partners) {
+    if (b.partner_a_name) db.setBookingContact(booking.id, 'partner_a', { name: b.partner_a_name });
+    if (b.partner_b_name) db.setBookingContact(booking.id, 'partner_b', { name: b.partner_b_name });
+  }
+  if (venName || venAddr) {
+    db.setBookingContact(booking.id, 'venue', { name: venName, address: venAddr });
   }
   // Custom field answers.
-  const known = db.listFields(owner.id).map(f => f.key);
+  const known = shown.filter(it => it.kind === 'field').map(it => it.key);
   for (const [k, v] of Object.entries(b.custom || {})) {
     if (known.includes(k)) db.setBookingField(booking.id, k, v);
+  }
+  if (resolved.form) db.setBookingSource(booking.id, resolved.form);
+
+  /* Form-specific answers. Only questions the form actually declares are
+     recorded, so a submission can't invent its own. */
+  const formQuestions = shown.filter(it => it.kind === 'question');
+  if (formQuestions.length) {
+    const given = (b.answers && typeof b.answers === 'object') ? b.answers : {};
+    const answered = formQuestions
+      .map(q => ({ label: q.label, type: q.type, answer: given[q.key] }))
+      .filter(q => q.answer !== undefined && q.answer !== null && q.answer !== '');
+    if (answered.length) {
+      db.setBookingEnquiry(booking.id, {
+        form_id: resolved.form.id,
+        form_name: resolved.form.name,
+        questions: answered,
+      });
+    }
   }
   db.markEnquiryNew(booking.id);
 
@@ -3058,17 +3454,17 @@ app.post('/api/enquire/:token', async (req, res) => {
         { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: CONTACT_FROM_NAME },
         {
           to: owner.email,
-          subject: `New enquiry — ${name}${b.event_date ? ' · ' + b.event_date : ''}`,
+          subject: `New enquiry${resolved.form && resolved.form.name ? ' (' + resolved.form.name + ')' : ''} — ${name}${b.event_date ? ' · ' + b.event_date : ''}`,
           replyTo: email,
           html: `<div style="font-family:system-ui,sans-serif">
             <h2 style="margin:0 0 8px">New enquiry</h2>
             <p style="margin:0 0 12px;color:#555">${escapeHtml(name)} &lt;${escapeHtml(email)}&gt;${b.phone ? ' · ' + escapeHtml(String(b.phone)) : ''}</p>
             <table style="border-collapse:collapse;font-size:14px">
-              <tr><td style="padding:2px 10px 2px 0;color:#777">Event</td><td>${escapeHtml(String(b.event_type || ''))}</td></tr>
-              <tr><td style="padding:2px 10px 2px 0;color:#777">Date</td><td>${escapeHtml(String(b.event_date || 'not given'))}</td></tr>
-              <tr><td style="padding:2px 10px 2px 0;color:#777">Venue</td><td>${escapeHtml(String(b.venue_name || ''))} ${escapeHtml(String(b.venue_address || ''))}</td></tr>
+              ${coreShown.event_type ? `<tr><td style="padding:2px 10px 2px 0;color:#777">Event</td><td>${escapeHtml(String(evType))}</td></tr>` : ''}
+              ${coreShown.event_date ? `<tr><td style="padding:2px 10px 2px 0;color:#777">Date</td><td>${escapeHtml(String(evDate || 'not given'))}</td></tr>` : ''}
+              ${coreShown.venue ? `<tr><td style="padding:2px 10px 2px 0;color:#777">Venue</td><td>${escapeHtml(String(venName))} ${escapeHtml(String(venAddr))}</td></tr>` : ''}
             </table>
-            ${b.message ? `<p style="margin-top:14px;white-space:pre-wrap">${escapeHtml(String(b.message))}</p>` : ''}
+            ${coreShown.message && b.message ? `<p style="margin-top:14px;white-space:pre-wrap">${escapeHtml(String(b.message))}</p>` : ''}
             <p style="margin-top:18px"><a href="${BASE_URL}/bookings.html">Open in Bookings →</a></p>
           </div>`,
         }
@@ -3085,7 +3481,47 @@ app.get('/api/crm/enquiry-link', auth.requireAuth, requireCrm, (req, res) => {
   res.json({
     token,
     url: `${BASE_URL}/enquire.html?f=${token}`,
-    embed: `<iframe src="${BASE_URL}/enquire.html?f=${token}" style="width:100%;height:900px;border:0" title="Enquiry form"></iframe>`,
+    embed: [
+      `<iframe id="enquiry-form" src="${BASE_URL}/enquire.html?f=${token}"`,
+      `  style="width:100%;min-height:640px;border:0" title="Enquiry form"></iframe>`,
+      `<script>`,
+      `window.addEventListener('message',function(e){`,
+      `  if(!e.data||e.data.type!=='spinlist:enquiry:height')return;`,
+      `  var f=document.getElementById('enquiry-form');`,
+      `  if(f)f.style.height=e.data.height+'px';`,
+      `});`,
+      `<\/script>`,
+    ].join('\n'),
+  });
+});
+
+/* Link and embed code for one questionnaire, so a DJ with several brands can
+   put a different form on each website. */
+app.get('/api/crm/templates/:id/form-link', auth.requireAuth, requireCrm, (req, res) => {
+  const t = db.getTemplate(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Template not found.' });
+  if (t.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your template.' });
+  if (t.kind !== 'questionnaire') {
+    return res.status(400).json({ error: 'Only questionnaires can be used as enquiry forms.' });
+  }
+  const token = db.ensureFormToken(t.id);
+  const url = `${BASE_URL}/enquire.html?f=${token}`;
+  res.json({
+    token,
+    url,
+    active: t.form_active !== false,
+    embed: [
+      `<iframe id="enquiry-${token.slice(0, 6)}" src="${url}"`,
+      `  style="width:100%;min-height:640px;border:0" title="Enquiry form"></iframe>`,
+      `<script>`,
+      `window.addEventListener('message',function(e){`,
+      `  if(!e.data||e.data.type!=='spinlist:enquiry:height')return;`,
+      `  if(e.data.token!=='${token}')return;`,
+      `  var f=document.getElementById('enquiry-${token.slice(0, 6)}');`,
+      `  if(f)f.style.height=e.data.height+'px';`,
+      `});`,
+      `<\/script>`,
+    ].join('\n'),
   });
 });
 
@@ -3328,6 +3764,13 @@ app.get('/api/quote/:token', (req, res) => {
       balance_due_at: m.balance_due_at,
       schedule_text: paymentScheduleText(q, booking),
       responded_at: q.responded_at,
+      // So the page can say "you'll be asked to sign an agreement" up front,
+      // rather than springing it on them after they've accepted.
+      has_contract: !!q.template_id,
+      contract_link: (function () {
+        const c = db.getContractByQuote(q.id);
+        return c ? `${BASE_URL}/contract.html?c=${c.token}` : null;
+      })(),
     },
     booking: booking ? {
       title: booking.title,
@@ -3341,7 +3784,7 @@ app.get('/api/quote/:token', (req, res) => {
 
 // Accept or decline. Deliberately one-way: once answered it can't be flipped,
 // so there's no ambiguity about what was agreed.
-app.post('/api/quote/:token/respond', (req, res) => {
+app.post('/api/quote/:token/respond', async (req, res) => {
   const q = db.getQuoteByToken(req.params.token);
   if (!q) return res.status(404).json({ error: 'That quote could not be found.' });
   if (q.status !== 'sent') {
@@ -3365,6 +3808,31 @@ app.post('/api/quote/:token/respond', (req, res) => {
     }
   }
 
+  /* Raise the agreement they've just agreed to. Only on acceptance, only once,
+     and never in a way that can undo the acceptance itself: if the contract
+     can't be raised the quote is still accepted, and the DJ can send it by
+     hand. Silently losing a client's "yes" would be far worse than a missing
+     contract. */
+  let contractLink = null;
+  if (accept && q.template_id && q.booking_id) {
+    try {
+      const existing = db.getContractByQuote(q.id);
+      if (existing) {
+        contractLink = `${BASE_URL}/contract.html?c=${existing.token}`;
+      } else {
+        const owner = db.getUserById(q.owner_id);
+        const booking = db.getBooking(q.booking_id);
+        const tpl = db.getTemplate(q.template_id);
+        if (owner && booking && tpl && tpl.owner_id === q.owner_id) {
+          const to = (booking.contacts && booking.contacts.primary_contact
+                      && booking.contacts.primary_contact.email) || '';
+          const issued = await issueContract(owner, booking, tpl, q, to);
+          contractLink = issued.link;
+        }
+      }
+    } catch (e) { console.error('[quote contract]', e.message); }
+  }
+
   // Tell the DJ. A failure here must not undo the client's decision.
   try {
     const owner = db.getUserById(q.owner_id);
@@ -3385,7 +3853,9 @@ app.post('/api/quote/:token/respond', (req, res) => {
     }
   } catch (e) { /* never block the response */ }
 
-  res.json({ ok: true, status: accept ? 'accepted' : 'declined' });
+  // The link goes back so the quote page can send them straight on to signing
+  // rather than making them wait for an email to arrive.
+  res.json({ ok: true, status: accept ? 'accepted' : 'declined', contract_link: contractLink });
 });
 
 /* ================================================================
@@ -3524,21 +3994,17 @@ app.get('/api/crm/contracts', auth.requireAuth, requireCrm, (req, res) => {
 });
 
 // Issue a contract for a booking, filled from a template.
-app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) => {
-  const body = req.body || {};
-  const booking = db.getBooking(body.booking_id);
-  if (!booking || !ownsBooking(req, booking)) return res.status(404).json({ error: 'Booking not found.' });
-  const tpl = db.getTemplate(body.template_id);
-  if (!tpl || tpl.owner_id !== req.user.id) return res.status(404).json({ error: 'Template not found.' });
-
-  const quote = body.quote_id ? db.getQuote(body.quote_id) : null;
-  const tokens = mergeTokens(booking, req.user, quote);
+/* Raise a contract from a template, frozen at issue. Extracted so a quote
+   acceptance and the manual "send a contract" button can't drift apart — one
+   of them would eventually merge tokens differently from the other. */
+async function issueContract(owner, booking, tpl, quote, to) {
+  const tokens = mergeTokens(booking, owner, quote);
   const sections = (tpl.sections || []).map(s => ({
     heading: applyMerge(s.heading, tokens),
     body_html: renderBody(applyMerge(s.body, tokens)),
   }));
 
-  const contract = db.createContract(req.user.id, {
+  const contract = db.createContract(owner.id, {
     booking_id: booking.id,
     quote_id: quote ? quote.id : null,
     template_id: tpl.id,
@@ -3547,17 +4013,13 @@ app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) =>
   });
 
   const link = `${BASE_URL}/contract.html?c=${contract.token}`;
-  const to = ((body.to || '').toString().trim())
-    || (booking.contacts && booking.contacts.primary_contact && booking.contacts.primary_contact.email)
-    || '';
-
   if (to && CONTACT_RESEND_KEY && CONTACT_FROM) {
     try {
       await sendViaResend(
-        { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: req.user.name || CONTACT_FROM_NAME },
+        { apiKey: CONTACT_RESEND_KEY, from: CONTACT_FROM, fromName: owner.name || CONTACT_FROM_NAME },
         {
           to,
-          replyTo: req.user.email,
+          replyTo: owner.email,
           subject: `Please sign — ${contract.title}`,
           html: `<div style="font-family:system-ui,sans-serif;color:#0a1228">
             <h2 style="margin:0 0 8px">Your agreement</h2>
@@ -3569,7 +4031,22 @@ app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) =>
       );
     } catch (e) { console.error('[contract email]', e.message); }
   }
+  return { contract, link };
+}
 
+app.post('/api/crm/contracts', auth.requireAuth, requireCrm, async (req, res) => {
+  const body = req.body || {};
+  const booking = db.getBooking(body.booking_id);
+  if (!booking || !ownsBooking(req, booking)) return res.status(404).json({ error: 'Booking not found.' });
+  const tpl = db.getTemplate(body.template_id);
+  if (!tpl || tpl.owner_id !== req.user.id) return res.status(404).json({ error: 'Template not found.' });
+
+  const quote = body.quote_id ? db.getQuote(body.quote_id) : null;
+  const to = ((body.to || '').toString().trim())
+    || (booking.contacts && booking.contacts.primary_contact && booking.contacts.primary_contact.email)
+    || '';
+
+  const { contract, link } = await issueContract(req.user, booking, tpl, quote, to);
   res.json({ contract, link, sent_to: to || null });
 });
 
@@ -3679,10 +4156,33 @@ app.put('/api/crm/products/:id', auth.requireAuth, requireCrm, (req, res) => {
   res.json({ product: db.updateProduct(p.id, req.body || {}) });
 });
 
+// A picture for a package — shown when building a quote and on the quote itself.
+app.post('/api/crm/products/:id/image', auth.requireAuth, requireCrm, (req, res) => {
+  productImageUpload.single('image')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Upload failed.' });
+    const p = db.getProduct(req.params.id);
+    if (!p || p.owner_id !== req.user.id) {
+      if (req.file) safeUnlink('/uploads/' + req.file.filename);
+      return res.status(404).json({ error: 'Package not found.' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No image received.' });
+    if (p.image) safeUnlink(p.image);                    // replace, don't orphan
+    res.json({ product: db.updateProduct(p.id, { image: '/uploads/' + req.file.filename }) });
+  });
+});
+
+app.delete('/api/crm/products/:id/image', auth.requireAuth, requireCrm, (req, res) => {
+  const p = db.getProduct(req.params.id);
+  if (!p || p.owner_id !== req.user.id) return res.status(404).json({ error: 'Package not found.' });
+  if (p.image) safeUnlink(p.image);
+  res.json({ product: db.updateProduct(p.id, { image: '' }) });
+});
+
 app.delete('/api/crm/products/:id', auth.requireAuth, requireCrm, (req, res) => {
   const p = db.getProduct(req.params.id);
   if (!p) return res.status(404).json({ error: 'Package not found.' });
   if (p.owner_id !== req.user.id) return res.status(403).json({ error: 'Not your package.' });
+  if (p.image) safeUnlink(p.image);          // don't orphan the uploaded file
   db.deleteProduct(p.id);
   res.json({ ok: true });
 });
