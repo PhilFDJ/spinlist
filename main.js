@@ -1,334 +1,241 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, session, powerSaveBlocker, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const fsp = fs.promises;
+const { SeratoWatcher, candidateDirs } = require('./serato.js');
 
-// The Spinlist backend base URL. Override with SPINLIST_URL env var if self-hosting.
 const BASE_URL = process.env.SPINLIST_URL || 'https://www.spinlist.co.uk';
 
-let win;
-function createWindow() {
-  win = new BrowserWindow({
-    width: 760,
-    height: 720,
-    minWidth: 560,
+let mainWin = null;
+let gigWin = null;
+let sleepBlocker = null;   // stops the Mac napping mid-set
+
+/* ---------------- Serato watching ----------------
+   Nothing here talks to Serato's software. It reads the history file Serato
+   writes anyway, which is the only route available — there is no official API.
+
+   Two jobs, and they need opposite handling:
+
+     THE BAN ALARM fires the instant a track loads, checked against a list held
+     on this machine. It must work when the venue wifi doesn't, because that's
+     exactly when you can't look it up.
+
+     THE PLAY TICK waits. Serato's file records loads and ejects, not play time,
+     so a track loaded and pulled straight back looks identical to one played in
+     full. Without the wait, every quick audition ticks a song off and the run
+     sheet stops being worth reading.
+   ---------------------------------------------------- */
+const DWELL_MS = 45 * 1000;
+
+let watcher = null;
+let GIG = null;              // { kind, id, title }
+let BAN_LIST = [];           // cached locally so the alarm survives a dead network
+let banSource = 'none';      // 'server' | 'disk' | 'none'
+let pending = null;          // { track, timer } — the dwell timer
+let lastEvent = null;        // for the diagnostics panel
+
+function prefsPath(name) {
+  return path.join(app.getPath('userData'), name);
+}
+
+function settings() {
+  try { return JSON.parse(fs.readFileSync(prefsPath('settings.json'), 'utf8')); }
+  catch (e) { return {}; }
+}
+function saveSettings(patch) {
+  const s = Object.assign(settings(), patch);
+  try { fs.writeFileSync(prefsPath('settings.json'), JSON.stringify(s, null, 2)); } catch (e) {}
+  return s;
+}
+
+async function cookieHeader() {
+  const cookies = await session.defaultSession.cookies.get({ url: BASE_URL });
+  return cookies.map(c => `${c.name}=${c.value}`).join('; ');
+}
+
+/* Mirrors normaliseTrack() on the server. The two must agree, or a track the
+   server would flag gets past the local check and vice versa. */
+function normaliseTrack(s) {
+  return (s || '')
+    .toString()
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\b(feat|ft|featuring|with)\b.*$/g, ' ')
+    .replace(/\b(radio|extended|club|original|dirty|clean|explicit|instrumental)\s+(edit|mix|version)\b/g, ' ')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/^\s*the\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/* Loose on purpose: a false alarm costs a glance, a missed ban costs you the
+   banned song at the wedding. */
+function localBanHit(track) {
+  const t = normaliseTrack(track.title);
+  if (!t) return null;
+  const isrc = (track.isrc || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  for (const s of BAN_LIST) {
+    const si = (s.isrc || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    if (isrc && si && isrc === si) return s;
+    if (normaliseTrack(s.title) === t) return s;
+  }
+  return null;
+}
+
+async function loadBanList(weddingId) {
+  const cache = prefsPath('noplay-' + weddingId + '.json');
+  try {
+    const r = await fetch(`${BASE_URL}/api/weddings/${encodeURIComponent(weddingId)}/noplay`,
+      { headers: { Cookie: await cookieHeader() } });
+    if (r.ok) {
+      const d = await r.json();
+      BAN_LIST = (d && d.songs) || [];
+      banSource = 'server';
+      try { fs.writeFileSync(cache, JSON.stringify(d)); } catch (e) {}
+      return;
+    }
+  } catch (e) { /* offline — fall through to the cached copy */ }
+  try {
+    const d = JSON.parse(fs.readFileSync(cache, 'utf8'));
+    BAN_LIST = (d && d.songs) || [];
+    banSource = 'disk';
+  } catch (e) { BAN_LIST = []; banSource = 'none'; }
+}
+
+/* Shows the alarm in the gig window WITHOUT waiting for the server, so it works
+   with no network at all. gig.html renders the same banner from its own polling;
+   this just gets there first. */
+function alarmLocally(payload) {
+  if (gigWin && !gigWin.isDestroyed()) {
+    const js = `(function(){ try{
+      if (typeof showNowPlaying === 'function') { showNowPlaying(${JSON.stringify(payload)}); return true; }
+    }catch(e){} return false; })()`;
+    gigWin.webContents.executeJavaScript(js).then(ok => {
+      if (!ok) nativeAlarm(payload);
+    }).catch(() => nativeAlarm(payload));
+    try { gigWin.flashFrame(true); gigWin.showInactive(); } catch (e) {}
+  } else {
+    nativeAlarm(payload);
+  }
+}
+
+/* If the gig window isn't open or the page has changed, a silent failure is the
+   worst outcome — so fall back to something the OS will show regardless. */
+function nativeAlarm(payload) {
+  try {
+    if (!Notification.isSupported()) return;
+    const t = (payload.played && payload.played.title) || 'That track';
+    new Notification({
+      title: '⛔ Do not play',
+      body: t + (payload.song && payload.song.note_couple ? ' — ' + payload.song.note_couple : ''),
+      urgency: 'critical',
+    }).show();
+  } catch (e) {}
+}
+
+async function reportTrack(track, opts) {
+  if (!GIG || GIG.kind !== 'w') return null;
+  try {
+    const r = await fetch(`${BASE_URL}/api/weddings/${encodeURIComponent(GIG.id)}/now-playing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader() },
+      body: JSON.stringify({
+        title: track.title || '', artist: track.artist || '',
+        isrc: track.isrc || '', mark: !!(opts && opts.mark),
+      }),
+    });
+    if (!r.ok) return { error: 'HTTP ' + r.status };
+    return await r.json();
+  } catch (e) { return { error: 'offline' }; }
+}
+
+function noteEvent(kind, detail) {
+  lastEvent = Object.assign({ kind, at: Date.now() }, detail);
+  if (mainWin && !mainWin.isDestroyed()) {
+    mainWin.webContents.send('serato-event', lastEvent);
+  }
+}
+
+function onSeratoTrack(track) {
+  noteEvent('track', { title: track.title, artist: track.artist,
+                       fromFilename: !!track.titleFromFilename });
+
+  // The ban check happens first and immediately, on the local list.
+  const banned = localBanHit(track);
+  if (banned) {
+    const payload = {
+      verdict: 'noplay', confidence: 'local', marked: false,
+      block: { id: null, name: banned.block || 'Do not play' },
+      song: { id: null, title: banned.title, artist: banned.artist,
+              note_couple: banned.note_couple || '', note_dj: '' },
+      played: { title: track.title || '', artist: track.artist || '' },
+      at: Date.now(),
+    };
+    alarmLocally(payload);
+    noteEvent('banned', { title: track.title, matched: banned.title, source: banSource });
+    reportTrack(track, { mark: false });     // best effort, for the record
+    return;
+  }
+
+  /* Not banned: wait before calling it played. If another track arrives first,
+     this one was an audition and the timer is dropped. */
+  if (pending && pending.timer) clearTimeout(pending.timer);
+  pending = {
+    track,
+    timer: setTimeout(async () => {
+      const res = await reportTrack(track, { mark: true });
+      noteEvent('reported', {
+        title: track.title,
+        verdict: res && res.verdict, marked: !!(res && res.marked),
+        error: res && res.error,
+      });
+      pending = null;
+    }, DWELL_MS),
+  };
+  noteEvent('waiting', { title: track.title, seconds: Math.round(DWELL_MS / 1000) });
+}
+
+function startWatcher() {
+  if (watcher) return;
+  watcher = new SeratoWatcher({ folder: settings().seratoFolder || null });
+  watcher.on('track', onSeratoTrack);
+  watcher.on('status', st => {
+    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('serato-status', st);
+  });
+  watcher.on('session', s => noteEvent('session', { file: s.file }));
+  watcher.start();
+}
+
+function createMainWindow() {
+  mainWin = new BrowserWindow({
+    width: 460,
+    height: 640,
+    minWidth: 380,
     minHeight: 520,
-    title: 'Spinlist Music Manager',
-    backgroundColor: '#0b1020',
+    title: 'Spinlist Gig Window',
+    backgroundColor: '#0a1228',
+    icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
-  win.loadFile('renderer.html');
-  // win.webContents.openDevTools();
+  mainWin.loadFile('renderer.html');
+  mainWin.on('closed', () => { mainWin = null; });
 }
 
 app.whenReady().then(() => {
-  createWindow();
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  createMainWindow();
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
-/* ---------------- native folder scan ---------------- */
-const AUDIO_RE = /\.(mp3|m4a|aac|flac|wav|aiff?|ogg|wma)$/i;
-const VIDEO_RE = /\.(mp4|m4v|mov|avi|mkv)$/i;
-
-// Recursively list media files under a directory (native fs — fast).
-async function listMedia(dir) {
-  const out = [];
-  async function walk(d) {
-    let entries;
-    try { entries = await fsp.readdir(d, { withFileTypes: true }); }
-    catch (_) { return; }
-    for (const e of entries) {
-      const full = path.join(d, e.name);
-      if (e.isDirectory()) { await walk(full); }
-      else if (AUDIO_RE.test(e.name) || VIDEO_RE.test(e.name)) { out.push(full); }
-    }
-  }
-  await walk(dir);
-  return out;
-}
-
-// Read a chunk from an already-open file handle (no per-call open/close).
-async function readAt(fd, start, length, fileSize) {
-  const len = Math.max(0, Math.min(length, fileSize - start));
-  if (len <= 0) return Buffer.alloc(0);
-  const buf = Buffer.alloc(len);
-  const { bytesRead } = await fd.read(buf, 0, len, start);
-  return bytesRead === len ? buf : buf.subarray(0, bytesRead);
-}
-
-function decodeFrame(bytes) {
-  if (!bytes.length) return '';
-  const enc = bytes[0]; const body = bytes.subarray(1);
-  try {
-    if (enc === 1 || enc === 2) return Buffer.from(body).toString('utf16le').replace(/\u0000+$/, '').trim();
-    if (enc === 3) return Buffer.from(body).toString('utf8').replace(/\u0000+$/, '').trim();
-    let s = ''; for (const b of body) { if (b === 0) break; s += String.fromCharCode(b); } return s.trim();
-  } catch (_) { return ''; }
-}
-
-function parseMp4Tags(buf) {
-  const res = { title: '', artist: '' };
-  const u32 = (o) => ((buf[o] << 24) | (buf[o + 1] << 16) | (buf[o + 2] << 8) | buf[o + 3]) >>> 0;
-  const A9 = '\u00A9';
-  const wanted = { [A9 + 'nam']: 'title', [A9 + 'ART']: 'artist', 'aART': 'artist' };
-  for (let i = 0; i + 8 < buf.length; i++) {
-    const name = String.fromCharCode(buf[i], buf[i + 1], buf[i + 2], buf[i + 3]);
-    const which = wanted[name];
-    if (!which) continue;
-    const atomStart = i - 4; if (atomStart < 0) continue;
-    const atomSize = u32(atomStart);
-    if (atomSize < 16 || atomStart + atomSize > buf.length) continue;
-    let j = i + 4; const atomEnd = atomStart + atomSize;
-    while (j + 8 < atomEnd) {
-      if (buf[j] === 0x64 && buf[j + 1] === 0x61 && buf[j + 2] === 0x74 && buf[j + 3] === 0x61) {
-        const dataSize = u32(j - 4);
-        const payloadStart = j + 4 + 8;
-        const payloadEnd = Math.min(j - 4 + dataSize, atomEnd);
-        if (payloadEnd > payloadStart) {
-          try { const val = Buffer.from(buf.subarray(payloadStart, payloadEnd)).toString('utf8').replace(/\u0000+$/, '').trim(); if (val && !res[which]) res[which] = val; } catch (_) {}
-        }
-        break;
-      }
-      j++;
-    }
-  }
-  return res;
-}
-
-function mp4HasVideoTrack(buf) {
-  for (let i = 0; i + 16 < buf.length; i++) {
-    if (buf[i] === 0x68 && buf[i + 1] === 0x64 && buf[i + 2] === 0x6c && buf[i + 3] === 0x72) {
-      const h = i + 12;
-      if (h + 4 <= buf.length && buf[h] === 0x76 && buf[h + 1] === 0x69 && buf[h + 2] === 0x64 && buf[h + 3] === 0x65) return true;
-    }
-  }
-  return false;
-}
-
-// Walk the top-level MP4 boxes to find the exact offset+size of 'moov' (the metadata
-// container). This lets us read ONLY the metadata region — wherever it is in the file —
-// instead of blindly reading a big chunk of the tail. Reads box headers on demand.
-async function findMoov(fd, fileSize) {
-  let offset = 0;
-  const hdr = Buffer.alloc(16);
-  while (offset + 8 <= fileSize) {
-    const { bytesRead } = await fd.read(hdr, 0, 16, offset);
-    if (bytesRead < 8) break;
-    let size = (hdr[0] << 24 | hdr[1] << 16 | hdr[2] << 8 | hdr[3]) >>> 0;
-    const type = String.fromCharCode(hdr[4], hdr[5], hdr[6], hdr[7]);
-    let headerLen = 8;
-    if (size === 1) {
-      // 64-bit size in the next 8 bytes (rare, huge files). Read low 32 bits (plenty).
-      size = (hdr[12] << 24 | hdr[13] << 16 | hdr[14] << 8 | hdr[15]) >>> 0;
-      headerLen = 16;
-    }
-    if (type === 'moov') return { offset, size };
-    if (size < headerLen) break;            // malformed — stop
-    offset += size;
-  }
-  return null;
-}
-
-async function readTags(filePath) {
-  const out = { title: '', artist: '', video: false, size: 0, mtimeMs: 0 };
-  let fd;
-  try {
-    fd = await fsp.open(filePath, 'r');
-    const st = await fd.stat();                 // stat via the open handle — no second path lookup
-    out.size = st.size; out.mtimeMs = st.mtimeMs;
-    const size = st.size;
-    // One modest head read — most ID3v2 and MP4 tags live in the first ~16KB.
-    let head = await readAt(fd, 0, Math.min(16 * 1024, size), size);
-    // MP3 / ID3v2
-    if (head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) {
-      const tagSize = ((head[6] & 0x7f) << 21) | ((head[7] & 0x7f) << 14) | ((head[8] & 0x7f) << 7) | (head[9] & 0x7f);
-      if (10 + tagSize > head.length) head = await readAt(fd, 0, Math.min(10 + tagSize, 512 * 1024), size);
-      const end = Math.min(10 + tagSize, head.length);
-      let i = 10;
-      while (i + 10 < end) {
-        const id = String.fromCharCode(head[i], head[i + 1], head[i + 2], head[i + 3]);
-        const fsz = (head[i + 4] << 24) | (head[i + 5] << 16) | (head[i + 6] << 8) | head[i + 7];
-        if (fsz <= 0 || i + 10 + fsz > head.length) break;
-        if (id === 'TIT2' || id === 'TPE1' || id === 'TT2' || id === 'TP1') {
-          const val = decodeFrame(head.subarray(i + 10, i + 10 + fsz));
-          if (id[1] === 'I' || id === 'TT2') out.title = out.title || val; else out.artist = out.artist || val;
-        }
-        i += 10 + fsz;
-      }
-    }
-    // MP4 / M4A / video — read the REAL tags wherever they live, without a slow blind tail read.
-    const isMp4 = head.length > 12 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70;
-    if (isMp4) {
-      if (mp4HasVideoTrack(head)) out.video = true;
-      // Tags in the head already? (moov-at-front files.)
-      const t = parseMp4Tags(head);
-      out.title = out.title || t.title; out.artist = out.artist || t.artist;
-      if (!out.title || !out.artist || !out.video) {
-        // Jump straight to moov (metadata) wherever it is — one targeted read of just that region.
-        const moov = await findMoov(fd, size);
-        if (moov) {
-          const cap = Math.min(moov.size, 4 * 1024 * 1024);   // read up to 4MB of moov (plenty for tags)
-          const buf = await readAt(fd, moov.offset, cap, size);
-          if (!out.video && mp4HasVideoTrack(buf)) out.video = true;
-          const mt = parseMp4Tags(buf);
-          out.title = out.title || mt.title; out.artist = out.artist || mt.artist;
-        }
-      }
-    }
-    // ID3v1 tail — ONLY if we still need something and it's an MP3-ish file (skip the extra read otherwise).
-    if ((!out.title || !out.artist) && !isMp4) {
-      const tail = await readAt(fd, Math.max(0, size - 128), 128, size);
-      if (tail.length >= 128 && tail[0] === 0x54 && tail[1] === 0x41 && tail[2] === 0x47) {
-        const rd = (s, e) => { let str = ''; for (let k = s; k < e; k++) { if (tail[k] === 0) break; str += String.fromCharCode(tail[k]); } return str.trim(); };
-        out.title = out.title || rd(3, 33); out.artist = out.artist || rd(33, 63);
-      }
-    }
-  } catch (_) {}
-  finally { if (fd) { try { await fd.close(); } catch (_) {} } }
-  if (/\.(m4v|mov|avi|mkv)$/i.test(filePath)) out.video = true; // unambiguous video ext
-  // A large .mp4 is almost certainly a music video, not an audio file.
-  if (!out.video && /\.mp4$/i.test(filePath) && size > 40 * 1024 * 1024) out.video = true;
-  return out;
-}
-
-/* ---------------- IPC: folder picker + scan ---------------- */
-ipcMain.handle('pick-folder', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
-  if (r.canceled || !r.filePaths.length) return null;
-  return r.filePaths[0];
-});
-
-// Live scan stats — readable at any time via the 'scan-timing-now' handler (for the diagnostic button).
-let SCAN = null;
-
-// Scan a folder. `prev` is a map of path -> {title,artist,video,size,mtime} for incremental reuse.
-ipcMain.handle('scan-folder', async (evt, { folder, prev }) => {
-  win.webContents.send('scan-progress', { done: 0, total: 0, reused: 0, read: 0, counting: true });
-  const tEnum0 = Date.now();
-  const files = await listMedia(folder);
-  const enumMs = Date.now() - tEnum0;
-  const total = files.length;
-  const prevMap = prev || {};
-  const lib = [];
-  let done = 0, reused = 0, read = 0;
-  const CONC = 64;   // internal SSDs handle high parallelism well
-  let statMs = 0, tagMs = 0;   // cumulative timing to find the bottleneck
-  const tScanStart = Date.now();
-  SCAN = { get done(){return done;}, get read(){return read;}, get reused(){return reused;},
-           total, enumMs, get statMs(){return statMs;}, get tagMs(){return tagMs;}, tScanStart };
-  const send = () => win.webContents.send('scan-progress', { done, total, reused, read });
-  send();   // show the total straight away
-  const hasPrev = prevMap && Object.keys(prevMap).length > 0;
-  async function handle(fp) {
-    try {
-      const isVidExt = /\.(m4v|mov|avi|mkv)$/i.test(fp);
-      // INCREMENTAL: only when we have a previous library — a cheap stat lets us skip unchanged files.
-      if (hasPrev) {
-        const ts = Date.now();
-        const st = await fsp.stat(fp);
-        statMs += Date.now() - ts;
-        const p = prevMap[fp];
-        if (p && p.size === st.size && p.mtime === st.mtimeMs) {
-          lib.push({ title: p.title, artist: p.artist, path: fp, video: !!p.video, size: st.size, mtime: st.mtimeMs });
-          reused++; done++; if (done % 100 === 0) send(); return;
-        }
-      }
-      // Open once — readTags now also returns size + mtime from the open handle (no separate stat).
-      const tt = Date.now();
-      const tags = await readTags(fp);
-      tagMs += Date.now() - tt;
-      read++;
-      let title = (tags.title || '').trim(), artist = (tags.artist || '').trim();
-      if (!title) {
-        const base = path.basename(fp).replace(/\.[^.]+$/, '');
-        const parts = base.split(' - ');
-        if (parts.length >= 2) { artist = artist || parts[0].trim(); title = parts.slice(1).join(' - ').trim(); }
-        else title = base.trim();
-      }
-      lib.push({ title, artist, path: fp, video: !!tags.video || isVidExt, size: tags.size, mtime: tags.mtimeMs });
-      done++; if (done % 100 === 0) send();
-    } catch (_) { done++; }
-  }
-  const tScan0 = Date.now();
-  for (let i = 0; i < files.length; i += CONC) {
-    await Promise.all(files.slice(i, i + CONC).map(handle));
-  }
-  const scanMs = Date.now() - tScan0;
-  SCAN = null;
-  // Report where the time went so we can diagnose slow scans.
-  win.webContents.send('scan-timing', {
-    total, read, reused, enumMs, scanMs,
-    statMs: Math.round(statMs), tagMs: Math.round(tagMs),
-    perFileMs: read ? +(scanMs / read).toFixed(1) : 0
-  });
-  send();
-  return { lib, total, reused, read };
-});
-
-// Live timing snapshot — called by the "Show timing so far" button mid-scan.
-ipcMain.handle('timing-now', async () => {
-  if (!SCAN) return null;
-  const scanMs = Date.now() - SCAN.tScanStart;
-  return {
-    total: SCAN.total, read: SCAN.read, reused: SCAN.reused, done: SCAN.done,
-    enumMs: SCAN.enumMs, scanMs,
-    statMs: Math.round(SCAN.statMs), tagMs: Math.round(SCAN.tagMs),
-    perFileMs: SCAN.read ? +(scanMs / SCAN.read).toFixed(1) : 0
-  };
-});
-
-ipcMain.handle('app-version', async () => { try { return app.getVersion(); } catch (_) { return '?'; } });
-
-// Isolated speed test: pick ONE folder, grab the first media file, and time
-// (a) opening+reading it 50x, and (b) a full readTags 50x. Zero parallelism —
-// this tells us the raw per-file cost with no ambiguity.
-ipcMain.handle('speed-test', async (evt, folder) => {
-  try {
-    const files = await listMedia(folder);
-    if (!files.length) return { error: 'No media files found in that folder.' };
-    const fp = files[0];
-    const st = await fsp.stat(fp);
-    // (a) raw open + small read, 50 times
-    let t0 = Date.now();
-    for (let k = 0; k < 50; k++) {
-      const fd = await fsp.open(fp, 'r');
-      const buf = Buffer.alloc(16384);
-      await fd.read(buf, 0, 16384, 0);
-      await fd.close();
-    }
-    const rawMs = (Date.now() - t0) / 50;
-    // (b) full readTags, 50 times
-    t0 = Date.now();
-    for (let k = 0; k < 50; k++) { await readTags(fp); }
-    const tagMs = (Date.now() - t0) / 50;
-    return { file: path.basename(fp), sizeMB: +(st.size/1024/1024).toFixed(1),
-             rawOpenReadMs: +rawMs.toFixed(1), fullReadTagsMs: +tagMs.toFixed(1), totalFiles: files.length };
-  } catch (e) { return { error: String(e && e.message || e) }; }
-});
-
-/* ---------------- IPC: talk to Spinlist backend ---------------- */
-// We use Electron's net via fetch (Node 18+ global fetch is available in main).
-let SESSION_COOKIE = '';
-
-// Where we remember the session (only when the DJ ticks "Remember me").
-// Electron's userData folder is per-user and app-private.
-function sessionFile() { return path.join(app.getPath('userData'), 'session.json'); }
-function saveSessionToDisk() {
-  try { fs.writeFileSync(sessionFile(), JSON.stringify({ cookie: SESSION_COOKIE }), { mode: 0o600 }); } catch (_) {}
-}
-function clearSessionOnDisk() {
-  try { fs.unlinkSync(sessionFile()); } catch (_) {}
-}
-function readSessionFromDisk() {
-  try { const d = JSON.parse(fs.readFileSync(sessionFile(), 'utf8')); return (d && d.cookie) || ''; } catch (_) { return ''; }
-}
-
+/* ---------------- Login ----------------
+   We log in through the SHARED Electron session, so the auth cookie is stored
+   in the session and automatically sent when the gig window loads gig.html. */
 ipcMain.handle('login', async (evt, { email, password, remember }) => {
   try {
     const r = await fetch(BASE_URL + '/api/auth/login', {
@@ -336,67 +243,201 @@ ipcMain.handle('login', async (evt, { email, password, remember }) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const setCookie = r.headers.get('set-cookie');
-    if (setCookie) SESSION_COOKIE = setCookie.split(';')[0];
     const data = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, error: (data && data.error) || 'Login failed' };
-    // Persist the session only if the DJ asked us to remember it.
-    if (remember && SESSION_COOKIE) saveSessionToDisk(); else clearSessionOnDisk();
-    return { ok: true, user: data.user };
-  } catch (e) { return { ok: false, error: 'Could not reach Spinlist. Check your connection.' }; }
-});
-
-// Try to restore a remembered session on launch. Validates it against the
-// server; if it's expired/invalid, we clear it and the user logs in normally.
-ipcMain.handle('restore-session', async () => {
-  const cookie = readSessionFromDisk();
-  if (!cookie) return { ok: false };
-  SESSION_COOKIE = cookie;
-  try {
-    const r = await fetch(BASE_URL + '/api/me', { headers: { Cookie: SESSION_COOKIE } });
-    if (!r.ok) { SESSION_COOKIE = ''; clearSessionOnDisk(); return { ok: false }; }
-    const data = await r.json().catch(() => ({}));
-    if (!data || !data.user) { SESSION_COOKIE = ''; clearSessionOnDisk(); return { ok: false }; }
+    // Persist the returned auth cookie into Electron's default session so the
+    // gig window (which loads a real page from the site) is authenticated.
+    const setCookie = r.headers.get('set-cookie');
+    if (setCookie) {
+      const pair = setCookie.split(';')[0];
+      const eq = pair.indexOf('=');
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1).trim();
+      const url = BASE_URL;
+      try {
+        // When "remember" is on, set an explicit expiry so Electron keeps the
+        // cookie on disk across restarts; otherwise it's a session cookie that
+        // disappears when the app quits.
+        const cookieSpec = {
+          url, name, value,
+          domain: new URL(BASE_URL).hostname,
+          path: '/', httpOnly: true, secure: BASE_URL.startsWith('https'),
+        };
+        if (remember) cookieSpec.expirationDate = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+        await session.defaultSession.cookies.set(cookieSpec);
+      } catch (e) { /* non-fatal; the fetch below re-checks auth */ }
+    }
     return { ok: true, user: data.user };
   } catch (e) {
-    // Network error — keep the cookie (might be offline), but report not-restored.
-    return { ok: false, offline: true };
+    return { ok: false, error: 'Could not reach Spinlist. Check your connection.' };
   }
 });
 
-// Log out: tell the server, wipe the in-memory + on-disk session.
+// On launch, check whether a remembered session cookie is still valid so the
+// DJ can skip the login screen.
+ipcMain.handle('restore-session', async () => {
+  try {
+    const cookies = await session.defaultSession.cookies.get({ url: BASE_URL });
+    if (!cookies || !cookies.length) return { ok: false };
+    const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    const r = await fetch(BASE_URL + '/api/me', { headers: { Cookie: cookieHeader } });
+    if (!r.ok) return { ok: false };
+    const data = await r.json().catch(() => ({}));
+    if (!data || !data.user) return { ok: false };
+    return { ok: true, user: data.user };
+  } catch (e) { return { ok: false, offline: true }; }
+});
+
+// Log out: tell the server and clear the stored cookie(s).
 ipcMain.handle('logout', async () => {
-  try { await fetch(BASE_URL + '/api/auth/logout', { method: 'POST', headers: { Cookie: SESSION_COOKIE } }); } catch (_) {}
-  SESSION_COOKIE = '';
-  clearSessionOnDisk();
+  try {
+    const cookies = await session.defaultSession.cookies.get({ url: BASE_URL });
+    const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    await fetch(BASE_URL + '/api/auth/logout', { method: 'POST', headers: { Cookie: cookieHeader } });
+  } catch (_) {}
+  try {
+    const cookies = await session.defaultSession.cookies.get({ url: BASE_URL });
+    for (const c of cookies) {
+      await session.defaultSession.cookies.remove(BASE_URL, c.name);
+    }
+  } catch (_) {}
   return { ok: true };
 });
 
-ipcMain.handle('get-library', async () => {
-  try {
-    const r = await fetch(BASE_URL + '/api/prep/library', { headers: { Cookie: SESSION_COOKIE } });
-    if (!r.ok) return { ok: false, error: 'Could not load saved library (' + r.status + ')' };
-    const d = await r.json();
-    return { ok: true, library: d.library };
-  } catch (e) { return { ok: false, error: 'Network error' }; }
+// Fetch the DJ's weddings + events for the picker (uses the session cookie).
+ipcMain.handle('list-gigs', async () => {
+  async function getJSON(pathname) {
+    try {
+      const cookies = await session.defaultSession.cookies.get({ url: BASE_URL });
+      const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+      const r = await fetch(BASE_URL + pathname, { headers: { Cookie: cookieHeader } });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch (e) { return null; }
+  }
+  const [w, e] = await Promise.all([getJSON('/api/weddings'), getJSON('/api/my-events')]);
+  const weddings = (w && w.weddings || []).filter(x => !x.archived)
+    .map(x => ({ kind: 'w', id: x.id, name: x.name, sub: x.coupleNames || '', date: x.weddingDate || null }));
+  const events = (e && e.events || []).filter(x => !x.archived)
+    .map(x => ({ kind: 'e', id: x.id, name: x.name, sub: x.type || '', date: x.eventDate || null }));
+  return { ok: true, gigs: [...weddings, ...events] };
 });
 
-ipcMain.handle('save-library', async (evt, { name, lib }) => {
+// Open (or re-point) the always-on-top gig window at the chosen gig.
+ipcMain.handle('open-gig', async (evt, { kind, id, title }) => {
+  const url = BASE_URL + '/gig.html?' + (kind === 'e' ? 'e=' : 'w=') + encodeURIComponent(id);
+
+  /* Remember which gig we're on and pull its ban list down NOW, while there's
+     probably still a connection — not at the moment the alarm is needed. */
+  GIG = { kind, id, title };
+  if (pending && pending.timer) { clearTimeout(pending.timer); pending = null; }
+  if (kind === 'w') {
+    await loadBanList(id);
+    noteEvent('gig', { title, banned: BAN_LIST.length, source: banSource });
+    startWatcher();
+  } else {
+    BAN_LIST = []; banSource = 'none';
+    noteEvent('gig', { title, banned: 0, source: 'n/a — events have no do-not-play list' });
+  }
+
+  if (gigWin && !gigWin.isDestroyed()) {
+    gigWin.loadURL(url);
+    gigWin.setAlwaysOnTop(true, 'screen-saver');
+    gigWin.show();
+    gigWin.focus();
+    return { ok: true };
+  }
+  gigWin = new BrowserWindow({
+    width: 400,
+    height: 620,
+    minWidth: 300,
+    minHeight: 360,
+    title: 'Gig · ' + (title || 'Spinlist'),
+    backgroundColor: '#070b16',
+    alwaysOnTop: true,
+    icon: path.join(__dirname, 'assets', 'icon.png'),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      /* The gig window polls for the do-not-play alarm every few seconds.
+         Chromium treats an occluded window (macOS) or a minimised one (Windows)
+         as hidden and throttles its timers to roughly once a minute — so if the
+         DJ software goes full screen over the top, or the window gets
+         minimised, the alarm would go quiet with nothing on screen to say so.
+         Set at creation rather than toggled later, which is a known source of
+         render desync when the window is already hidden. */
+      backgroundThrottling: false,
+    },
+  });
+  // 'screen-saver' level floats above most full-screen-ish app windows.
+  gigWin.setAlwaysOnTop(true, 'screen-saver');
+  // Show on all workspaces (macOS) so it stays visible as you switch spaces.
+  try { gigWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (e) {}
+  gigWin.loadURL(url);
+  startSleepBlocker();
+  gigWin.on('closed', () => { gigWin = null; stopSleepBlocker(); });
+  return { ok: true };
+});
+
+/* A laptop that goes to sleep at 11pm takes the alarm with it. Held only while
+   a gig window is actually open, so the app isn't keeping the machine awake all
+   week for nothing. */
+function startSleepBlocker() {
   try {
-    const tracks = lib.map(t => {
-      const o = { t: t.title, a: t.artist, p: t.path };
-      if (t.video) o.v = 1;
-      if (Number.isFinite(t.size)) o.s = t.size;
-      if (Number.isFinite(t.mtime)) o.m = t.mtime;
-      return o;
-    });
-    const r = await fetch(BASE_URL + '/api/prep/library', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: SESSION_COOKIE },
-      body: JSON.stringify({ library: { name: name || 'library', tracks } }),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) return { ok: false, error: (d && d.error) || ('Save failed (' + r.status + ')') };
-    return { ok: true, count: d.count };
-  } catch (e) { return { ok: false, error: 'Network error while saving' }; }
+    if (sleepBlocker !== null && powerSaveBlocker.isStarted(sleepBlocker)) return;
+    sleepBlocker = powerSaveBlocker.start('prevent-display-sleep');
+  } catch (e) { /* not fatal — the window still works */ }
+}
+function stopSleepBlocker() {
+  try {
+    if (sleepBlocker !== null && powerSaveBlocker.isStarted(sleepBlocker)) {
+      powerSaveBlocker.stop(sleepBlocker);
+    }
+  } catch (e) {}
+  sleepBlocker = null;
+}
+app.on('before-quit', stopSleepBlocker);
+
+/* Everything the diagnostics panel needs. Serato's file format isn't officially
+   documented and the field ids have moved between versions, so being able to see
+   exactly what was read matters more here than in most places. */
+ipcMain.handle('serato-status', async () => ({
+  ok: true,
+  watching: watcher ? watcher.status() : { running: false, searched: candidateDirs() },
+  gig: GIG,
+  banList: { count: BAN_LIST.length, source: banSource,
+             titles: BAN_LIST.slice(0, 20).map(s => s.title) },
+  dwellSeconds: Math.round(DWELL_MS / 1000),
+  lastEvent,
+  pending: pending ? pending.track.title : null,
+}));
+
+ipcMain.handle('set-serato-folder', async (evt, folder) => {
+  saveSettings({ seratoFolder: folder || null });
+  if (watcher) watcher.setFolder(folder || null);
+  else startWatcher();
+  return { ok: true, status: watcher ? watcher.status() : null };
+});
+
+ipcMain.handle('refresh-ban-list', async () => {
+  if (!GIG || GIG.kind !== 'w') return { ok: false, error: 'Open a wedding first.' };
+  await loadBanList(GIG.id);
+  return { ok: true, count: BAN_LIST.length, source: banSource };
+});
+
+/* Fires the whole chain with a made-up track, so the alarm can be proved working
+   without waiting for a real gig — or without Serato installed at all. */
+ipcMain.handle('test-track', async (evt, { title, artist }) => {
+  if (!GIG) return { ok: false, error: 'Open a gig first.' };
+  onSeratoTrack({ title: title || '', artist: artist || '', isrc: '' });
+  return { ok: true, banned: !!localBanHit({ title, artist }) };
+});
+
+// Toggle always-on-top from the main window (in case the DJ wants it off).
+ipcMain.handle('set-on-top', async (evt, on) => {
+  if (gigWin && !gigWin.isDestroyed()) {
+    gigWin.setAlwaysOnTop(!!on, 'screen-saver');
+    return { ok: true, on: !!on };
+  }
+  return { ok: false };
 });

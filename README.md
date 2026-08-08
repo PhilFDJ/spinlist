@@ -1,111 +1,63 @@
-# Spinlist
+# Spinlist Gig Window
 
-Event song-voting app. Hosts create an event, share a link or QR code, guests
-search **live Spotify** and vote, and at the deadline the DJ gets a ranked **PDF**
-plus a **Spotify playlist** export.
+A small desktop app that opens your Spinlist gig window (the night's key info,
+timeline and music) in a window that floats **always on top** of your DJ
+software — no third-party pinning tools like WindowPin or Floaty needed.
 
-**Hosts pay. Guests are always free and never sign in.**
-There is no free host tier — new accounts must subscribe (Pro/Studio) or redeem a
-complimentary code before they can create events.
+## What it does
+1. You sign in with your Spinlist email and password.
+2. You pick tonight's gig (a wedding or an event) from your list.
+3. It opens the gig window and keeps it floating above everything else.
+   Tap another gig any time to switch.
 
-## Project layout
+The app shows the same gig window you already use on spinlist.co.uk — it just
+gives it a native always-on-top frame. All your gig data stays on your Spinlist
+account; the app only reads it to display.
+
+## The do-not-play alarm
+
+When a wedding has a block marked **Never play**, the gig window flashes red the
+moment Music Manager reports that track coming off the deck — with the couple's
+own note if they left one. A weak match asks "was that this one?" instead of
+guessing, and a clean match ticks itself off.
+
+The window polls for this every few seconds. Two settings exist purely to keep
+that reliable, and both matter more than they look:
+
+- `backgroundThrottling: false` on the gig window. Chromium treats an occluded
+  window (macOS) or a minimised one (Windows) as hidden and throttles its timers
+  to roughly once a minute. Without this, putting your DJ software full-screen
+  over the top would silence the alarm with nothing on screen to say so.
+- A `powerSaveBlocker` held only while a gig window is open. A laptop that sleeps
+  at 11pm takes the alarm with it.
+
+## Note on full-screen DJ software
+If your DJ software runs in true full-screen mode, no window (native or not) can
+float above it — that's an operating-system rule. Keep your DJ app in a normal
+(windowed) mode and the gig window will stay visible.
+
+## Building the installers
+
+Installers are built automatically by GitHub Actions (see
+`.github/workflows/build.yml`) whenever you publish a version tag like `v1.0.0`.
+That produces Mac (.dmg/.zip) and Windows (.exe) installers and attaches them to
+a GitHub release.
+
+To build locally instead:
 
 ```
-spinlist-backend/
-├─ server.js              Express: auth, billing, codes, branding, gating, Spotify search
-├─ lib/
-│  ├─ db.js               SQLite store (users, sessions, codes, redemptions, usage)
-│  ├─ auth.js             scrypt password hashing + session cookies
-│  └─ plans.js            Pro / Studio limits — single source of truth
-├─ public/
-│  ├─ index.html          The app (create / host / guest), dark-blue theme
-│  ├─ pricing.html        Plans + signup/login + Stripe Checkout + redeem box
-│  ├─ account.html        Plan, usage, comp status, branding editor, redeem
-│  └─ admin.html          Create & manage complimentary / discount codes
-├─ .env.example
-└─ package.json
-```
-
-## Setup
-
-```bash
-cd spinlist-backend
-cp .env.example .env      # fill in Spotify + Stripe + admin values
 npm install
-npm start                 # http://localhost:3000
+npm run dist:mac    # on a Mac
+npm run dist:win    # on Windows
 ```
 
-### 1. Spotify (song search)
-Create an app at https://developer.spotify.com/dashboard (choose **Web API**),
-put the Client ID/Secret in `.env`. Since the Feb 2026 API changes, Development
-Mode requires the app owner to hold Spotify **Premium**; for a live product apply
-for **Extended Quota Mode**.
+The app is unsigned, so on first launch:
+- **macOS:** right-click the app → Open → Open.
+- **Windows:** if SmartScreen appears, click More info → Run anyway.
 
-### 2. Stripe (subscriptions + discount codes)
-1. Test keys from https://dashboard.stripe.com/apikeys → `STRIPE_SECRET_KEY`.
-2. Create two recurring **Prices** (Pro, Studio); paste IDs into
-   `STRIPE_PRICE_PRO` / `STRIPE_PRICE_STUDIO`.
-3. Webhook for local dev:
-   ```bash
-   stripe listen --forward-to localhost:3000/api/stripe/webhook
-   ```
-   Put the `whsec_...` into `STRIPE_WEBHOOK_SECRET`. In production add an endpoint
-   at `https://yourdomain/api/stripe/webhook` subscribed to:
-   `checkout.session.completed`, `customer.subscription.created`,
-   `customer.subscription.updated`, `customer.subscription.deleted`,
-   `invoice.payment_failed`.
-
-Billing is optional to boot: with no Stripe key the app still runs; comp codes
-work, paid checkout and discount codes return a "not configured" notice.
-
-### 3. Admin (codes)
-Set `ADMIN_EMAILS` to a comma-separated list of accounts allowed to manage codes.
-Those users see **/admin.html**. Everyone else is blocked from the admin API.
-
-## How access works
-
-- **Sign up / log in** (email + password, scrypt-hashed, httpOnly session cookie)
-  creates an account with **no plan**.
-- **Plans** (`lib/plans.js`): Pro = 20 events/mo, 300 guests; Studio = unlimited.
-  Both include custom branding.
-- **Gating is server-side.** `POST /api/events` checks the plan/usage before
-  issuing an event ID, so limits can't be bypassed in the browser.
-- **Stripe webhook** is the source of truth for paid plans: provisions on
-  subscription events, drops to `none` on cancellation. Signature-verified
-  against the raw body and idempotent (handled event IDs are logged).
-
-## Complimentary & discount codes
-
-Generated and managed by admins at **/admin.html**; redeemed by any signed-in
-user on the pricing or account page.
-
-- **Comp codes** grant a free plan (Pro or Studio), per-code, for N months or
-  forever. Support max-uses, expiry date, and a private note. One redemption per
-  user. Expired comps automatically revert the account to no-access.
-- **Discount codes** create a matching Stripe coupon + promotion code, applied
-  automatically at checkout (Stripe tracks the redemptions).
-
-## Branding (Pro & Studio)
-
-Hosts upload a logo (PNG/JPG/WebP/SVG, ≤2 MB), pick an accent colour, and set a
-tagline. These appear on the guest voting page and the exported PDF. Logos are
-validated server-side and stored under `/uploads`.
-
-## Pricing is a placeholder
-
-Numbers in `lib/plans.js` and labels on the pricing page are examples. Set real
-prices in Stripe and update the labels. Pricing, refunds, and terms are
-business/legal decisions this scaffold doesn't make for you.
-
-## Still to build (next steps)
-
-- **Shared vote storage** so all guests + host see one live tally (votes are
-  currently per-browser). The accounts/DB layer here is the foundation.
-- **Spotify playlist export** via the DJ Authorization Code login (track URIs are
-  already captured on each voted song).
-- Email verification + password reset.
-
-## Don't commit secrets
-
-`.gitignore` excludes `.env`, the SQLite files, `node_modules/`, and `uploads/`.
-Set environment variables in your host's dashboard for production.
+## Development
+```
+npm install
+npm start
+```
+Point at a different server with `SPINLIST_URL=http://localhost:3000 npm start`.

@@ -3,17 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;">
-<title>Spinlist Music Manager</title>
+<title>Spinlist Gig Window</title>
 <style>
   :root{ --neon:#c1ff2f; --ink:#e8ecf5; --muted:#8b93a7; --line:rgba(255,255,255,.1);
-         --bg:#0b1020; --surface:#121a2e; --paper:#0d1424; --plum:#7b6cff; --ok:#39d98a; --err:#ff6b5e; }
+         --bg:#0b1020; --surface:#121a2e; --paper:#0d1424; --ok:#39d98a; --err:#ff6b5e; }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
-  .wrap{max-width:640px;margin:0 auto;padding:26px 22px 40px}
-  h1{font-size:1.5rem;margin:0 0 4px;display:flex;align-items:center;gap:10px}
-  .logo{width:34px;height:34px;border-radius:8px;display:block;object-fit:contain}
-  .lead{color:var(--muted);font-size:.92rem;margin:0 0 20px}
+  .wrap{max-width:640px;margin:0 auto;padding:24px 20px 36px}
+  h1{font-size:1.4rem;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+  .logo{width:32px;height:32px;border-radius:8px;display:block;object-fit:contain}
+  .lead{color:var(--muted);font-size:.9rem;margin:0 0 18px}
   .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}
+  h2{margin:0 0 6px;font-size:1.05rem}
   label.f{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
   input[type=email],input[type=password]{width:100%;background:var(--paper);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px 12px;font:inherit}
   .btn{display:inline-flex;align-items:center;gap:8px;background:var(--neon);color:#0a1228;border:none;border-radius:10px;padding:11px 18px;font:inherit;font-weight:700;cursor:pointer}
@@ -22,66 +23,93 @@
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
   .msg{font-size:.86rem;margin-top:10px;min-height:18px}
   .msg.ok{color:var(--ok)} .msg.err{color:var(--err)} .msg.muted{color:var(--muted)}
-  .bar{height:8px;background:var(--paper);border-radius:8px;overflow:hidden;margin-top:12px}
-  .bar > i{display:block;height:100%;width:0;background:var(--neon);transition:width .2s}
-  .stat{font-size:.85rem;color:var(--muted);margin-top:8px}
   .hide{display:none}
   .who{font-size:.85rem;color:var(--muted)}
   a{color:var(--neon)}
+  .giglist{margin-top:6px}
+  .gig{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin:8px 0}
+  .gig .n{font-weight:700}
+  .gig .s{font-size:.8rem;color:var(--muted)}
+  .tag{font-size:.68rem;font-weight:800;padding:2px 8px;border-radius:20px;background:rgba(193,255,47,.15);color:var(--neon)}
+  .tag.ev{background:rgba(123,140,255,.18);color:#9fb0ff}
+  .search{width:100%;background:var(--paper);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 12px;font:inherit;margin-bottom:6px}
+  .stat{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--line);font-size:.83rem}
+  .stat .k{color:var(--muted);flex-shrink:0}
+  .stat .v{text-align:right;word-break:break-all}
+  .stat .v.bad{color:var(--err)} .stat .v.good{color:var(--ok)}
+  .log{background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:.78rem;max-height:190px;overflow:auto;line-height:1.5}
+  .log .l{border-bottom:1px solid var(--line);padding:3px 0}
+  .log .l:last-child{border-bottom:0}
+  .log .t{color:var(--muted)}
+  .log .ban{color:var(--err);font-weight:700}
+  .log .ok{color:var(--ok)}
+  code{background:var(--paper);padding:1px 5px;border-radius:4px;font-size:.85em}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1><img class="logo" src="assets/icon.png" alt="Spinlist"> Spinlist Music Manager <span id="app-version" style="font-size:.7rem;font-weight:400;color:var(--muted);vertical-align:middle"></span></h1>
-  <p class="lead">Scan your music library on this computer and sync it to your Spinlist account. Then it's ready to match songs and export playlists in the Spinlist wedding planner — no re-scanning needed. Your music files never leave your computer — we only send the track list and file locations (titles, artists, file paths), never the songs themselves.</p>
+  <h1><img class="logo" src="assets/icon.png" alt="Spinlist"> Gig Window</h1>
+  <p class="lead">Sign in, pick tonight's gig, and open a window that floats above your DJ software — no third-party pinning tools needed.</p>
 
   <!-- LOGIN -->
   <div class="panel" id="login-panel">
-    <h2 style="margin:0 0 6px;font-size:1.1rem">Sign in</h2>
-    <p class="lead" style="margin:0 0 6px">Use your Spinlist email and password.</p>
+    <h2>Sign in</h2>
     <label class="f" for="email">Email</label>
     <input type="email" id="email" autocomplete="username" placeholder="you@example.com">
     <label class="f" for="password">Password</label>
-    <input type="password" id="password" autocomplete="current-password" placeholder="••••••••">
+    <input type="password" id="password" autocomplete="current-password" placeholder="Your Spinlist password">
     <label style="display:flex;align-items:center;gap:8px;margin:10px 0 4px;cursor:pointer;font-size:.9rem">
       <input type="checkbox" id="remember-me" checked style="width:16px;height:16px;cursor:pointer">
       <span>Keep me signed in on this computer</span>
     </label>
-    <div class="row"><button class="btn" id="login-btn">Sign in</button></div>
+    <div class="row">
+      <button class="btn" id="login-btn">Sign in</button>
+      <span class="who" id="login-who"></span>
+    </div>
     <div class="msg" id="login-msg"></div>
   </div>
 
-  <!-- MAIN -->
-  <div id="main-panel" class="hide">
-    <div class="panel">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="who" id="who"></span>
-        <button class="btn ghost" id="logout-btn" style="padding:7px 12px;font-size:.82rem">Sign out</button>
-      </div>
+  <!-- GIG PICKER -->
+  <div class="panel hide" id="picker-panel">
+    <h2>Choose a gig</h2>
+    <p class="lead" style="margin:2px 0 10px">Tap a gig to open its always-on-top window. You can switch gigs any time.</p>
+    <input class="search" id="gig-search" placeholder="Search your gigs…">
+    <div class="giglist" id="gig-list"><p class="msg muted">Loading your gigs…</p></div>
+    <div class="row">
+      <button class="btn ghost" id="refresh-btn">↻ Refresh</button>
+      <button class="btn ghost" id="signout-btn">Sign out</button>
+    </div>
+    <div class="msg muted" id="picker-msg" style="margin-top:12px">Tip: if your DJ software runs truly full-screen, put it in a normal (windowed) mode so the gig window can stay on top.</div>
+  </div>
+
+  <!-- SERATO -->
+  <div class="panel hide" id="serato-panel">
+    <h2>Serato</h2>
+    <p class="lead" style="margin:2px 0 12px">Watches Serato's history file and warns you the moment a do-not-play track hits a deck. Nothing is sent to Serato and nothing is changed on your computer — the file is only read.</p>
+
+    <div class="stat"><span class="k">History folder</span><span class="v" id="s-dir">—</span></div>
+    <div class="stat"><span class="k">Session file</span><span class="v" id="s-file">—</span></div>
+    <div class="stat"><span class="k">Do-not-play list</span><span class="v" id="s-ban">—</span></div>
+    <div class="stat"><span class="k">Tracks seen</span><span class="v" id="s-seen">—</span></div>
+    <div class="stat"><span class="k">Last error</span><span class="v" id="s-err">none</span></div>
+
+    <div id="s-nofolder" class="hide" style="margin-top:12px">
+      <p class="msg err" style="margin-bottom:6px">Couldn't find Serato's history folder automatically.</p>
+      <label class="f" for="s-folder">Paste the folder path (the <code>_Serato_</code> folder, or its History/Sessions folder)</label>
+      <input type="text" id="s-folder" class="search" placeholder="/Users/you/Music/_Serato_" style="margin-bottom:0">
+      <div class="row"><button class="btn ghost" id="s-folder-btn">Use this folder</button></div>
     </div>
 
-    <div class="panel">
-      <h2 style="margin:0 0 6px;font-size:1.1rem">Your music folder</h2>
-      <p class="lead" style="margin:0 0 6px">Choose the folder your music lives in. Sub-folders are included.</p>
-      <div class="row">
-        <button class="btn" id="pick-btn">Choose folder…</button>
-        <button class="btn ghost hide" id="rescan-btn">Rescan</button>
-        <span class="stat" id="folder-path"></span>
-      </div>
-      <div class="bar hide" id="bar"><i></i></div>
-      <div class="stat" id="scan-stat"></div>
-      <div class="row" style="margin-top:6px">
-        <button class="btn ghost hide" id="timing-btn" style="padding:6px 12px;font-size:.82rem">Show timing so far</button>
-        <button class="btn ghost" id="speedtest-btn" style="padding:6px 12px;font-size:.82rem">Speed test one file</button>
-      </div>
-      <textarea id="timing-box" readonly style="display:none;width:100%;margin-top:8px;height:76px;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:.8rem;resize:vertical"></textarea>
-      <div class="msg" id="save-msg"></div>
+    <h2 style="margin-top:18px;font-size:.95rem">Prove it works</h2>
+    <p class="lead" style="margin:2px 0 8px">Type a track from the wedding's do-not-play list and press Test. The gig window should flash red straight away — no Serato needed.</p>
+    <input type="text" id="s-test" class="search" placeholder="e.g. Macarena" style="margin-bottom:0">
+    <div class="row">
+      <button class="btn ghost" id="s-test-btn">Test</button>
+      <button class="btn ghost" id="s-refresh-btn">Re-download list</button>
     </div>
 
-    <div class="panel" id="summary-panel">
-      <h2 style="margin:0 0 6px;font-size:1.1rem">Saved library</h2>
-      <div class="stat" id="summary">Loading…</div>
-    </div>
+    <h2 style="margin-top:18px;font-size:.95rem">Activity</h2>
+    <div id="s-log" class="log">Nothing yet.</div>
   </div>
 </div>
 

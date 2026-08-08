@@ -1,0 +1,69 @@
+Spinlist Gig Window 1.4.0 — reads Serato
+========================================
+
+NEW FILE:      serato.js       <- must be uploaded, and is in package.json's
+                                  build file list. Miss it and the app builds
+                                  but silently does nothing.
+CHANGED:       main.js, preload.js, renderer.js, renderer.html, package.json
+UNCHANGED:     notarize.js, README.md, assets, build/, .github/
+
+Version 1.2.0 -> 1.4.0. Commit, then tag v1.4.0.
+CHECK package.json AND serato.js BOTH UPLOADED before tagging.
+
+WHAT IT DOES NOW
+----------------
+Sign in, pick tonight's wedding, and the app starts watching Serato's history
+file. When a track hits a deck:
+
+  ON THE DO-NOT-PLAY LIST -> the gig window flashes red IMMEDIATELY, with the
+      couple's own words if they left a note. Checked against a list held on
+      this computer, so it works with no network at all.
+
+  ANYTHING ELSE -> waits 45 seconds, then reports it so the song ticks itself
+      off the run sheet.
+
+WHY THE 45-SECOND WAIT
+----------------------
+Serato's history file records when a track is LOADED or EJECTED, not how long it
+played. A track you loaded, auditioned for four seconds and pulled back looks
+identical to one you played in full. Without the wait, every quick audition
+would tick a song off and the run sheet would stop being worth reading.
+
+The ban alarm does NOT wait. It fires the moment the track loads, because by the
+time it's audible it's too late.
+
+READ THIS BEFORE THE FIRST GIG
+------------------------------
+I could not test the binary parsing against a real Serato install — I don't have
+one. The format isn't officially documented and the field ids have moved between
+Serato versions. So the app has a SERATO panel showing exactly what it found:
+
+  History folder    where it's looking, or "not found"
+  Session file      which file it's following
+  Do-not-play list  how many tracks, and whether downloaded or read from disk
+  Tracks seen       a counter, so you can tell it's alive
+  Activity          a running log of every track read and what happened
+
+PROVE IT WORKS WITHOUT WAITING FOR A GIG
+----------------------------------------
+The panel has a Test box. Open a wedding, type a track from its do-not-play
+list, press Test. The gig window should flash red straight away. That exercises
+the whole chain except Serato itself.
+
+Then to test the Serato half: open Serato, load any track, and watch the
+Activity log. If tracks appear, parsing works. If the folder says "not found",
+paste the path to your _Serato_ folder into the box provided.
+
+IF SOMETHING'S WRONG, SEND ME
+-----------------------------
+A screenshot of the Serato panel, or the Activity log text. In particular:
+  - "not found" for the history folder -> I need your actual path
+  - tracks appear but with no title or artist -> the field ids differ in your
+    Serato version, and the log will show what was read instead
+  - "(title taken from the filename — untagged)" is normal for bootlegs
+
+WHAT IT NEVER DOES
+------------------
+Writes to anything of Serato's, or sends anything to Serato. The history file is
+opened read-only. No new dependencies were added — the parser is written against
+the documented chunk format rather than pulling in a library.
