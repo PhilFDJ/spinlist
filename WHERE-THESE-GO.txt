@@ -1,53 +1,40 @@
-Spinlist — live requests run to the end of the event
-===================================================
+Spinlist — do-not-play flag + now-playing API
+=============================================
 
+  lib/db.js            -> replaces lib/db.js
   server.js            -> replaces server.js  (repo root)
   public/wedding.html  -> replaces public/wedding.html
-  lib/db.js            -> unchanged since last upload
   other public/*.html  -> unchanged
 
-Upload server.js and wedding.html.
+Upload db.js, server.js and wedding.html.
+See API-FOR-MUSIC-MANAGER.txt for the endpoints.
 
-WHAT WAS ACTUALLY WRONG
------------------------
-The requests EVENT already expired at the end of the wedding day, which was
-right. What was wrong was the button that opens requests: it was gated on
-canEdit, which is the COUPLE'S EDIT LOCK.
+1. "NEVER PLAY" IS NOW A FLAG
+-----------------------------
+Every block editor — template builder, setup wizard, structure editor —
+has a "Never play" button beside "Requests". Marked blocks show it in
+coral with ⛔.
 
-So once the couple's lock date passed, "Make live requests" disappeared —
-even though the requests themselves were meant to run on the night. Set a
-lock two weeks out and the control for the gig was gone before the gig.
+Same reason as the request block: "Do Not Play" was only a block someone
+happened to name that. Rename it, or hand the gig to a sub-DJ who names
+things differently, and the ban was invisible to any automation.
 
-Now gated on its own rule: guest requests can be opened by the DJ side or
-the couple right up to the end of the wedding day, and not after. The
-couple's edit lock has nothing to do with it — that exists so you can
-prepare a fixed set list a fortnight out, which is a different job.
+The default set still marks "Do Not Play", so nothing changes for the
+weddings you already run this way.
 
-A SECOND BUG, SAME LINE
------------------------
-canEdit is false for an ASSIGNED SUB-DJ entirely — they aren't the host and
-aren't the couple. So a sub-DJ running the wedding could never open guest
-requests, on the page or through the API.
+A block can't be both. Marking one clears the other — a block that
+collects guest requests to play can't also be the list of songs never to
+play. You CAN have several never-play blocks.
 
-Both now allow the host, the assigned sub-DJ, and the couple.
+2. THE MATCHER
+--------------
+Tested against real tag messiness: brackets, featured artists, missing
+artists, ampersands, punctuation, case, leading "The", and ISRC that
+disagrees with the text. Twelve cases, all passing, plus the whole-plan
+scan where a song on both the party list AND the ban list correctly comes
+back as banned.
 
-TURNING REQUESTS OFF
---------------------
-Always allowed, including after the event — tidying up shouldn't be blocked
-because the day has passed. Only turning them ON closes at end of day.
-The page and the server agree on this; previously the page hid the toggle
-after the event while the server would still have accepted it.
-
-ENFORCED IN BOTH PLACES
------------------------
-The page hides the control and the API refuses with 423. A hidden button is
-not a lock.
-
-CHECKED ACROSS THE TIMELINE
----------------------------
-  upcoming wedding, couple's lock already passed
-    DJ / sub-DJ / couple  -> can open requests
-  on the wedding day
-    DJ / sub-DJ / couple  -> can open requests
-  after the wedding
-    nobody can open       -> but an already-live block can still be closed
+3. STILL TO DO — THE GIG WINDOW
+-------------------------------
+The alert itself needs public/gig.html, which I don't have. Send it and
+I'll add the red flash, the confirm-a-weak-match tap, and the polling.

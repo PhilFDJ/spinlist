@@ -1,0 +1,74 @@
+Now-playing API — for Music Manager
+===================================
+
+Two endpoints. Both need the DJ's normal session (host or the assigned
+sub-DJ for that wedding).
+
+1. CACHE THE BAN LIST, ONCE, WHEN THE GIG LOADS
+-----------------------------------------------
+  GET /api/weddings/:id/noplay
+
+  { "wedding": { "id": "...", "name": "Smith Wedding", "date": 1766... },
+    "songs": [
+      { "title": "Macarena", "artist": "Los del Rio",
+        "isrc": "USSM19601234", "block": "Do Not Play",
+        "note_couple": "Absolutely not, under any circumstances" }
+    ],
+    "matching": { "strip_brackets": true, "strip_featured": true,
+                  "ignore_case": true } }
+
+  Fetch this ONCE and hold it on the laptop. The alarm must fire when the
+  venue wifi doesn't — that's the whole point of it. Do the comparison
+  locally; normalise the same way the server does (below).
+
+2. REPORT WHAT CAME OFF THE DECK
+--------------------------------
+  POST /api/weddings/:id/now-playing
+  { "title": "Mr Brightside (Radio Edit)",
+    "artist": "The Killers",
+    "isrc": "GBAHT0400312",     // optional but by far the best signal
+    "mark": true }               // false = just tell me, change nothing
+
+  { "verdict": "planned",        // noplay | planned | maybe | unknown
+    "confidence": "isrc",        // isrc | strict | loose | null
+    "marked": true,
+    "block": { "id": "b2", "name": "Party starters" },
+    "song": { "id": "s7", "title": "Mr. Brightside",
+              "artist": "The Killers",
+              "note_couple": "Tom's favourite", "note_dj": "" },
+    "played": { ... what you sent ... } }
+
+WHAT THE VERDICTS MEAN
+----------------------
+  noplay   A banned track is playing. Alarm. Never auto-ticked.
+  planned  Strong match in the plan. Ticked as played (unless mark:false).
+  maybe    Weak match. NOT ticked — ask the DJ to confirm with one tap.
+  unknown  Not in the plan at all. Normal; most of a night is filler.
+
+TWO THRESHOLDS, ON PURPOSE
+--------------------------
+Bans are checked FIRST and on the LOOSE threshold. Auto-ticking needs the
+STRICT one. A false alarm costs a glance; a missed ban costs you the banned
+song at the wedding. A wrong tick is worse than no tick, because it makes
+the whole run-sheet untrustworthy.
+
+Matching order: ISRC (wins outright) -> title AND artist match after
+normalising -> title only, which returns "loose".
+
+Normalising strips: bracketed suffixes "(Radio Edit)" "[Extended Mix]",
+featured artists after feat/ft/featuring/with, edit/mix/version wording,
+punctuation, a leading "The", and case. "&" becomes "and".
+
+READING SERATO
+--------------
+There is no official Serato API and there never has been. Serato appends to
+a binary history session file every time a track is loaded or ejected.
+Well-trodden ground: serato-connect (Node/TypeScript, has a `track` event —
+drops straight into Electron), sslscrobbler (PHP, best documentation of the
+binary format), SSL-API (Java).
+
+IMPORTANT: the file records loads and ejects, NOT play time. A track you
+loaded, auditioned and pulled back looks identical to one you played all
+the way through. So treat "played" as inferred — good enough to tick a box,
+not good enough to be authoritative. Consider a dwell time before
+reporting, e.g. only report a track still on the deck after 45 seconds.

@@ -970,7 +970,7 @@ const DEFAULT_WEDDING_BLOCKS = [
   { name: "Couple's Top 15", capacity: 15 },
   { name: 'Play If Possible', capacity: 30 },
   { name: 'Last Dance', capacity: 1 },
-  { name: 'Do Not Play', capacity: 5 },
+  { name: 'Do Not Play', capacity: 5, noplay: true },
 ];
 
 // Which plans can create wedding plans. (Available to PRO for now.)
@@ -1027,6 +1027,83 @@ function weddingDayEnd(w) {
 function weddingEnded(w) {
   const end = weddingDayEnd(w);
   return !!(end && Date.now() > end);
+}
+
+/* ================================================================
+   NOW PLAYING — matching what came off the deck against the plan
+
+   Serato has no official API. Music Manager reads the binary history session
+   file and posts the track here. Two deliberately different thresholds:
+
+     STRICT  — used to auto-tick "played". A wrong tick is worse than no tick,
+               because it makes the whole run-sheet untrustworthy.
+     LOOSE   — used for the do-not-play alarm. A false alarm costs a glance; a
+               missed one costs you the banned song at the wedding.
+   ================================================================ */
+
+/* Strips everything DJs and tag editors disagree about: bracketed suffixes
+   ("(Radio Edit)", "[Extended Mix]"), featured artists, punctuation, leading
+   articles. What's left is the bit that identifies the record. */
+function normaliseTrack(s) {
+  return (s || '')
+    .toString()
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\b(feat|ft|featuring|with)\b.*$/g, ' ')
+    .replace(/\b(radio|extended|club|original|dirty|clean|explicit|instrumental)\s+(edit|mix|version)\b/g, ' ')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/^\s*the\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/* Compares one planned song against what was played.
+   Returns 'isrc' | 'strict' | 'loose' | null, strongest first. */
+function trackMatch(planned, played) {
+  const pIsrc = (planned.isrc || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  const xIsrc = (played.isrc || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  if (pIsrc && xIsrc && pIsrc === xIsrc) return 'isrc';
+
+  const pt = normaliseTrack(planned.title), xt = normaliseTrack(played.title);
+  if (!pt || !xt) return null;
+  const pa = normaliseTrack(planned.artist), xa = normaliseTrack(played.artist);
+
+  if (pt === xt && pa && xa && pa === xa) return 'strict';
+
+  // Loose: same title, and the artists overlap on at least one real word.
+  if (pt === xt) {
+    if (!pa || !xa) return 'loose';
+    const words = new Set(pa.split(' ').filter(w => w.length > 2));
+    if (xa.split(' ').some(w => w.length > 2 && words.has(w))) return 'loose';
+    return 'loose';   // same title, different artist — still worth flagging
+  }
+  return null;
+}
+
+/* Scans a wedding's plan for the played track. Do-not-play blocks are searched
+   FIRST and on the loose threshold, so a ban is never missed because the tags
+   didn't quite line up. */
+function findPlayedSong(w, played) {
+  const blocks = w.blocks || [];
+  for (const b of blocks) {
+    if (!b.noplay) continue;
+    for (const s of (b.songs || [])) {
+      const m = trackMatch(s, played);
+      if (m) return { verdict: 'noplay', confidence: m, block: b, song: s };
+    }
+  }
+  let weak = null;
+  for (const b of blocks) {
+    if (b.noplay) continue;
+    for (const s of (b.songs || [])) {
+      const m = trackMatch(s, played);
+      if (m === 'isrc' || m === 'strict') return { verdict: 'planned', confidence: m, block: b, song: s };
+      if (m && !weak) weak = { verdict: 'maybe', confidence: m, block: b, song: s };
+    }
+  }
+  return weak || { verdict: 'unknown', confidence: null, block: null, song: null };
 }
 
 function coupleEditLocked(w, userId) {
@@ -1229,7 +1306,7 @@ function publicWedding(w, viewerId) {
     inviteCode: (isDjSide ? w.invite_code : undefined),   // the DJ (or sub-DJ) sees the code
     coupleJoined: !!w.couple_id,
     coupleMembers: isDjSide ? db.weddingCoupleMembers(w) : undefined,   // DJ/sub-DJ sees who's joined
-    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, live: !!b.live, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0, noteCouple: s.note_couple || '', noteDj: s.note_dj || '' })) })),
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, live: !!b.live, noplay: !!b.noplay, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0, noteCouple: s.note_couple || '', noteDj: s.note_dj || '' })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label, note: t.note || '' })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
     answers: w.answers || {},
@@ -1430,6 +1507,72 @@ app.post('/api/weddings/:id/song-note', auth.requireAuth, (req, res) => {
   res.json({ wedding: publicWedding(updated, req.user.id) });
 });
 
+/* The do-not-play list on its own, for Music Manager to CACHE LOCALLY.
+   The whole point is that the alarm works when the venue wifi doesn't, so this
+   is fetched once when the gig is loaded and checked on the laptop thereafter. */
+app.get('/api/weddings/:id/noplay', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding.' });
+  }
+  const songs = [];
+  (w.blocks || []).forEach(b => {
+    if (!b.noplay) return;
+    (b.songs || []).forEach(s => songs.push({
+      title: s.title || '', artist: s.artist || '', isrc: s.isrc || '',
+      block: b.name || '', note_couple: s.note_couple || '',
+    }));
+  });
+  res.json({
+    wedding: { id: w.id, name: w.name || '', date: w.wedding_date || null },
+    songs,
+    // So the laptop can normalise identically to the server.
+    matching: { strip_brackets: true, strip_featured: true, ignore_case: true },
+  });
+});
+
+/* What just came off the deck. Music Manager posts here; the reply says what to
+   do about it. Nothing is written unless the caller asks for it, so the gig
+   window can check a track without committing to anything. */
+app.post('/api/weddings/:id/now-playing', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding.' });
+  }
+  const b = req.body || {};
+  const played = {
+    title: (b.title || '').toString().slice(0, 300),
+    artist: (b.artist || '').toString().slice(0, 300),
+    isrc: (b.isrc || '').toString().slice(0, 40),
+  };
+  if (!played.title) return res.status(400).json({ error: 'A title is needed.' });
+
+  const hit = findPlayedSong(w, played);
+
+  /* Auto-ticking only on a strong match, and never for a banned track — ticking
+     "played" on the do-not-play list would be nonsense. Weak matches come back
+     as 'maybe' for the DJ to confirm with one tap. */
+  let marked = false;
+  if (b.mark !== false && hit.verdict === 'planned') {
+    db.setWeddingSongPlayed(w.id, hit.block.id, hit.song.id, true);
+    marked = true;
+  }
+
+  res.json({
+    verdict: hit.verdict,            // noplay | planned | maybe | unknown
+    confidence: hit.confidence,      // isrc | strict | loose | null
+    marked,
+    block: hit.block ? { id: hit.block.id, name: hit.block.name } : null,
+    song: hit.song
+      ? { id: hit.song.id, title: hit.song.title, artist: hit.song.artist,
+          note_couple: hit.song.note_couple || '', note_dj: hit.song.note_dj || '' }
+      : null,
+    played,
+  });
+});
+
 // Mark a song played/unplayed (DJ or assigned sub-DJ — used on the day)
 app.post('/api/weddings/:id/played', auth.requireAuth, (req, res) => {
   const w = db.getWedding(req.params.id);
@@ -1612,12 +1755,14 @@ app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
         // Carried from the template, or set by hand. Falls back to whatever the
         // block already had so a structure edit that omits it doesn't clear it.
         live: blk.live === undefined ? !!(existing && existing.live) : !!blk.live,
+        noplay: blk.noplay === undefined ? !!(existing && existing.noplay) : !!blk.noplay,
         songs: existing ? (existing.songs || []).slice(0, Math.max(1, parseInt(blk.capacity, 10) || 1)) : [],
       };
     });
     // One request block per wedding, for the same reason as per template.
     let seenLive = false;
     for (let i = fields.blocks.length - 1; i >= 0; i--) {
+      if (fields.blocks[i].noplay) fields.blocks[i].live = false;   // can't be both
       if (!fields.blocks[i].live) continue;
       if (seenLive) fields.blocks[i].live = false;
       seenLive = true;
