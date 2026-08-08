@@ -1,97 +1,56 @@
-Spinlist website — everything from this session, final state
-===========================================================
+Spinlist website — complete, and the fix for "the test doesn't flash"
+====================================================================
 
-This replaces every website zip I sent earlier. Where a file appeared in
-several zips, this is the newest version of it. Upload the lot and you're
-current — no need to work out which zip had what.
+Replaces the previous website zip. Eight files, same as before:
 
   lib/db.js              -> replaces lib/db.js
   server.js              -> replaces server.js          (repo root)
   public/wedding.html    -> replaces public/wedding.html
   public/bookings.html   -> replaces public/bookings.html
   public/gig.html        -> replaces public/gig.html
-  public/enquire.html    -> NEW FILE (never existed)
-  public/quote.html      -> NEW FILE (never existed)
-  public/contract.html   -> NEW FILE (never existed)
+  public/enquire.html    -> NEW FILE
+  public/quote.html      -> NEW FILE
+  public/contract.html   -> NEW FILE
 
-EIGHT FILES. The three NEW ones are the ones to watch — GitHub's web
-uploader has silently skipped files before, and a new file is easier to
-miss than a replacement. After uploading, open all eight in the repo and
-check the "last commit" timestamp matches this upload.
+The Gig Window app 1.4.0 needs no change — the fault was here.
 
-WEBSITE FIRST, THEN THE APP
----------------------------
-Gig Window 1.4.0 calls two endpoints that only exist once server.js and
-lib/db.js are live. Deploy this first, or the app's Serato panel will show
-"none" for the do-not-play list and the Test button will do nothing —
-which looks like a broken app when it isn't.
+WHY THE TEST DIDN'T FLASH
+-------------------------
+Two faults, both mine, both on the website side.
 
+1. NO NAME FALLBACK FOR DO-NOT-PLAY BLOCKS
 
-WHAT'S IN HERE
-==============
+   For live requests I kept a fallback so a block still named "Play If
+   Possible" carries on working. For do-not-play I forgot to.
 
-BUGS FIXED
-----------
-Contract and questionnaire templates invisible. lib/db.js defined
-listTemplates and deleteTemplate TWICE in one object literal, so the
-wedding planner's versions silently overwrote the CRM's. Every CRM template
-was being written to one place and read from another.
+   Every wedding in your diary was created before the flag existed, so its
+   "Do Not Play" block has no flag on it. The ban list came back EMPTY for
+   every existing gig. Only a brand-new wedding built from the default
+   template would have worked — which is exactly the one case I tested.
 
-Clients never recorded. createClient was called from exactly one place —
-the "new client" button. Enquiries produced bookings with contact details
-attached but nobody in the Clients list.
+   A block is now treated as do-not-play if it's flagged OR simply named
+   that way. Tested against 20 naming variants: "Do Not Play", "do not
+   play", "Do-Not-Play", "do_not_play", "Don't Play", "Dont-play", "Never
+   Play", "Banned", "Banned songs" — while correctly NOT matching "Play If
+   Possible", "Playlist" or "Party starters".
 
-Custom field answers invisible. The booking screen never displayed them at
-all, so anything a client answered vanished on arrival.
+   Nothing needs re-saving. Your existing weddings work as they are.
 
-isrc wiped on every song edit. setWeddingBlockSongs rebuilt each song from
-a fixed field list that omitted isrc, so it only survived until the next
-change. Matters for Serato matching and the now-playing feature.
+2. THE FALLBACK PATTERN WAS BROKEN ANYWAY
 
-Live requests died at the couple's lock date. The button that opens guest
-requests was gated on the couple's EDIT lock, so setting a lock two weeks
-out removed the control before the gig. Also: an assigned sub-DJ could
-never open requests at all, on the page or through the API.
+   Found while testing the above: the regex had been written into the file
+   with doubled backslashes, so it matched a literal backslash rather than
+   a word boundary and could never match anything at all. Fixed, and I
+   swept every other regex in all eight files for the same fault — the only
+   other hit is pre-existing iCalendar escaping, which is correct as it is.
 
-Checkboxes 261px wide. One blanket CSS rule sized every input to 100%
-width with 11px padding, checkboxes included, pushing labels off the row.
-Affected "Use this one by default", which predates all of this.
+AFTER UPLOADING
+---------------
+1. Restart the server if your host doesn't do it on push. server.js changes
+   do nothing until the Node process restarts.
+2. In the app, open the wedding again — that re-downloads the ban list.
+   The Serato panel should now show a number instead of "none".
+3. Type a banned track into the Test box. The gig window should flash red.
 
-Quote modals see-through and unscrollable. My mistake — I used a CSS class
-that doesn't exist in your stylesheet.
-
-NEW
----
-Enquiry forms, fully customisable. A form is one ordered list you control:
-rename, reorder, hide or require any question including the standard ones,
-set your own event-type options, add your own questions (short answer, long
-answer, choose one, yes/no, date, TIME, ADDRESS with map lookup), and
-section headings. Each questionnaire is its own embeddable form with its
-own token and iframe snippet, so a multi-brand DJ can put a different form
-on each website with everything landing in one pipeline.
-
-Custom fields are internal by default and only public when you say so —
-enforced on the form AND on submission, so nothing internal can be set by
-a crafted request. Check fee_to_dj before putting a form on a live site.
-
-Quote builder. Packages or blank lines, quantities, prices, descriptions,
-pictures, deposit as a percentage or fixed amount, balance due N days
-before with the real date shown. Sent quotes lock, matching the server.
-
-Quotes carry a contract. Pick the agreement on the quote; it's raised
-automatically when they accept, with that quote's figures merged in, and
-they're sent straight to sign. Decline it and no agreement exists.
-
-The client-facing pages that never existed: quote.html and contract.html.
-View, accept, decline, sign, pay the deposit. Both print properly.
-
-Song notes. Couple and DJ each get their own per song, shown on screen and
-on the PDF run sheet, attributed. They lock on the song deadline.
-
-Request blocks and do-not-play blocks are now FLAGS, not block names. The
-old checks matched the literal names "Play If Possible" and "Do Not Play",
-so renaming a block silently broke live requests or made a ban invisible.
-Request blocks save with music templates.
-
-Now-playing API for the Gig Window app, plus the red do-not-play alarm in
-the gig window itself.
+If the panel still says "none" after reopening the wedding, the block isn't
+being recognised — send me its exact name and I'll add it.

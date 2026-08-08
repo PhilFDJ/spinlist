@@ -1044,6 +1044,17 @@ function weddingEnded(w) {
 /* Strips everything DJs and tag editors disagree about: bracketed suffixes
    ("(Radio Edit)", "[Extended Mix]"), featured artists, punctuation, leading
    articles. What's left is the bit that identifies the record. */
+/* A block is a do-not-play block if it's FLAGGED, or if it's simply named that.
+   The name fallback matters more than it looks: every wedding created before the
+   flag existed has a "Do Not Play" block with no flag on it, so without this the
+   ban list comes back empty for every gig already in the diary — and an empty
+   ban list looks exactly like a working one until the wrong song plays. */
+function blockIsNoPlay(b) {
+  if (!b) return false;
+  if (b.noplay === true) return true;
+  return /\bdo\s*[-_ ]?\s*not\s*[-_ ]?\s*play\b|\bdon'?t\s*[-_ ]?\s*play\b|\bbanned\b|\bnever\s*[-_ ]?\s*play\b/i.test(b.name || '');
+}
+
 function normaliseTrack(s) {
   return (s || '')
     .toString()
@@ -1088,7 +1099,7 @@ function trackMatch(planned, played) {
 function findPlayedSong(w, played) {
   const blocks = w.blocks || [];
   for (const b of blocks) {
-    if (!b.noplay) continue;
+    if (!blockIsNoPlay(b)) continue;
     for (const s of (b.songs || [])) {
       const m = trackMatch(s, played);
       if (m) return { verdict: 'noplay', confidence: m, block: b, song: s };
@@ -1096,7 +1107,7 @@ function findPlayedSong(w, played) {
   }
   let weak = null;
   for (const b of blocks) {
-    if (b.noplay) continue;
+    if (blockIsNoPlay(b)) continue;
     for (const s of (b.songs || [])) {
       const m = trackMatch(s, played);
       if (m === 'isrc' || m === 'strict') return { verdict: 'planned', confidence: m, block: b, song: s };
@@ -1306,7 +1317,7 @@ function publicWedding(w, viewerId) {
     inviteCode: (isDjSide ? w.invite_code : undefined),   // the DJ (or sub-DJ) sees the code
     coupleJoined: !!w.couple_id,
     coupleMembers: isDjSide ? db.weddingCoupleMembers(w) : undefined,   // DJ/sub-DJ sees who's joined
-    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, live: !!b.live, noplay: !!b.noplay, songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0, noteCouple: s.note_couple || '', noteDj: s.note_dj || '' })) })),
+    blocks: (w.blocks || []).map(b => ({ id: b.id, name: b.name, capacity: b.capacity, live: !!b.live, noplay: blockIsNoPlay(b), songs: (b.songs || []).map(s => ({ id: s.id, uri: s.uri, isrc: s.isrc || '', title: s.title, artist: s.artist, art: s.art, played: s.played ? 1 : 0, noteCouple: s.note_couple || '', noteDj: s.note_dj || '' })) })),
     timeline: (w.timeline || []).map(t => ({ id: t.id, time: t.time, label: t.label, note: t.note || '' })),
     questionnaire: questionnaireWithGigFlags(w, viewerId),
     answers: w.answers || {},
@@ -1518,7 +1529,7 @@ app.get('/api/weddings/:id/noplay', auth.requireAuth, (req, res) => {
   }
   const songs = [];
   (w.blocks || []).forEach(b => {
-    if (!b.noplay) return;
+    if (!blockIsNoPlay(b)) return;
     (b.songs || []).forEach(s => songs.push({
       title: s.title || '', artist: s.artist || '', isrc: s.isrc || '',
       block: b.name || '', note_couple: s.note_couple || '',
@@ -1790,7 +1801,7 @@ app.post('/api/weddings/:id/update', auth.requireAuth, (req, res) => {
     // One request block per wedding, for the same reason as per template.
     let seenLive = false;
     for (let i = fields.blocks.length - 1; i >= 0; i--) {
-      if (fields.blocks[i].noplay) fields.blocks[i].live = false;   // can't be both
+      if (blockIsNoPlay(fields.blocks[i])) fields.blocks[i].live = false;   // can't be both
       if (!fields.blocks[i].live) continue;
       if (seenLive) fields.blocks[i].live = false;
       seenLive = true;

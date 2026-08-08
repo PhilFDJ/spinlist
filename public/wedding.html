@@ -719,7 +719,7 @@ function handleTouchStart(e,i,ctx){touchFrom=i;touchCtx=ctx;}
 // Persist a new block order from the Music tab (preserves songs — sends ids).
 async function saveBlockOrder(){
   try{
-    const blocks=CURRENT.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live,noplay:!!b.noplay}));
+    const blocks=CURRENT.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live,noplay:isNoPlayBlock(b)}));
     const d=await api('/api/weddings/'+CURRENT.id+'/update',{method:'POST',body:JSON.stringify({name:CURRENT.name,coupleNames:CURRENT.coupleNames,blocks})});
     CURRENT=d.wedding;
     toast('Order saved');
@@ -731,7 +731,7 @@ let editBlocks=[];
 async function openEditWedding(){
   const w=CURRENT;
   // editable copy of blocks (keep ids so songs are preserved on save)
-  editBlocks=w.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live,noplay:!!b.noplay,songCount:(b.songs||[]).length}));
+  editBlocks=w.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live,noplay:isNoPlayBlock(b),songCount:(b.songs||[]).length}));
   try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
   const curTplName=w.questionnaire?w.questionnaire.name:'';
   const root=document.getElementById('root');
@@ -864,6 +864,15 @@ function renderBlockTemplateEditor(){
 /* Marks which block guest requests land in. Radio-like rather than a plain
    checkbox: only one block can take requests, so ticking one must untick the
    rest — otherwise you'd save two and the server would silently drop one. */
+/* Blocks made before the flag existed are named "Do Not Play" and carry no
+   flag. Treat the name as the flag so they show as marked and get properly
+   flagged the next time the structure is saved. */
+function isNoPlayBlock(b){
+  if(!b) return false;
+  if(b.noplay===true) return true;
+  return /\bdo\s*[-_ ]?\s*not\s*[-_ ]?\s*play\b|\bdon'?t\s*[-_ ]?\s*play\b|\bbanned\b|\bnever\s*[-_ ]?\s*play\b/i.test(b.name||'');
+}
+
 function liveToggleHtml(list,i,fn){
   const on=!!list[i].live;
   return `<button class="mini-btn ${on?'done':''}" title="Guest requests land in this block"
@@ -873,7 +882,7 @@ function liveToggleHtml(list,i,fn){
    name "Do Not Play" — so renaming it, or a sub-DJ not knowing the convention,
    made the ban invisible. Now it's a flag the gig window can act on. */
 function noplayToggleHtml(list,i,fn){
-  const on=!!list[i].noplay;
+  const on=isNoPlayBlock(list[i]);
   return `<button class="mini-btn" style="${on?'color:#ff6b5e;border-color:#ff6b5e':''}"
     title="Never play the songs in this block"
     onclick="setNoplayBlockFlag('${fn}',${i})">${on?'⛔ Never play':'Never play'}</button>`;
@@ -896,7 +905,7 @@ function setLiveBlockFlag(which,i){
 }
 function setNoplayBlockFlag(which,i){
   const list=blockList(which);
-  list[i].noplay=!list[i].noplay;
+  list[i].noplay=!isNoPlayBlock(list[i]);
   if(list[i].noplay) list[i].live=false;
   reRenderBlockList(which);
 }
