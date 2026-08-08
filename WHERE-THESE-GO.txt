@@ -1,40 +1,53 @@
-Spinlist — do-not-play flag + now-playing API
-=============================================
+Spinlist — gig window do-not-play alert
+=======================================
 
   lib/db.js            -> replaces lib/db.js
   server.js            -> replaces server.js  (repo root)
+  public/gig.html      -> replaces public/gig.html
   public/wedding.html  -> replaces public/wedding.html
   other public/*.html  -> unchanged
 
-Upload db.js, server.js and wedding.html.
-See API-FOR-MUSIC-MANAGER.txt for the endpoints.
+Upload db.js, server.js, gig.html and wedding.html.
+API details for Music Manager are in API-FOR-MUSIC-MANAGER.txt.
 
-1. "NEVER PLAY" IS NOW A FLAG
------------------------------
-Every block editor — template builder, setup wizard, structure editor —
-has a "Never play" button beside "Requests". Marked blocks show it in
-coral with ⛔.
+THE ALERT
+---------
+Red, full width, under the header, flashing — in a dark room at 11pm it has
+to be impossible to miss. Shows what was heard, which list it's on, and the
+couple's own note if they left one, which is usually the most persuasive
+thing on screen. Stays until you tap "Got it".
 
-Same reason as the request block: "Do Not Play" was only a block someone
-happened to name that. Rename it, or hand the gig to a sub-DJ who names
-things differently, and the ban was invisible to any automation.
+A weak match shows amber instead: "Was that this one?" with the heard title
+against the planned one, Yes/No. Yes ticks it, No dismisses. A clean match
+shows a brief green "Ticked off" that clears itself after six seconds.
+An unrecognised track shows nothing at all.
 
-The default set still marks "Do Not Play", so nothing changes for the
-weddings you already run this way.
+BANNED BLOCKS IN THE MUSIC TAB
+------------------------------
+Shown with ⛔, red heading, tinted background, and NO play ticks — ticking
+"played" against a forbidden song is meaningless, and a tappable tick
+invites the mistake. Confirmed by test: zero clickable elements in a
+banned block.
 
-A block can't be both. Marking one clears the other — a block that
-collects guest requests to play can't also be the list of songs never to
-play. You CAN have several never-play blocks.
+WHY POLLING AND NOT A SOCKET
+----------------------------
+Venue wifi drops constantly, and a dead socket fails silently — you'd never
+know the alarm had stopped working. A failed poll just tries again in four
+seconds. The full wedding refresh stays at 30s; only the alert is quick.
 
-2. THE MATCHER
---------------
-Tested against real tag messiness: brackets, featured artists, missing
-artists, ampersands, punctuation, case, leading "The", and ISRC that
-disagrees with the text. Twelve cases, all passing, plus the whole-plan
-scan where a song on both the party list AND the ban list correctly comes
-back as banned.
+CHECKED IN A REAL BROWSER
+-------------------------
+  - banned track  -> red, flashing, couple's note shown, dismiss works,
+                     and it stays dismissed rather than re-firing
+  - weak match    -> amber, Yes ticks the right song, No dismisses
+  - clean match   -> green, fades by itself after 6s
+  - filler track  -> silent
+  - reduced motion-> red but not strobing
+  - 320px wide    -> no overflow, buttons reachable
 
-3. STILL TO DO — THE GIG WINDOW
--------------------------------
-The alert itself needs public/gig.html, which I don't have. Send it and
-I'll add the red flash, the confirm-a-weak-match tap, and the polling.
+STILL ON YOUR SIDE
+------------------
+Music Manager has to read Serato and post the track. Remember the dwell
+timer — Serato's history records loads and ejects, not play time, so
+without a delay every quick audition ticks a song as played. The BAN alarm
+should fire immediately on load; only the auto-tick should wait.

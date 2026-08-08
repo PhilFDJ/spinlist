@@ -72,3 +72,22 @@ loaded, auditioned and pulled back looks identical to one you played all
 the way through. So treat "played" as inferred — good enough to tick a box,
 not good enough to be authoritative. Consider a dwell time before
 reporting, e.g. only report a track still on the deck after 45 seconds.
+
+3. WHAT THE GIG WINDOW DOES WITH IT
+-----------------------------------
+You don't need to talk to the gig window. Post to /now-playing and the
+server remembers the verdict; the gig window polls it every 4 seconds and
+reacts:
+
+  noplay   full-width RED banner, flashing, with the couple's own words if
+           they left a note. Stays until the DJ taps "Got it".
+  maybe    amber banner: "Was that this one?" with the heard title and the
+           planned one, plus Yes/No. Yes ticks it, No dismisses.
+  planned  brief green "Ticked off", clears itself after 6 seconds.
+  unknown  nothing. Most of a night is filler and it must not nag.
+
+Dismissing sends DELETE /api/weddings/:id/now-playing so the same track
+doesn't nag every four seconds.
+
+Polling, not a socket: venue wifi drops constantly and a dead socket fails
+silently, whereas a failed poll just tries again in four seconds.

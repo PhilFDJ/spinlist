@@ -1560,7 +1560,7 @@ app.post('/api/weddings/:id/now-playing', auth.requireAuth, (req, res) => {
     marked = true;
   }
 
-  res.json({
+  const result = {
     verdict: hit.verdict,            // noplay | planned | maybe | unknown
     confidence: hit.confidence,      // isrc | strict | loose | null
     marked,
@@ -1570,7 +1570,35 @@ app.post('/api/weddings/:id/now-playing', auth.requireAuth, (req, res) => {
           note_couple: hit.song.note_couple || '', note_dj: hit.song.note_dj || '' }
       : null,
     played,
-  });
+  };
+
+  // Remembered so the gig window can poll for it rather than being pushed to.
+  db.setWeddingNowPlaying(w.id, result);
+  res.json(result);
+});
+
+/* What the gig window polls. Deliberately tiny and separate from the full
+   wedding fetch: this runs every few seconds on venue wifi, the full one every
+   thirty. */
+app.get('/api/weddings/:id/now-playing', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding.' });
+  }
+  res.json({ now_playing: w.now_playing || null });
+});
+
+/* Clears the banner. The DJ dismissing an alert is a real decision — it stops
+   the same track nagging every four seconds. */
+app.delete('/api/weddings/:id/now-playing', auth.requireAuth, (req, res) => {
+  const w = db.getWedding(req.params.id);
+  if (!w) return res.status(404).json({ error: 'Wedding not found.' });
+  if (req.user.id !== w.host_id && w.assigned_dj !== req.user.id) {
+    return res.status(403).json({ error: 'Not your wedding.' });
+  }
+  db.setWeddingNowPlaying(w.id, null);
+  res.json({ ok: true });
 });
 
 // Mark a song played/unplayed (DJ or assigned sub-DJ — used on the day)
