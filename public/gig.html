@@ -42,6 +42,31 @@
   .foot{position:fixed;bottom:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:var(--panel);border-top:1px solid var(--line);font-size:.72rem;color:var(--muted)}
   .foot button{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:5px 10px;font:inherit;font-size:.72rem;cursor:pointer}
   .foot button:hover{color:var(--ink)}
+  /* Now-playing alert. Sits under the header, above everything, because in a
+     dark room at 11pm it has to be impossible to miss. */
+  #alert{display:none;padding:14px 18px;border-bottom:1px solid var(--line)}
+  #alert.on{display:block}
+  #alert .what{font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;font-weight:800;opacity:.85}
+  #alert .track{font-size:1.2rem;font-weight:800;margin-top:4px;line-height:1.3}
+  #alert .sub{font-size:.85rem;margin-top:4px;opacity:.85}
+  #alert .note{font-size:.85rem;margin-top:8px;padding:8px 10px;background:rgba(0,0,0,.22);border-radius:8px;font-style:italic}
+  #alert .acts{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  #alert button{font:inherit;font-weight:800;font-size:.82rem;padding:9px 14px;border:0;border-radius:8px;cursor:pointer}
+  #alert .primary{background:#0a1228;color:#fff}
+  #alert .ghost{background:rgba(0,0,0,.18);color:inherit}
+
+  #alert.noplay{background:#ff3b30;color:#fff;animation:flash 1s steps(1,end) infinite}
+  #alert.maybe{background:#ffb020;color:#241a00;animation:none}
+  #alert.good{background:var(--neon);color:#0a1228;animation:none}
+  @keyframes flash{0%,100%{background:#ff3b30}50%{background:#8c1108}}
+  @media(prefers-reduced-motion:reduce){ #alert.noplay{animation:none} }
+
+  /* Banned blocks in the music list. Marked so a sub-DJ who has never seen this
+     wedding before cannot mistake the list for something to play. */
+  .row.banned .q{color:#ff6b5e}
+  .row.banned .song{color:#ffb4ad}
+  .row.banned{background:rgba(255,59,48,.06)}
+
   @media(max-width:420px){ .row .a{font-size:1.15rem} }
 </style>
 </head>
@@ -55,6 +80,7 @@
     <span class="tab" data-tab="timeline" onclick="setTab('timeline')">🕐 Timeline</span>
     <span class="tab" data-tab="music" onclick="setTab('music')">🎵 Music</span>
   </div>
+  <div id="alert" role="alert" aria-live="assertive"></div>
   <main id="main"><div class="status">Loading…</div></main>
   <div class="foot"><span id="updated">—</span><button onclick="load()">Refresh now</button></div>
 <script>
@@ -89,6 +115,16 @@ function musicHtml(){
   if(!blocks.length)return '<div class="status">No music blocks yet.</div>';
   return blocks.map(b=>{
     const songs=(b.songs||[]);
+    /* A banned block gets no play ticks — ticking "played" against a song the
+       couple forbade is meaningless, and a tappable tick invites the mistake. */
+    if(b.noplay){
+      const banned=songs.length?songs.map(s=>
+        '<div class="song"><span class="tick">⛔</span><span class="stitle">'+esc(s.title||'')+
+        (s.artist?' <span class="art">· '+esc(s.artist)+'</span>':'')+'</span></div>'
+      ).join(''):'<div class="song empty">Nothing listed</div>';
+      return '<div class="row banned"><div class="q">⛔ '+esc(b.name||'Do not play')+
+        ' <span class="art">(never play these)</span></div>'+banned+'</div>';
+    }
     const list=songs.length?songs.map(s=>{
       const copyTxt=(s.title||'')+(s.artist?' '+s.artist:'');
       return '<div class="song">'+
@@ -100,6 +136,93 @@ function musicHtml(){
     return '<div class="row"><div class="q">'+esc(b.name||'Block')+' <span class="art">('+songs.filter(s=>s.played).length+'/'+songs.length+' played)</span></div>'+list+'</div>';
   }).join('');
 }
+/* ---------------- NOW PLAYING ALERT ----------------
+   Music Manager reads Serato's history file and posts the track to the server,
+   which works out the verdict. This window polls for it. Polling rather than a
+   socket because venue wifi drops constantly and a dead socket fails silently,
+   whereas a failed poll just tries again in four seconds. */
+let NP_SEEN=0;          // timestamp of the last alert we've already shown
+let NP_DISMISSED=0;     // and the last one the DJ waved away
+
+function alertBox(){ return document.getElementById('alert'); }
+
+function hideAlert(){
+  const a=alertBox();
+  a.className='';
+  a.innerHTML='';
+}
+
+function showNowPlaying(np){
+  const a=alertBox();
+  const t=np.played||{};
+  const heard=esc(t.title||'')+(t.artist?' · '+esc(t.artist):'');
+
+  if(np.verdict==='noplay'){
+    a.className='on noplay';
+    a.innerHTML='<div class="what">⛔ Do not play</div>'+
+      '<div class="track">'+heard+'</div>'+
+      '<div class="sub">On the '+esc((np.block&&np.block.name)||'do-not-play')+' list'+
+        (np.confidence==='loose'?' — close match, worth a look':'')+'</div>'+
+      ((np.song&&np.song.note_couple)?'<div class="note">“'+esc(np.song.note_couple)+'”</div>':'')+
+      '<div class="acts"><button class="primary" onclick="dismissAlert()">Got it</button></div>';
+    return;
+  }
+
+  if(np.verdict==='maybe'){
+    a.className='on maybe';
+    a.innerHTML='<div class="what">Was that this one?</div>'+
+      '<div class="track">'+esc(np.song?np.song.title:'')+
+        (np.song&&np.song.artist?' · '+esc(np.song.artist):'')+'</div>'+
+      '<div class="sub">Heard: '+heard+' — in '+esc((np.block&&np.block.name)||'')+'</div>'+
+      '<div class="acts">'+
+        '<button class="primary" onclick="confirmMaybe(\''+esc(np.block?np.block.id:'')+'\',\''+esc(np.song?np.song.id:'')+'\')">Yes, tick it</button>'+
+        '<button class="ghost" onclick="dismissAlert()">No</button>'+
+      '</div>';
+    return;
+  }
+
+  if(np.verdict==='planned'&&np.marked){
+    a.className='on good';
+    a.innerHTML='<div class="what">✓ Ticked off</div><div class="track">'+
+      esc(np.song?np.song.title:heard)+'</div>'+
+      '<div class="sub">'+esc((np.block&&np.block.name)||'')+'</div>';
+    // A confirmation doesn't need dismissing — it gets out of the way itself.
+    setTimeout(()=>{ if(alertBox().classList.contains('good')) hideAlert(); },6000);
+    return;
+  }
+  hideAlert();   // 'unknown' — most of a night is filler, don't nag about it
+}
+
+async function pollNowPlaying(){
+  if(!WID) return;
+  try{
+    const r=await fetch('/api/weddings/'+encodeURIComponent(WID)+'/now-playing',{credentials:'same-origin'});
+    if(!r.ok) return;
+    const d=await r.json();
+    const np=d&&d.now_playing;
+    if(!np||!np.at){ hideAlert(); return; }
+    if(np.at===NP_DISMISSED) return;             // already waved away
+    if(np.at===NP_SEEN) return;                  // already on screen
+    NP_SEEN=np.at;
+    showNowPlaying(np);
+    if(np.marked) load();                        // the tick came from the server
+  }catch(e){ /* wifi — try again in four seconds */ }
+}
+
+async function dismissAlert(){
+  NP_DISMISSED=NP_SEEN;
+  hideAlert();
+  try{
+    await fetch('/api/weddings/'+encodeURIComponent(WID)+'/now-playing',
+      {method:'DELETE',credentials:'same-origin'});
+  }catch(e){}
+}
+
+async function confirmMaybe(blockId,songId){
+  await dismissAlert();
+  if(blockId&&songId) togglePlayed(blockId,songId,1);
+}
+
 async function togglePlayed(blockId,songId,played){
   try{
     const r=await fetch('/api/weddings/'+encodeURIComponent(WID)+'/played',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({blockId,songId,played:!!played})});
@@ -198,7 +321,9 @@ async function loadEvent(){
   }catch(e){ main.innerHTML='<div class="status">Connection problem — will retry.</div>'; }
 }
 load();
-setInterval(load,30000);   // auto-refresh every 30s
+setInterval(load,30000);        // full refresh every 30s
+pollNowPlaying();
+setInterval(pollNowPlaying,4000);   // the alert needs to be quicker than that
 </script>
 <script src="/js/track.js"></script>
 </body>

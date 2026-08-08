@@ -564,11 +564,11 @@ function fmtWeddingDate(ts){
 const DEFAULT_BLOCKS=[
   {name:'First Dance',capacity:1},{name:'Cake Cutting',capacity:1},
   {name:"Couple's Top 15",capacity:15},{name:'Play If Possible',capacity:30,live:true},
-  {name:'Last Dance',capacity:1},{name:'Do Not Play',capacity:5}
+  {name:'Last Dance',capacity:1},{name:'Do Not Play',capacity:5,noplay:true}
 ];
 let draftBlocks=[];
 async function openCreate(){
-  draftBlocks=DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live}));
+  draftBlocks=DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live,noplay:!!b.noplay}));
   try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
   try{ BLOCK_TEMPLATES=(await api('/api/block-templates')).templates||[]; }catch(e){ BLOCK_TEMPLATES=[]; }
   const root=document.getElementById('root');
@@ -615,12 +615,12 @@ function loadBlockTemplate(id){
   if(!id)return;
   const t=BLOCK_TEMPLATES.find(x=>x.id===id);
   if(!t)return;
-  draftBlocks=t.blocks.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live}));
+  draftBlocks=t.blocks.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live,noplay:!!b.noplay}));
   renderDraftBlocks();
   toast('Loaded "'+t.name+'"');
 }
 async function saveBlocksAsTemplate(){
-  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live}));
+  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live,noplay:!!b.noplay}));
   if(!blocks.length){toast('Add some blocks first');return;}
   const name=prompt('Name this music template:','My Wedding Set');
   if(!name||!name.trim())return;
@@ -640,15 +640,16 @@ function renderDraftBlocks(){
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="draftBlocks[${i}].name=this.value">
       <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="draftBlocks[${i}].capacity=+this.value" title="Number of songs">
       ${liveToggleHtml(draftBlocks,i,'draft')}
+      ${noplayToggleHtml(draftBlocks,i,'draft')}
       <button class="iconbtn" onclick="draftBlocks.splice(${i},1);renderDraftBlocks()">🗑</button>
     </div>`).join('');
 }
-function addDraftBlock(){draftBlocks.push({name:'New block',capacity:5,live:false});renderDraftBlocks();}
+function addDraftBlock(){draftBlocks.push({name:'New block',capacity:5,live:false,noplay:false});renderDraftBlocks();}
 async function createWedding(){
   const name=val('w-name'),coupleNames=val('w-couple');
   const msg=document.getElementById('w-msg');msg.textContent='';
   if(!name){msg.textContent='Please give the wedding a name.';return;}
-  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live}));
+  const blocks=draftBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live,noplay:!!b.noplay}));
   if(!blocks.length){msg.textContent='Add at least one block.';return;}
   try{
     const templateId=val('w-template');
@@ -718,7 +719,7 @@ function handleTouchStart(e,i,ctx){touchFrom=i;touchCtx=ctx;}
 // Persist a new block order from the Music tab (preserves songs — sends ids).
 async function saveBlockOrder(){
   try{
-    const blocks=CURRENT.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live}));
+    const blocks=CURRENT.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live,noplay:!!b.noplay}));
     const d=await api('/api/weddings/'+CURRENT.id+'/update',{method:'POST',body:JSON.stringify({name:CURRENT.name,coupleNames:CURRENT.coupleNames,blocks})});
     CURRENT=d.wedding;
     toast('Order saved');
@@ -730,7 +731,7 @@ let editBlocks=[];
 async function openEditWedding(){
   const w=CURRENT;
   // editable copy of blocks (keep ids so songs are preserved on save)
-  editBlocks=w.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live,songCount:(b.songs||[]).length}));
+  editBlocks=w.blocks.map(b=>({id:b.id,name:b.name,capacity:b.capacity,live:!!b.live,noplay:!!b.noplay,songCount:(b.songs||[]).length}));
   try{ TEMPLATES=(await api('/api/q-templates')).templates||[]; }catch(e){ TEMPLATES=[]; }
   const curTplName=w.questionnaire?w.questionnaire.name:'';
   const root=document.getElementById('root');
@@ -775,10 +776,11 @@ function renderEditBlocks(){
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editBlocks[${i}].name=this.value">
       <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editBlocks[${i}].capacity=+this.value" title="Songs">
       ${liveToggleHtml(editBlocks,i,'edit')}
+      ${noplayToggleHtml(editBlocks,i,'edit')}
       <button class="iconbtn" onclick="removeEditBlock(${i})" title="${b.songCount?('Has '+b.songCount+' song(s)'):'Remove'}">🗑</button>
     </div>`).join('');
 }
-function addEditBlock(){editBlocks.push({name:'New block',capacity:5,songCount:0,live:false});renderEditBlocks();}
+function addEditBlock(){editBlocks.push({name:'New block',capacity:5,songCount:0,live:false,noplay:false});renderEditBlocks();}
 function removeEditBlock(i){
   const b=editBlocks[i];
   if(b.songCount&&!confirm('This block has '+b.songCount+' song(s). Remove it and its songs?'))return;
@@ -788,7 +790,7 @@ async function saveEditWedding(){
   const name=val('ew-name'),coupleNames=val('ew-couple');
   const msg=document.getElementById('ew-msg');msg.textContent='';
   if(!name.trim()){msg.textContent='Please give the wedding a name.';return;}
-  const blocks=editBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({id:b.id,name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live}));
+  const blocks=editBlocks.filter(b=>b.name&&b.name.trim()).map(b=>({id:b.id,name:b.name,capacity:Math.max(1,b.capacity||1),live:!!b.live,noplay:!!b.noplay}));
   if(!blocks.length){msg.textContent='Add at least one block.';return;}
   const body={name,coupleNames,blocks};
   const dateStr=val('ew-date');
@@ -836,7 +838,7 @@ async function deleteBlockTemplate(id){
   openBlockTemplates();
 }
 function editBlockTemplate(id){
-  editingBTpl=id?JSON.parse(JSON.stringify(BLOCK_TEMPLATES.find(t=>t.id===id))):{name:'',blocks:DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live}))};
+  editingBTpl=id?JSON.parse(JSON.stringify(BLOCK_TEMPLATES.find(t=>t.id===id))):{name:'',blocks:DEFAULT_BLOCKS.map(b=>({name:b.name,capacity:b.capacity,live:!!b.live,noplay:!!b.noplay}))};
   if(!editingBTpl.blocks)editingBTpl.blocks=[];
   renderBlockTemplateEditor();
 }
@@ -850,7 +852,7 @@ function renderBlockTemplateEditor(){
       <h2 style="font-size:1.1rem;margin:10px 0 4px">Blocks</h2>
       <p class="muted" style="margin-bottom:12px">Name each block and how many songs it holds. Mark one as <b>Requests</b> and guests can request into it on the night — that choice is saved with the template.</p>
       <div id="btpl-blocks"></div>
-      <button class="addbtn" onclick="editingBTpl.blocks.push({name:'New block',capacity:5,live:false});renderBTplBlocks()">+ Add a block</button>
+      <button class="addbtn" onclick="editingBTpl.blocks.push({name:'New block',capacity:5,live:false,noplay:false});renderBTplBlocks()">+ Add a block</button>
       <div style="margin-top:18px;display:flex;gap:10px">
         <button class="btn btn-neon" onclick="saveBlockTemplate()">Save template</button>
         <button class="btn btn-ghost" onclick="openBlockTemplates()">Cancel</button>
@@ -867,14 +869,36 @@ function liveToggleHtml(list,i,fn){
   return `<button class="mini-btn ${on?'done':''}" title="Guest requests land in this block"
     onclick="setLiveBlockFlag('${fn}',${i})">${on?'★ Requests':'Requests'}</button>`;
 }
-function setLiveBlockFlag(which,i){
-  const list = which==='btpl' ? editingBTpl.blocks : which==='draft' ? draftBlocks : editBlocks;
-  const turningOn = !list[i].live;
-  list.forEach(b=>{ b.live=false; });
-  list[i].live = turningOn;
+/* Songs in this block must NOT be played. Was just a block someone happened to
+   name "Do Not Play" — so renaming it, or a sub-DJ not knowing the convention,
+   made the ban invisible. Now it's a flag the gig window can act on. */
+function noplayToggleHtml(list,i,fn){
+  const on=!!list[i].noplay;
+  return `<button class="mini-btn" style="${on?'color:#ff6b5e;border-color:#ff6b5e':''}"
+    title="Never play the songs in this block"
+    onclick="setNoplayBlockFlag('${fn}',${i})">${on?'⛔ Never play':'Never play'}</button>`;
+}
+function blockList(which){
+  return which==='btpl' ? editingBTpl.blocks : which==='draft' ? draftBlocks : editBlocks;
+}
+function reRenderBlockList(which){
   if(which==='btpl') renderBTplBlocks();
   else if(which==='draft') renderDraftBlocks();
   else renderEditBlocks();
+}
+function setLiveBlockFlag(which,i){
+  const list=blockList(which);
+  const turningOn=!list[i].live;
+  list.forEach(b=>{ b.live=false; });
+  list[i].live=turningOn;
+  if(turningOn) list[i].noplay=false;      // can't collect requests AND ban them
+  reRenderBlockList(which);
+}
+function setNoplayBlockFlag(which,i){
+  const list=blockList(which);
+  list[i].noplay=!list[i].noplay;
+  if(list[i].noplay) list[i].live=false;
+  reRenderBlockList(which);
 }
 
 function renderBTplBlocks(){
@@ -886,6 +910,7 @@ function renderBTplBlocks(){
       <input style="flex:1;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${esc(b.name)}" oninput="editingBTpl.blocks[${i}].name=this.value">
       <input type="number" min="1" max="100" style="width:72px;font:inherit;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--paper-2);color:var(--ink)" value="${b.capacity}" oninput="editingBTpl.blocks[${i}].capacity=+this.value" title="Songs">
       ${liveToggleHtml(editingBTpl.blocks,i,'btpl')}
+      ${noplayToggleHtml(editingBTpl.blocks,i,'btpl')}
       <button class="iconbtn" onclick="editingBTpl.blocks.splice(${i},1);renderBTplBlocks()">🗑</button>
     </div>`).join('')||'<p class="muted" style="margin-bottom:8px">No blocks yet.</p>';
 }
